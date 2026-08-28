@@ -8,6 +8,7 @@ add_executable(
   authoritative_api_tests.cpp
   compound_identity_tests.cpp
   physical_support_tests.cpp
+  affine_advection_tests.cpp
   transfer_lab_tests.cpp
   time_checkpoint_tests.cpp)
 
@@ -44,6 +45,28 @@ set_tests_properties(
   PROPERTIES
     LABELS "deterministic;transfer;smoke"
     PASS_REGULAR_EXPRESSION "Time \\+ Transfer smoke evidence written"
+    TIMEOUT 120)
+
+add_test(
+  NAME mls.affine_advection.smoke.a
+  COMMAND
+    mls_affine_advection_diagnostic
+    --smoke
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/affine-advection-smoke-a")
+add_test(
+  NAME mls.affine_advection.smoke.b
+  COMMAND
+    mls_affine_advection_diagnostic
+    --smoke
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/affine-advection-smoke-b")
+set_tests_properties(
+  mls.affine_advection.smoke.a
+  mls.affine_advection.smoke.b
+  PROPERTIES
+    LABELS "deterministic;affine;smoke"
+    PASS_REGULAR_EXPRESSION "Affine Advection smoke diagnostic evidence written"
     TIMEOUT 120)
 
 find_package(Python3 QUIET COMPONENTS Interpreter)

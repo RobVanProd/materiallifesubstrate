@@ -1,0 +1,49 @@
+{
+  "arithmetic": "fractions.Fraction exact rationals",
+  "fields": [
+    "translation",
+    "rigid_rotation",
+    "general_affine"
+  ],
+  "material_velocity_preservation_cases": 19440,
+  "nonzero_stale_position_defects": {
+    "general_affine": 432,
+    "rigid_rotation": 432,
+    "translation": 0
+  },
+  "nonzero_stale_velocity_defects": {
+    "general_affine": 432,
+    "rigid_rotation": 432,
+    "translation": 0
+  },
+  "orientation_covariance_cases": 1296,
+  "orientations": [
+    "identity",
+    "quarter_turn_x",
+    "quarter_turn_y",
+    "quarter_turn_z",
+    "axis_cycle",
+    "half_turn_xy"
+  ],
+  "physical_dt_horizons": [
+    "1/2",
+    "2/3",
+    "3/4"
+  ],
+  "position_map_cases": 1296,
+  "refinement_partitions": [
+    1,
+    2,
+    4,
+    8
+  ],
+  "result_sha256_before_hash_field": "503172760a36fc7ef94c0d898d5906bae699d2d28fe0e13fb8a9b64acef9cdc6",
+  "samples_per_field_orientation_dt": 24,
+  "scope": "exact global-affine force-free algebra only; not a transfer, trajectory, continuum, or floating-point validation",
+  "seed": 260828,
+  "semigroup_refinement_cases": 3888,
+  "singular_map_rejections": 1,
+  "stale_gradient_identity_cases": 1296,
+  "stale_position_velocity_defect_cases": 1296,
+  "witness_sha256": "d8c6be17b362f5ceb0ce87a3da381538701ab6858743682a507a3b3aa3f97209"
+}
