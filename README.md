@@ -49,6 +49,7 @@ or `reward`. Those may exist only as observer interpretations.
 - [Cross-environment replication gate](docs/replication-gate.md)
 - [Publication/review evidence template](docs/review-evidence-template.md)
 - [2026-08-28 MLS-0 baseline evidence](docs/review-evidence-2026-08-28-baseline.md)
+- [2026-08-28 baseline-hardening evidence](docs/review-evidence-2026-08-28-hardening.md)
 - [Prior-art debts](docs/prior-art.md)
 
 The historical and hardening Python oracles under `reference/` import no C++
