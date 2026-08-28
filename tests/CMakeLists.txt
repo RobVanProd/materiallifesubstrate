@@ -24,8 +24,48 @@ endif()
 add_test(NAME mls.validation COMMAND mls_validation)
 set_tests_properties(mls.validation PROPERTIES LABELS "deterministic;core")
 
+add_test(
+  NAME mls.transfer.bakeoff.smoke.a
+  COMMAND
+    mls_transfer_bakeoff
+    --smoke
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/transfer-bakeoff-smoke-a")
+add_test(
+  NAME mls.transfer.bakeoff.smoke.b
+  COMMAND
+    mls_transfer_bakeoff
+    --smoke
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/transfer-bakeoff-smoke-b")
+set_tests_properties(
+  mls.transfer.bakeoff.smoke.a
+  mls.transfer.bakeoff.smoke.b
+  PROPERTIES
+    LABELS "deterministic;transfer;smoke"
+    PASS_REGULAR_EXPRESSION "Time \\+ Transfer smoke evidence written"
+    TIMEOUT 120)
+
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
+  add_test(
+    NAME mls.transfer.bakeoff.smoke.verify
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/reference/validate_transfer_bundle.py"
+      --bundle
+      "${CMAKE_CURRENT_BINARY_DIR}/transfer-bakeoff-smoke-a"
+      --compare
+      "${CMAKE_CURRENT_BINARY_DIR}/transfer-bakeoff-smoke-b"
+      --smoke-provisional)
+  set_tests_properties(
+    mls.transfer.bakeoff.smoke.verify
+    PROPERTIES
+      DEPENDS "mls.transfer.bakeoff.smoke.a;mls.transfer.bakeoff.smoke.b"
+      LABELS "deterministic;transfer;smoke;independent"
+      PASS_REGULAR_EXPRESSION "TRANSFER BUNDLE VALID"
+      TIMEOUT 120)
+
   add_test(
     NAME mls.exact.quick
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/exact_validation.py" --mode quick)
