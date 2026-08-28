@@ -8,7 +8,8 @@ add_executable(
   authoritative_api_tests.cpp
   compound_identity_tests.cpp
   physical_support_tests.cpp
-  transfer_lab_tests.cpp)
+  transfer_lab_tests.cpp
+  time_checkpoint_tests.cpp)
 
 target_link_libraries(mls_validation PRIVATE mls_core)
 target_include_directories(mls_validation PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -70,5 +71,17 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(
       mls.hardening.independent.oracle
       PROPERTIES LABELS "deterministic;exact;hardening;independent" TIMEOUT 30)
+
+    add_test(
+      NAME mls.transfer.independent.oracle
+      COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/reference/transfer_oracle.py"
+        --cases 1000
+        --verify
+        "${CMAKE_CURRENT_SOURCE_DIR}/transfer_oracle.canonical.json")
+    set_tests_properties(
+      mls.transfer.independent.oracle
+      PROPERTIES LABELS "deterministic;exact;transfer;independent" TIMEOUT 120)
   endif()
 endif()

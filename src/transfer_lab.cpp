@@ -339,6 +339,9 @@ TransferGrid particle_to_grid(
     for (const auto* particle : canonical_particles(particles)) {
         const auto particle_mass_kg = mass_kg(*particle, config);
         for (const auto& sample : quadratic_bspline_samples(particle->position_m, config)) {
+            if (sample.weight == 0.0) {
+                continue;
+            }
             auto& node = grid.nodes[sample.index];
             const auto weighted_mass = sample.weight * particle_mass_kg;
             const auto represented_velocity = candidate == TransferCandidate::apic
@@ -376,6 +379,9 @@ std::vector<TransferParticle> grid_to_particles(
         Matrix3d velocity_offset_moment{};
         Matrix3d position_moment{};
         for (const auto& sample : quadratic_bspline_samples(before->position_m, grid.config)) {
+            if (sample.weight == 0.0) {
+                continue;
+            }
             const auto found = grid.nodes.find(sample.index);
             if (found == grid.nodes.end()) {
                 throw std::runtime_error("transfer grid is missing a kernel node");

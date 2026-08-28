@@ -133,6 +133,19 @@ MLS_TEST("transfer rejects invalid state duplicate IDs and exact mass overflow")
         mls::experimental::exact_particle_mass_quanta(overflowing_mass));
 }
 
+MLS_TEST("zero kernel weights do not create zero-mass grid nodes") {
+    const std::array particle{
+        TransferParticle{1, 1, {0.5, 0.5, 0.5}, {1.0, 2.0, 3.0}, {}},
+    };
+    const auto grid = mls::experimental::particle_to_grid(
+        particle, TransferConfig{}, TransferCandidate::pic);
+    MLS_REQUIRE_EQ(grid.nodes.size(), std::size_t{8});
+    for (const auto& [index, node] : grid.nodes) {
+        static_cast<void>(index);
+        MLS_REQUIRE(node.mass_kg > 0.0);
+    }
+}
+
 MLS_TEST("PIC and APIC reproduce constant translation and exact particle mass") {
     auto particles = affine_particles();
     const Vec3d velocity{1.25, -0.75, 0.5};

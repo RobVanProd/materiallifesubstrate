@@ -1,0 +1,13 @@
+{
+  "angular_counterexample": {
+    "augmented_apic_angular_identity_holds": true,
+    "center_only_not_conserved_by_apic_p2g": true
+  },
+  "flip_zero_update_identity": true,
+  "kernel_exact_rational_cases": 1000,
+  "pic_apic_exact_rational_cases": 1000,
+  "result_sha256_before_hash_field": "5b7001720e897f14e1ca7a2e736838963528eb090f580c1af22795e13306d2cc",
+  "scope": "finite exact transfer algebra only; not continuum mechanics",
+  "seed": 260828,
+  "witness_sha256": "e8067589cbaa5b203f56dfea22635446d046d888ba732ab12e4ecbc5a4f1d685"
+}
