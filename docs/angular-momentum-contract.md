@@ -6,8 +6,9 @@ ballistic scaffold. This is not a contact, force, elasticity, or field model.
 ## State variables and units
 
 For packet `i`, the relevant authoritative state is integer fixed-point position
-`r_i` (length quanta) and linear momentum `p_i` (momentum quanta). Orbital
-angular momentum is recomputed as
+`r_i` (length quanta), linear momentum `p_i` (momentum quanta), positive mass
+`m_i` (mass quanta), stored and thermal energy (energy quanta), and the positive
+kinetic-energy scale denominator `d`. Orbital angular momentum is recomputed as
 
 `L = sum_i (r_i x p_i)`
 
@@ -15,6 +16,11 @@ in angular-momentum quanta equal to one configured length quantum times one
 configured momentum quantum. MLS-0 has no packet spin, applied couple, or torque
 state. The boundary ledger therefore carries both `momentum_net` and
 `angular_momentum_net`; it does not infer a missing couple.
+
+Kinetic energy uses the packet contract's checked integer convention
+`K(p,m,d) = floor(floor((px^2+py^2+pz^2)/m)/d)/2`. See
+[material packet update laws](implemented-subsystem-contracts.md#3-material-packet-structure-of-arrays-store)
+for the exact division order and representability limits.
 
 ## Update and conservation law
 
@@ -40,12 +46,16 @@ world audit requires both linear and angular momentum to close.
 ## Energy semantics
 
 `apply_actuated_dissipative_central_impulse` is deliberately not named or
-specified as generic mechanics. If its kinetic energy rises, the difference is
-debited from a selected participating packet's stored-energy channel. If kinetic
-energy falls, the difference is irreversibly deposited as heat in a selected
-participating packet. A forward/reverse momentum cycle therefore returns the
-momenta but converts stored energy to heat. This is an actuated/dissipative test
-scaffold only.
+specified as generic mechanics. For impulse `J`, it computes
+
+`Delta K = K(p1+J,m1,d) + K(p2-J,m2,d) - K(p1,m1,d) - K(p2,m2,d)`.
+
+If `Delta K > 0`, that exact amount is debited from a selected participating
+packet's stored-energy channel. If `Delta K < 0`, `-Delta K` is irreversibly
+deposited as heat in a selected participating packet. The tested nonzero-excursion
+forward/reverse momentum cycle therefore returns the momenta but converts stored
+energy to heat. A zero quantized kinetic excursion converts nothing. This is an
+actuated/dissipative test scaffold only.
 
 Conservative elastic or field interactions must not reuse this operation. They
 will require a future reversible potential/field-energy channel and an update

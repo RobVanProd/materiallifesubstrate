@@ -22,6 +22,12 @@ validity, convergence, chemistry expressivity, or an MLS gate by itself.
 | Ledger/boundaries | Baseline-plus-signed-boundary audit for elements, mass, total energy, linear momentum, and orbital angular momentum. | Spin/couples, charge, transaction IDs, per-reservoir identities, numerical tolerances. |
 | World/hash | Deterministic orchestration, physical-support guard, audit hooks, order-independent packet-state hash. | Autonomous physics scheduling, checkpoint serialization, renderer, agents, ecology. |
 
+This file contains six numbered core records. The seventh record is the
+[physical interaction support contract](physical-support-contract.md), kept
+separate because it constrains every future pair law. Orbital angular momentum
+is a cross-cutting packet/ledger/world contract documented in
+[point-interaction angular momentum](angular-momentum-contract.md).
+
 The implemented program therefore does **not** satisfy Gates 2–15. It supplies
 reference accounting mechanisms and adversarial fixtures used on the path toward
 Gates 0–1, plus limited scaffolds relevant to Gates 3–5 and 7.
@@ -111,9 +117,9 @@ coupling in `World::apply_reaction`.
 - `ElementInventory`: ordered map from element key to non-negative signed 64-bit
   count; zero entries are removed.
 - `CompoundGraph`: a connected labeled graph with at most eight atom sites in
-  the bounded reference model. Construction canonicalizes site numbering and
-  bond order into a deterministic labeled-graph encoding. Each bond stores two
-  site indices and a positive 8-bit order after canonicalization.
+  the bounded reference model. Construction canonicalizes site numbering into
+  a deterministic labeled-graph encoding. Each stored bond has two canonical
+  site indices and a positive 8-bit order.
 - `CompoundId`: 64-bit FNV-1a cache key over the canonical labeled-graph
   encoding. It is not authoritative identity: the registry compares canonical
   graphs and rejects hash collisions.
@@ -153,6 +159,24 @@ E_s(g)=\sum_{a\in g}E_{isolated,a}-
 
 Mixture properties are molecule-count-weighted sums. The catalog rejects a graph
 whose configured total binding energy exceeds its isolated structural energy.
+
+For structural identity, construction enumerates every permutation mapping a
+new site index to an input site index. Each candidate is encoded as the atom-label
+vector in new-site order followed by the complete upper-triangle bond-order
+vector in `(0,1), (0,2), ..., (n-2,n-1)` order, including zeros for absent bonds.
+The canonical encoding is the lexicographically smallest pair of vectors.
+Canonical storage retains that atom vector and emits only nonzero bonds while
+scanning the same upper triangle. This bounded algorithm, rather than input site
+numbering or input bond-list ordering, defines graph equality in MLS-0. Bond-order
+values remain part of the canonical encoding and therefore part of identity.
+
+`CompoundId` applies 64-bit FNV-1a (offset basis
+`14695981039346656037`, prime `1099511628211`) to the following canonical fields:
+64-bit atom count, each 16-bit element value, 64-bit stored-bond count, then each
+bond's 32-bit first index, 32-bit second index, and 8-bit order. Every integer is
+fed least-significant byte first for exactly its declared width. This is a cache
+encoding only; full canonical-graph comparison remains authoritative and a hash
+collision is rejected.
 
 A reaction extent `xi` is bounded by
 
@@ -357,10 +381,20 @@ adversarial ledger tests but is not production API.
 - `hard-contract/deterministic_replay_and_state_hash`
 - `adversarial/all_boundary_channels_round_trip_through_one_ledger`
 - `adversarial/failed_step_overflow_preserves_tick_and_state`
+- `hardening/abi/world_exposes_only_const_packet_store`, plus configure-time
+  negative compile probes for creation, heat transfer, and boundary momentum
+- `hardening/angular/noncentral_equal_opposite_impulse_counterexample`
+- `hardening/angular/accepted_pair_transition_requires_central_impulse`
+- `hardening/angular/actuated_dissipative_impulse_cycle_is_not_conservative_mechanics`
+- `hardening/angular/ballistic_step_accepts_only_exact_displacement_and_preserves_L`
+- `hardening/angular/cross_product_overflow_is_rejected`
+- `hardening/timestep/impulse_phase_within_a_tick_changes_position`
+- `hardening/timestep/no_dimensioned_refinement_claim_exists`
 
 Current gaps include stale-handle/ID exhaustion, negative momentum motion across
-many mass values, quantized-energy exploit cycles, bounded-history eviction, and
-failure atomicity under allocation or other non-arithmetic exceptions.
+many mass values, wider resolution sweeps for quantized-energy economics beyond
+the completed closed-cycle witness, bounded-history eviction, and failure
+atomicity under allocation or other non-arithmetic exceptions.
 
 ## 4. Sparse voxel control-volume index
 
@@ -654,13 +688,23 @@ cryptographic digest, checkpoint, audit-evidence hash, or proof of equivalence.
 - `adversarial/uniform_grid_translation_preserves_extensive_outcomes`
 - `G5/adversarial_rational_off_axis_rotation_preserves_ballistic_invariants`
 - `adversarial/tick_batching_is_exact_but_not_a_convergence_claim`
+- `hardening/abi/world_exposes_only_const_packet_store`
+- `hardening/angular/boundary_point_impulse_accounts_for_orbital_angular_momentum`
+- `hardening/angular/boundary_cross_overflow_rejects_whole_transition`
+- the complete angular transition mapping in
+  [point-interaction angular momentum](angular-momentum-contract.md)
+- the grid-phase, rotation, edge/corner, extreme-coordinate, and voxel-authority
+  mapping in [physical interaction support](physical-support-contract.md)
 - `mls_headless` is an executable audit demonstration, not a test of physical
   validity
 
 ## Review rule
 
-All six subsystem records must be updated when their public state, operation,
-formula, or test mapping changes. A release review must compare this document to
-the actual headers and implementation and must list unmapped behaviors. Use the
+All seven subsystem records (six numbered records here plus the dedicated
+physical-support record) must be updated when their public state, operation,
+formula, or test mapping changes. Changes to point interaction, boundary, or
+ledger semantics must also update the cross-cutting angular-momentum contract.
+A release review must compare these documents to the actual headers and
+implementation and must list unmapped behaviors. Use the
 [publication/review evidence template](review-evidence-template.md) for every
 claim-bearing run.
