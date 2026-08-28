@@ -101,6 +101,20 @@ if(Python3_Interpreter_FOUND)
       PASS_REGULAR_EXPRESSION "verifier convergence regression: PASS")
 
   add_test(
+    NAME mls.affine_advection.exact.oracle
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/reference/affine_advection_oracle.py"
+      --verify
+      "${CMAKE_CURRENT_SOURCE_DIR}/affine_advection_oracle.canonical.json")
+  set_tests_properties(
+    mls.affine_advection.exact.oracle
+    PROPERTIES
+      LABELS "deterministic;exact;affine;independent"
+      PASS_REGULAR_EXPRESSION "result_sha256_before_hash_field"
+      TIMEOUT 60)
+
+  add_test(
     NAME mls.exact.quick
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/exact_validation.py" --mode quick)
   set_tests_properties(mls.exact.quick PROPERTIES LABELS "deterministic;exact;quick")

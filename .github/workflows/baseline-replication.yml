@@ -6,6 +6,7 @@ on:
       - main
       - baseline-hardening
       - time-transfer-lab
+      - affine-advection-lab
   pull_request:
   workflow_dispatch:
 
@@ -147,6 +148,9 @@ jobs:
             --cases 1000 \
             --verify tests/transfer_oracle.canonical.json \
             2>&1 | tee ci-artifacts/transfer-oracle.txt
+          python reference/affine_advection_oracle.py \
+            --verify tests/affine_advection_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/affine-advection-oracle.txt
 
       - name: Preserve exact-oracle evidence
         if: always()
