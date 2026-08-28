@@ -61,6 +61,13 @@ Lean kernel build is authoritative for theorem acceptance.
   the resulting coefficient-level theorem proves that two half-step updates
   equal one full-step update. It introduces no inverse or conservation axioms
   and models no forces or constitutive laws.
+- `MovingAPICLimit.lean`: an exact finite-stencil derivation of the
+  Jiang--Schroeder--Teran moving-grid Eq. 38 update in the globally affine,
+  force-free limit. It models old/new grid and particle positions explicitly,
+  derives `B_next = A D_old`, and proves that a fixed second moment reconstructs
+  the stale `C_next = A` rather than the analytically convected gradient, with
+  an exact discrepancy formula. It assumes only the displayed finite-stencil
+  moments and explicit inverse witnesses; it is not a mechanics model.
 - `AxiomReport.lean`: committed `#print axioms` coverage for every theorem
   exported by all project modules; CI checks declarations against this list.
 
