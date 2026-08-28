@@ -46,6 +46,11 @@ Lean kernel build is authoritative for theorem acceptance.
   reaction, boundary exchange, central pair impulse, the exact
   `Delta L = (r1-r2) x J` equation, transition-level conservation theorems, and
   emitted `#print axioms` reports for every exported claim in that module.
+- `TransferLab.lean`: executable finite exact-rational PIC/APIC P2G and G2P
+  maps, explicit partition-of-unity, first-moment, and affine dual-basis
+  assumptions, and transition-definition-level mass, linear-momentum, affine
+  reproduction, and APIC orbital-plus-affine angular-momentum theorems. It does
+  not model a time integrator or continuum mechanics.
 - `AxiomReport.lean`: committed `#print axioms` coverage for every theorem
   exported by all project modules; CI checks declarations against this list.
 

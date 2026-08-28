@@ -4,6 +4,7 @@ import MLSFormal.Conservation
 import MLSFormal.Scaling
 import MLSFormal.SimulationSafety
 import MLSFormal.TransitionModel
+import MLSFormal.TransferLab
 
 /-!
 Complete kernel axiom report for every theorem exported by the MLSFormal
@@ -38,3 +39,10 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.boundaryPointImpulse_preserves_momentum
 #print axioms MLSFormal.boundaryPointImpulse_preserves_angularMomentum
 #print axioms MLSFormal.boundaryPointImpulse_preserves_energy
+#print axioms MLSFormal.p2gMass_preserves_mass
+#print axioms MLSFormal.p2gPIC_preserves_linearMomentum
+#print axioms MLSFormal.p2gAPIC_preserves_linearMomentum
+#print axioms MLSFormal.g2pPIC_reproduces_constant
+#print axioms MLSFormal.g2pPIC_reproduces_affineVelocity
+#print axioms MLSFormal.g2pAPIC_reproduces_affine
+#print axioms MLSFormal.p2gAPIC_preserves_angularMomentum
