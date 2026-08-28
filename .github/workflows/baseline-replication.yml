@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - baseline-hardening
+      - time-transfer-lab
   pull_request:
   workflow_dispatch:
 
@@ -142,6 +143,10 @@ jobs:
           python reference/hardening_oracle.py \
             --verify tests/hardening_oracle.canonical.json \
             2>&1 | tee ci-artifacts/hardening-oracle.txt
+          python reference/transfer_oracle.py \
+            --cases 1000 \
+            --verify tests/transfer_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/transfer-oracle.txt
 
       - name: Preserve exact-oracle evidence
         if: always()
