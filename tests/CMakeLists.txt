@@ -115,6 +115,41 @@ if(Python3_Interpreter_FOUND)
       TIMEOUT 60)
 
   add_test(
+    NAME mls.affine_advection.smoke.verify
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/reference/validate_affine_advection_bundle.py"
+      --bundle
+      "${CMAKE_CURRENT_BINARY_DIR}/affine-advection-smoke-a"
+      --compare
+      "${CMAKE_CURRENT_BINARY_DIR}/affine-advection-smoke-b"
+      --smoke-provisional)
+  set_tests_properties(
+    mls.affine_advection.smoke.verify
+    PROPERTIES
+      DEPENDS "mls.affine_advection.smoke.a;mls.affine_advection.smoke.b"
+      LABELS "deterministic;affine;smoke;independent"
+      PASS_REGULAR_EXPRESSION "AFFINE ADVECTION BUNDLE SMOKE PROVISIONAL"
+      TIMEOUT 120)
+
+  add_test(
+    NAME mls.affine_advection.validator.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/affine_advection_bundle_validator_test.py"
+      --bundle
+      "${CMAKE_CURRENT_BINARY_DIR}/affine-advection-smoke-a"
+      --validator
+      "${PROJECT_SOURCE_DIR}/reference/validate_affine_advection_bundle.py")
+  set_tests_properties(
+    mls.affine_advection.validator.regression
+    PROPERTIES
+      DEPENDS "mls.affine_advection.smoke.a"
+      LABELS "deterministic;affine;validator;independent"
+      PASS_REGULAR_EXPRESSION "Affine-advection bundle validator regression: PASS"
+      TIMEOUT 120)
+
+  add_test(
     NAME mls.exact.quick
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/exact_validation.py" --mode quick)
   set_tests_properties(mls.exact.quick PROPERTIES LABELS "deterministic;exact;quick")
