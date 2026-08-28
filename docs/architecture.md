@@ -43,6 +43,7 @@ Renderer reads snapshots. It never writes authoritative state.
 | Is UE5 authoritative? | No. | An engine may visualize or host interfaces, but it cannot define physical truth. |
 | Is Warp authoritative? | No. | It may prototype kernels; state and laws must survive backend replacement. |
 | Is a GPU backend authoritative? | No. | C++20 CPU/reference semantics and a portable state format define the contract. |
+| May a numerical auxiliary affect future motion? | Only if it is uniquely derivable from authoritative physical state or is itself explicit, accounted physical state. | Hidden persistent affine, polynomial, correction, or solver-history modes are forbidden. |
 
 ## Ontology
 
@@ -66,6 +67,25 @@ A packet has a stable identity and, at minimum:
 A packet is a numerical carrier, not an atom, cell, organism, or rendered point.
 Splitting and merging carriers may change discretization only when all extensive
 state and required history are preserved.
+
+### Causally active auxiliary rule
+
+A numerical value is not harmless scratch state merely because it has no
+observer label. If changing it while holding the declared physical state fixed
+can change a later physical trajectory, then it is causally active. Such a
+value must satisfy one of two contracts:
+
+1. it is uniquely and deterministically reconstructed from authoritative
+   physical state before use; or
+2. it is admitted as physical state with declared units, evolution law,
+   conservation/accounting role, checkpoint representation, and validation.
+
+No third category of hidden persistent dynamics is permitted. In particular,
+particle affine/polynomial transfer modes, cached grid velocities, correction
+fields, solver iterates, and numerical energy reservoirs may not survive a
+step and influence later motion merely because they improve a numerical
+method. Transient grid and solver workspaces are disposable and must be absent
+from authoritative checkpoints.
 
 ### Sparse control volume
 
