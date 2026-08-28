@@ -330,11 +330,15 @@ MLS_TEST("checkpoint/rejects_magic_version_checksum_truncation_and_trailing_payl
     MLS_REQUIRE(rejects_checkpoint(bad_version));
 
     auto bad_checksum = canonical;
+    if (bad_checksum.empty()) {
+        throw std::logic_error("canonical checkpoint unexpectedly has no checksum");
+    }
     bad_checksum.back() ^= UINT8_C(1);
     MLS_REQUIRE(rejects_checkpoint(bad_checksum));
 
     for (std::size_t length = 0; length < canonical.size(); ++length) {
-        const std::vector<std::uint8_t> truncated(canonical.begin(), canonical.begin() + length);
+        const auto end = canonical.begin() + static_cast<std::ptrdiff_t>(length);
+        const std::vector<std::uint8_t> truncated(canonical.begin(), end);
         MLS_REQUIRE(rejects_checkpoint(truncated));
     }
 
