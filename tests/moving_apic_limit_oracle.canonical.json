@@ -1,0 +1,73 @@
+{
+  "analytic_semigroup_refinement_cases": 1152,
+  "anisotropic_stencils": [
+    "axis_anisotropic",
+    "skew_anisotropic",
+    "fractional_skew_anisotropic",
+    "irregular_tetrahedral_positive"
+  ],
+  "arithmetic": "fractions.Fraction exact rationals",
+  "assumptions": [
+    "finite nonnegative old weights sum to one",
+    "weighted old particle-to-grid offsets sum to zero",
+    "D_old is the invertible weighted second moment",
+    "the old grid velocity field is globally affine",
+    "force-free grid velocities are unchanged",
+    "old/new grid and particle positions use the same explicit affine map",
+    "D_next = D_old only for the reported C_next conclusion",
+    "I + dt A is invertible where the convected field is evaluated"
+  ],
+  "base_eq38_identity_cases": 384,
+  "c_next_under_d_next_equals_d_old_cases": 384,
+  "center_ballistic_refinement_witnesses": 1536,
+  "convected_gradient_discrepancy_cases": 384,
+  "derived_identity": "B_next = A D_old (derived from the complete Eq. 38 sum)",
+  "direct_complete_eq38_evaluations": 6144,
+  "equation": "Jiang-Schroeder-Teran JCP 2017 Eq. 38 complete finite sum",
+  "fields": [
+    "translation",
+    "nonsymmetric_upper",
+    "nonsymmetric_dense",
+    "skew_rotation_control"
+  ],
+  "fixed_D_consequence": "C_next = A, not generally A(I + dt A)^-1",
+  "fixed_d_stale_gradient_refinement_witnesses": 1536,
+  "global_intercept_inconsistency_cases": 384,
+  "non_centrally_symmetric_stencils": [
+    "irregular_tetrahedral_positive"
+  ],
+  "noncommuting_A_D_cases": 288,
+  "nonsymmetric_A_anisotropic_D_cases": 288,
+  "nonzero_convected_gradient_discrepancies": {
+    "nonsymmetric_dense": 96,
+    "nonsymmetric_upper": 96,
+    "skew_rotation_control": 96,
+    "translation": 0
+  },
+  "nonzero_global_intercept_inconsistencies": {
+    "nonsymmetric_dense": 96,
+    "nonsymmetric_upper": 96,
+    "skew_rotation_control": 96,
+    "translation": 0
+  },
+  "physical_dt_horizons": [
+    "1/3",
+    "2/5",
+    "3/7"
+  ],
+  "refinement_partitions": [
+    1,
+    2,
+    4,
+    8
+  ],
+  "result_sha256_before_hash_field": "807f6d35d7ff3bf577fc01121a04a7ae0aa535829e97717c0a7658a0f6d6fa17",
+  "samples_per_field_stencil_dt": 8,
+  "scope": "exact finite global-affine force-free algebra only; not numerical transfer validation or mechanics promotion",
+  "seed": 260828,
+  "singular_rejections": {
+    "D_next": 1,
+    "I_plus_dt_A": 1
+  },
+  "witness_sha256": "69a2b754423ee307fdcb05fbadf85658fde43a1376e32f4c33cca826aad866a3"
+}
