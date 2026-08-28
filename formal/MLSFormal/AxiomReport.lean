@@ -7,6 +7,7 @@ import MLSFormal.TransitionModel
 import MLSFormal.TransferLab
 import MLSFormal.AffineAdvection
 import MLSFormal.MovingAPICLimit
+import MLSFormal.ConsistentProjection
 
 /-!
 Complete kernel axiom report for every theorem exported by the MLSFormal
@@ -66,3 +67,8 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.movingAPIC_CNext_eq_oldGradient_when_moment_fixed
 #print axioms MLSFormal.movingAPIC_staleGradient_exact_discrepancy
 #print axioms MLSFormal.movingAPIC_CNext_minus_exactAffineGradient
+#print axioms MLSFormal.consistentProjection_affine_rhs_relation
+#print axioms MLSFormal.consistentProjection_unique_grid_recovery
+#print axioms MLSFormal.consistentProjection_affine_particle_recovery
+#print axioms MLSFormal.consistentProjection_preserves_linear_momentum
+#print axioms MLSFormal.consistentProjection_preserves_orbital_angular_momentum
