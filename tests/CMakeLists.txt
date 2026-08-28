@@ -7,7 +7,8 @@ add_executable(
   angular_momentum_tests.cpp
   authoritative_api_tests.cpp
   compound_identity_tests.cpp
-  physical_support_tests.cpp)
+  physical_support_tests.cpp
+  transfer_lab_tests.cpp)
 
 target_link_libraries(mls_validation PRIVATE mls_core)
 target_include_directories(mls_validation PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
