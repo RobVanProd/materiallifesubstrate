@@ -67,6 +67,17 @@ if(Python3_Interpreter_FOUND)
       TIMEOUT 120)
 
   add_test(
+    NAME mls.transfer.verifier.convergence
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/transfer_verifier_convergence_test.py")
+  set_tests_properties(
+    mls.transfer.verifier.convergence
+    PROPERTIES
+      LABELS "deterministic;transfer;verifier"
+      PASS_REGULAR_EXPRESSION "verifier convergence regression: PASS")
+
+  add_test(
     NAME mls.exact.quick
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/exact_validation.py" --mode quick)
   set_tests_properties(mls.exact.quick PROPERTIES LABELS "deterministic;exact;quick")

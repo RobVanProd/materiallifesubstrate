@@ -849,8 +849,11 @@ void update_observation_pass(
     result.all_below_threshold = hard_tolerance.has_value()
         ? std::ranges::all_of(errors, [&](double value) { return value <= *hard_tolerance; })
         : std::ranges::all_of(errors, [](double value) { return value <= roundoff_floor; });
-    result.finest_increase_failure = !result.all_below_threshold &&
-        errors[2] > roundoff_floor && errors[2] > errors[0] && errors[2] > errors[1];
+    // Record a resolved finest-level increase even when the independent hard-
+    // tolerance branch passes. It blocks only the ratio branch; retaining the
+    // flag avoids hiding sub-tolerance non-monotonicity from the evidence.
+    result.finest_increase_failure = errors[2] > roundoff_floor &&
+        errors[2] > errors[0] && errors[2] > errors[1];
     const std::array clamped{
         std::max(errors[0], roundoff_floor),
         std::max(errors[1], roundoff_floor),
