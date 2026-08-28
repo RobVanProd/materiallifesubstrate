@@ -101,7 +101,7 @@ combination must be named in the evidence bundle.
 | grid spacing `h` | 1, 1/2, 1/4 in one declared length unit |
 | mass ratio | 1:1 and 1:17 (the asymmetric layout also carries its specified spectrum) |
 | transfer cycles | 1, 4, 16, 64 |
-| physical step | `dt`, `dt/2`, `dt/4`, where `dt` is one configured time quantum |
+| physical step | `dt`, `dt/2`, `dt/4`, where base `dt` is four configured time quanta (4, 2, and 1 exact quanta) |
 
 Grid spacing refinement holds the same physical particle configuration and
 velocity field fixed. Timestep experiments advect the same affine field for a
