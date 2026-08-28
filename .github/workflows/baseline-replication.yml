@@ -7,6 +7,7 @@ on:
       - baseline-hardening
       - time-transfer-lab
       - affine-advection-lab
+      - moving-apic-limit-lab
   pull_request:
   workflow_dispatch:
 
@@ -151,6 +152,9 @@ jobs:
           python reference/affine_advection_oracle.py \
             --verify tests/affine_advection_oracle.canonical.json \
             2>&1 | tee ci-artifacts/affine-advection-oracle.txt
+          python reference/moving_apic_limit_oracle.py \
+            --verify tests/moving_apic_limit_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/moving-apic-limit-oracle.txt
 
       - name: Preserve exact-oracle evidence
         if: always()

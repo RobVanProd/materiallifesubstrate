@@ -42,6 +42,8 @@ or `reward`. Those may exist only as observer interpretations.
 - [Sealed Time + Transfer bakeoff protocol](docs/time-transfer-preregistration.md)
 - [Affine Advection Lab implementation contract](docs/affine-advection-lab-contract.md)
 - [Affine Advection Lab preregistration](docs/affine-advection-preregistration.md)
+- [Moving APIC limit diagnostic contract](docs/moving-apic-limit-contract.md)
+- [Moving APIC limit preregistration](docs/moving-apic-limit-preregistration.md)
 - [Forbidden-semantics contract](docs/forbidden-semantics.md)
 - [Accounting invariants](docs/accounting-invariants.md)
 - [Research roadmap and gates](docs/roadmap.md)
@@ -57,9 +59,10 @@ or `reward`. Those may exist only as observer interpretations.
 - [2026-08-28 baseline-hardening evidence](docs/review-evidence-2026-08-28-hardening.md)
 - [Prior-art debts](docs/prior-art.md)
 
-The historical, hardening, and affine-advection Python oracles under `reference/` import no C++
-bindings or production implementation modules. Their role is independent exact
-cross-checking, not validation of physical behavior.
+The historical, hardening, affine-advection, and moving-APIC-limit Python
+oracles under `reference/` import no C++ bindings or production implementation
+modules. Their role is independent exact cross-checking, not validation of
+physical behavior.
 
 ## Intended implementation boundary
 

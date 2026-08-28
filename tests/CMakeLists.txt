@@ -9,6 +9,7 @@ add_executable(
   compound_identity_tests.cpp
   physical_support_tests.cpp
   affine_advection_tests.cpp
+  moving_apic_limit_tests.cpp
   transfer_lab_tests.cpp
   time_checkpoint_tests.cpp)
 
@@ -69,6 +70,28 @@ set_tests_properties(
     PASS_REGULAR_EXPRESSION "Affine Advection smoke diagnostic evidence written"
     TIMEOUT 120)
 
+add_test(
+  NAME mls.moving_apic_limit.smoke.a
+  COMMAND
+    mls_moving_apic_limit_diagnostic
+    --smoke
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/moving-apic-limit-smoke-a")
+add_test(
+  NAME mls.moving_apic_limit.smoke.b
+  COMMAND
+    mls_moving_apic_limit_diagnostic
+    --smoke
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/moving-apic-limit-smoke-b")
+set_tests_properties(
+  mls.moving_apic_limit.smoke.a
+  mls.moving_apic_limit.smoke.b
+  PROPERTIES
+    LABELS "deterministic;moving-apic-limit;smoke"
+    PASS_REGULAR_EXPRESSION "Moving APIC Limit smoke evidence written"
+    TIMEOUT 180)
+
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
   add_test(
@@ -115,6 +138,20 @@ if(Python3_Interpreter_FOUND)
       TIMEOUT 60)
 
   add_test(
+    NAME mls.moving_apic_limit.exact.oracle
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/reference/moving_apic_limit_oracle.py"
+      --verify
+      "${CMAKE_CURRENT_SOURCE_DIR}/moving_apic_limit_oracle.canonical.json")
+  set_tests_properties(
+    mls.moving_apic_limit.exact.oracle
+    PROPERTIES
+      LABELS "deterministic;exact;moving-apic-limit;independent"
+      PASS_REGULAR_EXPRESSION "result_sha256_before_hash_field"
+      TIMEOUT 60)
+
+  add_test(
     NAME mls.affine_advection.smoke.verify
     COMMAND
       "${Python3_EXECUTABLE}"
@@ -148,6 +185,41 @@ if(Python3_Interpreter_FOUND)
       LABELS "deterministic;affine;validator;independent"
       PASS_REGULAR_EXPRESSION "Affine-advection bundle validator regression: PASS"
       TIMEOUT 120)
+
+  add_test(
+    NAME mls.moving_apic_limit.smoke.verify
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/reference/validate_moving_apic_limit_bundle.py"
+      --bundle
+      "${CMAKE_CURRENT_BINARY_DIR}/moving-apic-limit-smoke-a"
+      --compare
+      "${CMAKE_CURRENT_BINARY_DIR}/moving-apic-limit-smoke-b"
+      --smoke-provisional)
+  set_tests_properties(
+    mls.moving_apic_limit.smoke.verify
+    PROPERTIES
+      DEPENDS "mls.moving_apic_limit.smoke.a;mls.moving_apic_limit.smoke.b"
+      LABELS "deterministic;moving-apic-limit;smoke;independent"
+      PASS_REGULAR_EXPRESSION "MOVING APIC LIMIT BUNDLE SMOKE PROVISIONAL"
+      TIMEOUT 180)
+
+  add_test(
+    NAME mls.moving_apic_limit.validator.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/moving_apic_limit_bundle_validator_test.py"
+      --bundle
+      "${CMAKE_CURRENT_BINARY_DIR}/moving-apic-limit-smoke-a"
+      --validator
+      "${PROJECT_SOURCE_DIR}/reference/validate_moving_apic_limit_bundle.py")
+  set_tests_properties(
+    mls.moving_apic_limit.validator.regression
+    PROPERTIES
+      DEPENDS "mls.moving_apic_limit.smoke.a"
+      LABELS "deterministic;moving-apic-limit;validator;independent"
+      PASS_REGULAR_EXPRESSION "Moving APIC limit bundle validator regression: PASS"
+      TIMEOUT 180)
 
   add_test(
     NAME mls.exact.quick
