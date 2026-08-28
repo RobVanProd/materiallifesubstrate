@@ -16,17 +16,23 @@ validity, convergence, chemistry expressivity, or an MLS gate by itself.
 |---|---|---|
 | Quantities | Dimension-tagged signed 64-bit fixed quanta with checked arithmetic. | Unit metadata, conversions, dimensional products/quotients, uncertainty. |
 | Structural chemistry | Conserved element counts, compound graphs, additive properties, configured balanced reaction extents. | Dynamic bond search, kinetics, equilibrium, diffusion, catalysis, molecular geometry. |
-| Packet SoA | Persistent live handles, exact extensive stores, exactly representable ballistic integer motion, explicit pair transfers. | Fractional integration, forces, contact, deformation, damage, fracture, constitutive material history. |
+| Packet SoA | Persistent live handles, exact extensive stores, exactly representable dimensioned-time ballistic motion, explicit pair transfers. | Rounded/fractional integration, forces, contact, deformation, damage, fracture, constitutive material history. |
 | Sparse grid | Disposable point-to-voxel index and exact extensive aggregation. | MPM scatter/gather, fields, pressure, interpolation, sparse bricks, sleeping/paging. |
 | Physical support | Exact spherical point-support predicate from packet positions and a dimensioned radius. | Smooth kernels, packet extent/shape, contact, neighbor-search acceleration. |
 | Ledger/boundaries | Baseline-plus-signed-boundary audit for elements, mass, total energy, linear momentum, and orbital angular momentum. | Spin/couples, charge, transaction IDs, per-reservoir identities, numerical tolerances. |
-| World/hash | Deterministic orchestration, physical-support guard, audit hooks, order-independent packet-state hash. | Autonomous physics scheduling, checkpoint serialization, renderer, agents, ecology. |
+| World/hash | Deterministic orchestration, physical-support guard, dimensioned fixed-point clock, audit hooks, order-independent packet-state hash. | Autonomous physics scheduling, renderer, agents, ecology. |
+| Checkpoint | Canonical versioned little-endian authoritative restart image with exact replay. | Version migration, cryptographic authenticity, debug-history persistence. |
+| Transfer laboratory | Isolated deterministic binary64 PIC/APIC/FLIP diagnostic candidates and separate residuals. | Authoritative world integration, constitutive mechanics, physical validation, candidate promotion. |
 
-This file contains six numbered core records. The seventh record is the
+This file contains six numbered core records. Additional bounded records are the
 [physical interaction support contract](physical-support-contract.md), kept
 separate because it constrains every future pair law. Orbital angular momentum
 is a cross-cutting packet/ledger/world contract documented in
-[point-interaction angular momentum](angular-momentum-contract.md).
+[point-interaction angular momentum](angular-momentum-contract.md). Exact time
+and restart are specified in the
+[time/checkpoint contract](time-checkpoint-contract.md), and non-authoritative
+transfer candidates are specified in the
+[transfer-lab contract](transfer-lab-contract.md).
 
 The implemented program therefore does **not** satisfy Gates 2–15. It supplies
 reference accounting mechanisms and adversarial fixtures used on the path toward
@@ -54,10 +60,12 @@ The current world directly configures voxel-edge and interaction-radius lengths
 and an integer kinetic-energy scale denominator. It does not contain a general
 unit registry.
 
-`Time`, `Velocity`, and `Temperature` are defined types but are not used by the
-current stepping law. A `Tick` is a separate unsigned step counter. Consequently,
-the implementation does not yet establish relationships such as
-`velocity = length / time` or `temperature = thermal energy / heat capacity`.
+`Time` now represents exact configured physical-time quanta. A separate rational
+configuration declares seconds per quantum, while another explicit rational
+bridge relates raw momentum/mass/time quanta to displacement quanta. `Tick`
+remains a distinct unsigned operation counter. `Velocity` and `Temperature`
+remain type declarations without authoritative state or update laws; there is
+still no general unit registry.
 
 ### Update law
 
@@ -575,9 +583,10 @@ direct-store exception recovery.
 ### State variables
 
 - `WorldConfig`: voxel edge, positive physical interaction radius, positive
-  kinetic-energy scale denominator, packet history limit, and
-  audit-after-each-operation flag;
-- unsigned `tick`;
+  kinetic-energy scale denominator, positive dimensioned physical timestep,
+  rational seconds/time-quantum scale, rational raw momentum/mass/time-to-length
+  bridge, packet history limit, and audit-after-each-operation flag;
+- unsigned operation-order `tick` and distinct signed fixed-point physical time;
 - immutable-by-interface element catalog and compound registry after construction;
 - packet store, disposable sparse grid, and conservation ledger; and
 - no random stream, renderer, observer, agent, reward, or semantic world state.
@@ -588,11 +597,13 @@ derived rather than accepted from the caller.
 
 ### Units
 
-The world inherits all fixed quanta above. One call to `step()` is one implicit
-ballistic tick. There is no physical timestep quantity. `voxel_edge` maps
-position quanta to disposable control-volume indices; `interaction_radius`
-defines independent spherical point support; the kinetic denominator maps
-mass/momentum raw values to the reference energy convention.
+The world inherits all fixed quanta above. One call to `step()` applies the
+configured positive `Time` timestep and increments the independent `Tick`
+counter once. Seconds per time quantum and the momentum/mass/time-to-length raw
+bridge are explicit rational configuration. `voxel_edge` maps position quanta
+to disposable control-volume indices; `interaction_radius` defines independent
+spherical point support; the kinetic denominator maps mass/momentum raw values
+to the reference energy convention.
 
 ### Update law
 
@@ -610,8 +621,9 @@ mass/momentum raw values to the reference energy convention.
 - energy/boundary-point-impulse exchange precomputes the linear, angular, and
   energy ledger delta, mutates the
   candidate packet, rebuilds, and optionally audits; and
-- each step increments the tick, advances every live packet ballistically by one
-  integer tick, rebuilds the grid, and optionally audits.
+- each step advances physical time by the configured exact timestep, increments
+  the separate tick, advances every live packet by an exactly representable
+  dimensioned ballistic displacement, rebuilds the grid, and optionally audits.
 
 No force, contact, thermodynamic transport, reaction scheduling, or physical field
 is autonomously evaluated by `step`.
@@ -632,7 +644,8 @@ The physical-support guard is a modeling constraint, not a conservation law.
 
 The 64-bit FNV-1a hash includes:
 
-- tick, voxel edge, interaction radius, and kinetic-energy scale denominator;
+- tick, physical time, voxel edge, interaction radius, kinetic-energy scale
+  denominator, timestep, and both explicit rational unit scales;
 - ordered element properties and bond rules;
 - compound IDs, canonical atom sites, and canonical bonds; and
 - every live packet's position, integration remainder, momentum, mass, heat
@@ -650,12 +663,13 @@ cryptographic digest, checkpoint, audit-evidence hash, or proof of equivalence.
 
 - sequential deterministic reference operations on checked integers;
 - exact spherical point support without a smooth kernel, packet extent, or contact;
-- one-tick exactly representable ballistic stepping without force integration;
+- dimensioned, exactly representable ballistic stepping without force integration;
 - whole-grid rebuild after operations;
 - full-world copy staging on every mutating operation, deliberately favoring
   exception atomicity over production performance;
 - FNV-1a 64-bit regression hash with finite collision probability; and
-- no checkpoint encoding or cross-version schema.
+- a separate canonical v1 checkpoint whose FNV trailer detects accidental
+  corruption but provides no cryptographic authenticity.
 
 ### Failure modes and open review items
 
@@ -670,8 +684,8 @@ cryptographic digest, checkpoint, audit-evidence hash, or proof of equivalence.
 - the hash omits ledger state, so equal physical hashes can have different audit
   histories or expected baselines;
 - FNV collisions are possible and hashes are not tamper evidence;
-- no save/load round trip, version migration, backend replay, or independent hash
-  implementation is tested; and
+- canonical v1 roundtrip and restart are tested, but version migration and
+  backend replay remain unimplemented; and
 - deterministic replay in present unit tests does not establish determinism under
   future parallel/GPU reduction, different compilers, or changed laws.
 
@@ -691,6 +705,11 @@ cryptographic digest, checkpoint, audit-evidence hash, or proof of equivalence.
 - `hardening/abi/world_exposes_only_const_packet_store`
 - `hardening/angular/boundary_point_impulse_accounts_for_orbital_angular_momentum`
 - `hardening/angular/boundary_cross_overflow_rejects_whole_transition`
+- `hardening/timestep/physical_dt_is_configured_not_passed_as_Tick`
+- `time/physical_clock_is_dimensioned_and_not_Tick`
+- `time/dt_dt2_dt4_agree_at_a_common_exact_physical_horizon`
+- `time/invalid_scales_and_fractional_steps_reject_transactionally`
+- all `checkpoint/` canonical, replay, golden, and corruption cases
 - the complete angular transition mapping in
   [point-interaction angular momentum](angular-momentum-contract.md)
 - the grid-phase, rotation, edge/corner, extreme-coordinate, and voxel-authority
@@ -700,10 +719,11 @@ cryptographic digest, checkpoint, audit-evidence hash, or proof of equivalence.
 
 ## Review rule
 
-All seven subsystem records (six numbered records here plus the dedicated
-physical-support record) must be updated when their public state, operation,
-formula, or test mapping changes. Changes to point interaction, boundary, or
-ledger semantics must also update the cross-cutting angular-momentum contract.
+All records (the six numbered records here plus the dedicated physical-support,
+time/checkpoint, transfer-lab, and angular contracts) must be updated when their
+public state, operation, formula, or test mapping changes. Changes to point
+interaction, boundary, or ledger semantics must also update the cross-cutting
+angular-momentum contract.
 A release review must compare these documents to the actual headers and
 implementation and must list unmapped behaviors. Use the
 [publication/review evidence template](review-evidence-template.md) for every
