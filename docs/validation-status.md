@@ -17,10 +17,13 @@ Use these words literally:
 ## Current repository status
 
 At bootstrap, the architecture and contracts are specified. On 2026-08-28 the
-`formal/` tree, pinned to Lean/Mathlib `v4.33.0-rc1`, completed `lake build`
-successfully (`963 jobs`) and a Lean-source scan found no `sorry` or `admit`
-tokens. This promotes only the formal statements actually encoded there; it does
-not establish C++ conformance, numerical accuracy, or physical validity.
+pre-hardening `formal/` tree at
+`31c5733c618aead558dd7e4232a0976e2fc88bda`, pinned to Lean/Mathlib
+`v4.33.0-rc1`, completed `lake build` successfully (`963 jobs`) and a Lean-source
+scan found no proof placeholders. This historical result does not cover later
+hardening changes; each tested SHA needs its own evidence. A pass promotes only
+the formal statements actually encoded there and does not establish C++
+conformance, numerical accuracy, or physical validity.
 
 The committed exact-arithmetic reference was executed on 2026-08-28 with
 `python reference/exact_arithmetic_v0.py`. A second execution through

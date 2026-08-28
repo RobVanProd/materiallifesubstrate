@@ -16,10 +16,11 @@ validity, convergence, chemistry expressivity, or an MLS gate by itself.
 |---|---|---|
 | Quantities | Dimension-tagged signed 64-bit fixed quanta with checked arithmetic. | Unit metadata, conversions, dimensional products/quotients, uncertainty. |
 | Structural chemistry | Conserved element counts, compound graphs, additive properties, configured balanced reaction extents. | Dynamic bond search, kinetics, equilibrium, diffusion, catalysis, molecular geometry. |
-| Packet SoA | Persistent live handles, exact extensive stores, ballistic integer motion, explicit pair transfers. | Forces, contact, deformation, damage, fracture, constitutive material history. |
+| Packet SoA | Persistent live handles, exact extensive stores, exactly representable ballistic integer motion, explicit pair transfers. | Fractional integration, forces, contact, deformation, damage, fracture, constitutive material history. |
 | Sparse grid | Disposable point-to-voxel index and exact extensive aggregation. | MPM scatter/gather, fields, pressure, interpolation, sparse bricks, sleeping/paging. |
-| Ledger/boundaries | Baseline-plus-signed-boundary audit for elements, mass, total energy, and momentum. | Angular momentum, charge, transaction IDs, per-reservoir identities, numerical tolerances. |
-| World/hash | Deterministic orchestration, locality guard, audit hooks, order-independent packet-state hash. | Autonomous physics scheduling, checkpoint serialization, renderer, agents, ecology. |
+| Physical support | Exact spherical point-support predicate from packet positions and a dimensioned radius. | Smooth kernels, packet extent/shape, contact, neighbor-search acceleration. |
+| Ledger/boundaries | Baseline-plus-signed-boundary audit for elements, mass, total energy, linear momentum, and orbital angular momentum. | Spin/couples, charge, transaction IDs, per-reservoir identities, numerical tolerances. |
+| World/hash | Deterministic orchestration, physical-support guard, audit hooks, order-independent packet-state hash. | Autonomous physics scheduling, checkpoint serialization, renderer, agents, ecology. |
 
 The implemented program therefore does **not** satisfy Gates 2–15. It supplies
 reference accounting mechanisms and adversarial fixtures used on the path toward
@@ -33,17 +34,19 @@ Gates 0–1, plus limited scaffolds relevant to Gates 3–5 and 7.
 
 - `Scalar`: signed 64-bit integer (`int64_t`).
 - `Quantity<DimensionTag>::value_`: one scalar count of caller-defined quanta.
-- Tags: `Length`, `Mass`, `Time`, `Velocity`, `Momentum`, `Energy`,
+- Tags: `Length`, `Mass`, `Time`, `Velocity`, `Momentum`, `AngularMomentum`, `Energy`,
   `Temperature`, and `HeatCapacity`.
 - `Vector3<Q>`: component-wise `x`, `y`, and `z` quantities; currently used for
-  position, velocity type declarations, and momentum.
+  position, velocity type declarations, linear momentum, and orbital angular
+  momentum.
 
 ### Units
 
 Each raw value is a fixed-point quantum count. The conversion from one raw count
 to a physical unit is scenario configuration and is not stored in `Quantity`.
-The current world directly configures a voxel-edge length and an integer kinetic-
-energy scale denominator. It does not contain a general unit registry.
+The current world directly configures voxel-edge and interaction-radius lengths
+and an integer kinetic-energy scale denominator. It does not contain a general
+unit registry.
 
 `Time`, `Velocity`, and `Temperature` are defined types but are not used by the
 current stepping law. A `Tick` is a separate unsigned step counter. Consequently,
@@ -107,10 +110,13 @@ coupling in `World::apply_reaction`.
 - `ElementId`: unsigned 16-bit configured element key.
 - `ElementInventory`: ordered map from element key to non-negative signed 64-bit
   count; zero entries are removed.
-- `CompoundGraph`: ordered atom-site vector plus normalized, sorted bonds. Each
-  bond stores two site indices and a positive 8-bit order.
-- `CompoundId`: 64-bit FNV-1a cache key over atom-site order and normalized bond
-  topology.
+- `CompoundGraph`: a connected labeled graph with at most eight atom sites in
+  the bounded reference model. Construction canonicalizes site numbering and
+  bond order into a deterministic labeled-graph encoding. Each bond stores two
+  site indices and a positive 8-bit order after canonicalization.
+- `CompoundId`: 64-bit FNV-1a cache key over the canonical labeled-graph
+  encoding. It is not authoritative identity: the registry compares canonical
+  graphs and rejects hash collisions.
 - `ElementProperties`: per-element mass, heat capacity, and isolated structural
   energy.
 - `ElementCatalog`: element properties and symmetric element-pair/bond-order
@@ -181,8 +187,11 @@ does **not** enforce stoichiometric balance.
 
 - integer molecule counts and extents;
 - additive atom properties and pair-bond structural energy;
-- atom-site ordering is part of identity; full graph-isomorphism canonicalization
-  is not implemented;
+- deterministic graph-isomorphism canonicalization by exhaustive site
+  permutation, bounded to at most eight atom sites (`8!` candidates);
+- disconnected graphs are rejected because this model has no explicit spatial
+  complex representation; and
+- at most one bond, with one order, may connect any pair of atom sites;
 - configured reaction definitions, not generic dynamic bond rearrangement;
 - externally selected extent, with no rate law or transport coupling; and
 - all reaction occurs inside one packet.
@@ -194,14 +203,15 @@ system if treated as the final model.
 ### Failure modes and open review items
 
 - unknown element, compound, or bond rule;
-- empty graph, invalid site index, self-bond, zero-order bond, or duplicate bond;
+- empty graph, more than eight atom sites, invalid site index, self-bond,
+  zero-order bond, disconnected graph, or multiple bonds between one site pair;
 - duplicate catalog definition or structural-hash collision;
 - non-positive stoichiometric coefficient, empty side, negative extent, reactant
   overdraw, count overflow, or an unbalanced world reaction;
 - configured binding energy greater than isolated energy;
 - insufficient thermal energy for activation or structural-energy increase;
-- graph-isomorphic compounds with different atom-site order receive different
-  keys unless producers canonicalize them;
+- factorial canonicalization cost is deliberately contained by the eight-site
+  bound; raising the bound requires replacing or re-validating this algorithm;
 - FNV-1a is a cache hash, not a cryptographic identity;
 - activation threshold behavior has no kinetic interpretation and does not debit
   activation energy; and
@@ -212,6 +222,10 @@ system if treated as the final model.
 
 - `G0.G4/stoichiometric_balance_and_random_extents`
 - `G4/compound_identity_is_structural_not_named_material`
+- `hard-contract/compound_identity_is_invariant_under_site_renumbering`
+- `hard-contract/compound_identity_rejects_disconnected_molecular_graph`
+- `hard-contract/compound_identity_rejects_parallel_bond_encodings`
+- `hard-contract/compound_canonicalization_has_an_explicit_size_bound`
 - `hard-contract/deterministic_replay_and_state_hash` exercises repeated world
   reaction application
 - exact-reference six balanced definitions and 100,000 random extents
@@ -236,6 +250,11 @@ ID-to-slot map, history limit, and kinetic-energy scale denominator.
 audit/debug/ownership metadata; stepping does not read history. Erased slots are
 marked dead and are not currently reused.
 
+All mutation methods are private to `World`; production callers receive only the
+const packet-store view exposed by `World::packets()`. A separately defined
+test-only friend seam exercises raw SoA failure behavior without making those
+operations part of the authoritative public transition ABI.
+
 ### Units
 
 - position: length quanta;
@@ -253,15 +272,11 @@ quanta. The code checks positivity, not the physical consistency of that choice.
 
 ### Update laws
 
-For each axis, Euclidean division writes
-
-\[
-p=q m+r,\qquad 0\le r<m.
-\]
-
-One tick advances integer position by `q` plus any carry from `old_remainder + r`
-and stores the new remainder. With constant mass and momentum, this retains the
-sub-position-quantum residue of ballistic motion.
+For each axis, an accepted ballistic tick requires a zero stored remainder and
+`momentum_raw % mass_raw == 0`. It then advances position by the exact integer
+quotient. A fractional displacement is rejected transactionally. This narrow
+rule makes the point-state orbital-angular-momentum audit exact; it is not a
+production integration scheme.
 
 Kinetic energy is
 
@@ -277,32 +292,34 @@ Other implemented transactions are:
 
 - heat transfer: `thermal_from -= E`, `thermal_to += E`;
 - channel conversion: debit one of stored/thermal and credit the other;
-- pair impulse: `p1 += J`, `p2 -= J`; pay a quantized kinetic increase from the
-  chosen participant's stored energy or deposit a decrease as heat in the chosen
-  participant;
+- actuated/dissipative central pair impulse: require
+  `(r1-r2) x J == 0`, apply `p1 += J`, `p2 -= J`, pay a quantized kinetic increase
+  from the chosen participant's stored energy, or irreversibly deposit a decrease
+  as heat in the chosen participant;
 - composition replacement: require exact inventory and mass equality, then pair
   structural-energy change with thermal energy; and
 - boundary energy/momentum adjustment primitives for world-mediated ledger use.
 
 ### Conservation law
 
-Accepted internal heat and channel transfers preserve total packet energy. Pair
-impulse preserves total momentum exactly and preserves total quantized energy by
-the stored/thermal correction. Composition replacement preserves element
+Accepted internal heat and channel transfers preserve total packet energy. The
+accepted central point impulse preserves linear and orbital angular momentum
+exactly and preserves total quantized energy by the stored/thermal correction.
+Composition replacement preserves element
 inventory, mass, and `structural + thermal` energy. Ballistic position advance
 does not change any extensive total.
 
-`PacketStore::create`, `erase`, and the boundary adjustment methods do not own a
-conservation ledger. They are conservative only when invoked through the world's
-scenario/boundary protocol. Direct use is intentionally useful for adversarial
-tests but is not an agent ABI.
+Packet creation, erasure, and boundary adjustment do not own a conservation
+ledger. They are accepted only through the world's staged scenario/boundary
+protocol. The test-only friend seam can deliberately bypass that protocol for
+adversarial ledger tests but is not production API.
 
 ### Numerical/model approximation
 
 - packets are point carriers without volume, deformation, stress, bonds between
   packets, or constitutive history;
-- ballistic, force-free motion at an implicit one-tick interval;
-- component position remainder but quantized kinetic-energy flooring;
+- ballistic, force-free, exact-integer motion at an implicit one-tick interval;
+- rejection of fractional displacement and quantized kinetic-energy flooring;
 - heat amounts and impulses are selected by callers, not solved from gradients,
   contact, or fields;
 - channel conversion is lossless and has no entropy/rate model; and
@@ -317,13 +334,15 @@ tests but is not an agent ABI.
 - arithmetic overflow while squaring momentum or updating state;
 - heat/channel overdraw and insufficient stored energy for a kinetic increase;
 - invalid energy source/sink not participating in the impulse pair;
-- grid-scale locality is absent when callers bypass `World`;
+- the test-only friend seam bypasses physical support and ledger policy by design;
+- no spin/couple state exists, so non-central point impulses are rejected;
+- the actuated/dissipative impulse scaffold is not conservative mechanics;
 - quantized kinetic energy may produce resolution-sensitive collision economics;
 - no physical timestep/refinement parameter, force integration, or stability
   analysis;
 - bounded history drops oldest events and history-disabled runs retain none;
-- store operations are not a substitute for transactional world/checkpoint
-  recovery under allocation or unexpected exceptions; and
+- raw test-seam store operations are not allocation-failure atomic; authoritative
+  `World` operations stage them on a copy before commit; and
 - creation/removal is representation control, not biological birth/death.
 
 ### Mapped tests
@@ -351,8 +370,10 @@ failure atomicity under allocation or other non-arithmetic exceptions.
 
 - positive voxel-edge length;
 - ordered map from signed integer `VoxelCoord{x,y,z}` to `VoxelCell`;
-- per cell: live packet handles and exact aggregate element, mass, four energy-
-  store, momentum, and packet-count totals.
+- per cell: live packet handles and an optional diagnostic fixed-width extensive
+  total; and
+- a private disposable packet-snapshot grouping used only for diagnostic
+  aggregation.
 
 This entire structure is disposable derived state. `PacketStore` is authoritative.
 
@@ -371,15 +392,19 @@ cell_i=\left\lfloor position_i/voxelEdge\right\rfloor,
 
 including mathematical-floor behavior for negative positions. `rebuild` clears
 the prior map, snapshots every live packet, assigns it to one point cell, and sums
-its extensive state. `aggregate` sums requested cell totals. `face_local` accepts
-the same cell or one of six face-adjacent cells (`Manhattan distance <= 1`).
+its diagnostic extensive state when that cell's true result fits the reporting
+range. `aggregate` refolds requested packet snapshots. The grid exposes no
+physical-locality predicate; candidate indexing and interaction authorization
+are deliberately separate.
 
 ### Conservation law
 
-A complete rebuild contains each live packet once, so summing all cells must equal
-a direct packet sum. Grid aggregation is extensive only; it never becomes packet
-state and is never supplied to reactions. Rebuilding therefore cannot itself
-move, create, merge, or transform matter.
+An authoritative world total folds `PacketStore` snapshots directly, independent
+of voxel groups. Signed linear/angular components use a cancellation-safe order,
+so an intermediate cell or packet order cannot overflow when the final total is
+representable. Grid aggregation is diagnostic only; it never becomes packet
+state, authorizes a transition, supplies reactions, or defines the world ledger.
+Rebuilding therefore cannot itself move, create, merge, or transform matter.
 
 ### Numerical/model approximation
 
@@ -387,15 +412,15 @@ move, create, merge, or transform matter.
 - no particle-to-grid interpolation or grid-to-particle transfer;
 - no MPM mass/momentum solve, pressure, heat, chemistry, or field state;
 - a full ordered-map rebuild rather than sparse bricks or incremental updates;
-- no sleep, page, refinement, or local-time-step mechanism; and
-- locality approximated by cell identity/face adjacency, not physical distance or
-  a support kernel.
+- no sleep, page, refinement, local-time-step, or candidate-neighbor mechanism;
+  and
+- fixed-width per-cell totals may be unavailable when the cell result is outside
+  range, without rejecting an otherwise representable authoritative world total.
 
 ### Failure modes and open review items
 
-- interactions can change discontinuously at voxel boundaries;
-- same/face-adjacent packets may be physically far apart, while diagonal packets
-  may be arbitrarily close but rejected;
+- any future candidate-neighbor implementation must be a conservative superset of
+  the independent physical-support predicate;
 - duplicate coordinates passed to `aggregate` are rejected rather than counted
   repeatedly;
 - extensive aggregation can invent chemical/mechanical affordances and therefore
@@ -413,6 +438,9 @@ move, create, merge, or transform matter.
 - `adversarial/uniform_grid_translation_preserves_extensive_outcomes`
 - `G5/proper_cubic_rotation_equivariance_scaffold`
 - `G5/adversarial_rational_off_axis_rotation_preserves_ballistic_invariants`
+- `hardening/support/voxel_membership_neither_authorizes_nor_rejects_interaction`
+- `hardening/support/eligibility_is_invariant_across_fractional_voxel_phases`
+- `hardening/grid/diagnostic_cell_overflow_cannot_gate_authoritative_totals`
 
 These tests do not establish MPM behavior, transport accuracy, arbitrary-angle
 isotropy, or safe coarse graining.
@@ -425,20 +453,22 @@ orchestration in `World`.
 ### State variables
 
 - `baseline`: extensive element, mass, structural/stored/thermal/kinetic energy,
-  momentum, and packet-count totals at the selected reference state;
-- `boundary`: signed net element, mass, total-energy, and momentum ingress since
+  linear momentum, orbital angular momentum, and packet-count totals at the selected reference state;
+- `boundary`: signed net element, mass, total-energy, linear-momentum, and
+  orbital-angular-momentum ingress since
   the baseline (`ingress > 0`, `egress < 0`); and
 - `ConservationReport`: exact error values and booleans for elements, mass, total
-  energy, and momentum.
+  energy, linear momentum, and orbital angular momentum.
 
 The current audit does not compare packet count or individual energy channels,
 although those values exist in baseline totals.
 
 ### Units
 
-Ledger entries use the same exact element counts, mass quanta, energy quanta, and
-momentum quanta as packets. There is no tolerance or floating residual in this
-reference ledger: an audited error must equal integer zero.
+Ledger entries use the same exact element counts, mass quanta, energy quanta,
+momentum quanta, and derived length-times-momentum quanta as packets. There is no
+tolerance or floating residual in this reference ledger: an audited error must
+equal integer zero.
 
 ### Update and audit law
 
@@ -450,10 +480,10 @@ error_Q=Q_{current}-Q_{expected}.
 \]
 
 Material ingress/egress rejects negative extensive amounts, then records its
-element inventory, mass, total energy, and momentum together. Energy-only and
-momentum-only ports record signed changes;
-world momentum exchange also records the corresponding change in quantized
-kinetic energy.
+element inventory, mass, total energy, linear momentum, and orbital angular
+momentum together. Energy-only ports record signed changes. A boundary point
+impulse records `J`, `r x J`, and the corresponding quantized kinetic-energy
+change in one staged world candidate.
 
 `World` applies ledger and packet changes to a complete candidate world and
 commits only after rebuild/audit. Introduction and extraction are
@@ -462,8 +492,9 @@ all accumulated boundary net values and is likewise scenario authority.
 
 ### Conservation law
 
-An audit passes iff current element inventories, mass, total energy, and momentum
-all exactly equal baseline plus signed boundary net. Internal energy may move
+An audit passes iff current element inventories, mass, total energy, linear
+momentum, and orbital angular momentum all exactly equal baseline plus signed
+boundary net. Internal energy may move
 between structural, stored, thermal, and kinetic channels without changing the
 audited total.
 
@@ -471,14 +502,14 @@ audited total.
 
 - global exact reconciliation, not a spatially resolved transaction ledger;
 - one net boundary accumulator, not named reservoirs or per-event double entries;
-- no angular momentum, charge, field source, entropy, surface energy, or numerical
+- no spin/couple, charge, field source, entropy, surface energy, or numerical
   residual accounting; and
 - no tolerance model because current arithmetic is integral.
 
 ### Failure modes and open review items
 
-- direct packet-store boundary mutation bypasses the ledger and is detected only
-  when audit runs;
+- the non-production test friend can bypass the ledger so adversarial corruption
+  remains testable; production mutation is private to staged `World` operations;
 - recording an incorrect sign or amount can make a physical error appear closed;
 - no transaction ID ties a local debit to a credit;
 - cancellation in the global net can hide large opposite local errors;
@@ -487,7 +518,7 @@ audited total.
   invokes it without a prior successful audit;
 - packet count/identity changes are not audited (numerical packet split/merge
   would require separate provenance); and
-- direct packet-store mutation remains outside the staged world transaction.
+- the raw test-only packet-store seam remains outside the staged world transaction.
 
 ### Mapped tests
 
@@ -500,7 +531,7 @@ audited total.
 - exact-reference 100,000 energy-ledger cases
 
 Current gaps include wrong-sign injection, baseline-reset misuse, local
-transaction reconciliation, angular momentum, multiple named reservoirs, and
+transaction reconciliation, spin/couple accounting, multiple named reservoirs, and
 direct-store exception recovery.
 
 ## 6. World orchestration and physical-state hash
@@ -509,8 +540,9 @@ direct-store exception recovery.
 
 ### State variables
 
-- `WorldConfig`: voxel edge, positive kinetic-energy scale denominator, packet
-  history limit, and audit-after-each-operation flag;
+- `WorldConfig`: voxel edge, positive physical interaction radius, positive
+  kinetic-energy scale denominator, packet history limit, and
+  audit-after-each-operation flag;
 - unsigned `tick`;
 - immutable-by-interface element catalog and compound registry after construction;
 - packet store, disposable sparse grid, and conservation ledger; and
@@ -523,9 +555,10 @@ derived rather than accepted from the caller.
 ### Units
 
 The world inherits all fixed quanta above. One call to `step()` is one implicit
-ballistic tick. There is no physical timestep quantity. `voxel_edge` maps position
-quanta to control-volume indices; the kinetic denominator maps mass/momentum raw
-values to the reference energy convention.
+ballistic tick. There is no physical timestep quantity. `voxel_edge` maps
+position quanta to disposable control-volume indices; `interaction_radius`
+defines independent spherical point support; the kinetic denominator maps
+mass/momentum raw values to the reference energy convention.
 
 ### Update law
 
@@ -536,10 +569,12 @@ values to the reference energy convention.
   move assignment only after rebuild and any configured audit succeed;
 - material boundary ports derive packet properties and pair packet creation or
   removal with ledger ingress/egress inside that candidate;
-- heat and pair-momentum operations require packets in the same or face-adjacent
-  voxel, delegate to the packet store, rebuild the grid, and optionally audit;
+- heat and actuated/dissipative central-impulse operations require packet
+  positions inside the configured spherical support, delegate to the packet
+  store, rebuild the grid, and optionally audit;
 - energy conversion and balanced single-packet reaction delegate similarly;
-- energy/momentum boundary exchange precomputes the ledger delta, mutates the
+- energy/boundary-point-impulse exchange precomputes the linear, angular, and
+  energy ledger delta, mutates the
   candidate packet, rebuilds, and optionally audits; and
 - each step increments the tick, advances every live packet ballistically by one
   integer tick, rebuilds the grid, and optionally audits.
@@ -550,21 +585,22 @@ is autonomously evaluated by `step`.
 ### Conservation law
 
 Every world-mediated internal transaction is intended to preserve element
-inventory, mass, total energy, and momentum. Every open-boundary transaction is
+inventory, mass, total energy, linear momentum, and orbital angular momentum.
+Every open-boundary transaction is
 paired with the signed ledger delta. Arithmetic, allocation, rebuild, or audit
 failure before commit leaves the original world unchanged. With audit mode
 enabled, a failed candidate audit raises an error; with it disabled, callers must
 audit explicitly.
 
-The locality guard is a modeling constraint, not a conservation law.
+The physical-support guard is a modeling constraint, not a conservation law.
 
 ### Physical-state hash law
 
 The 64-bit FNV-1a hash includes:
 
-- tick, voxel edge, and kinetic-energy scale denominator;
+- tick, voxel edge, interaction radius, and kinetic-energy scale denominator;
 - ordered element properties and bond rules;
-- compound IDs, ordered atom sites, and normalized bonds; and
+- compound IDs, canonical atom sites, and canonical bonds; and
 - every live packet's position, integration remainder, momentum, mass, heat
   capacity, structural/stored/thermal energy, and compound counts.
 
@@ -579,8 +615,8 @@ cryptographic digest, checkpoint, audit-evidence hash, or proof of equivalence.
 ### Numerical/model approximation
 
 - sequential deterministic reference operations on checked integers;
-- voxel face-locality instead of geometric support/contact;
-- one-tick ballistic stepping without force integration;
+- exact spherical point support without a smooth kernel, packet extent, or contact;
+- one-tick exactly representable ballistic stepping without force integration;
 - whole-grid rebuild after operations;
 - full-world copy staging on every mutating operation, deliberately favoring
   exception atomicity over production performance;
@@ -593,9 +629,10 @@ cryptographic digest, checkpoint, audit-evidence hash, or proof of equivalence.
   system does not yet issue scenario-only capabilities;
 - disabling automatic audit permits an invalid state to persist until explicit
   audit;
-- direct `PacketStore` use is not covered by world-level copy staging, and
-  debug-history allocation failure is not fault-injection tested;
-- grid locality is discontinuous and resolution-dependent;
+- the raw test-only packet-store seam is not covered by world-level copy staging,
+  and debug-history allocation failure is not fault-injection tested;
+- the physical-support cutoff is discontinuous at its radius and has not been
+  validated as a kernel;
 - the hash omits ledger state, so equal physical hashes can have different audit
   histories or expected baselines;
 - FNV collisions are possible and hashes are not tamper evidence;

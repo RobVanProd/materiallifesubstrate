@@ -142,7 +142,7 @@ start/end times, duration, exit code, and raw-log hashes.
 | EXACT-V0 | `<required>` | `python reference/exact_arithmetic_v0.py` | `<required>` | `<required>` | `<required>` | `<counts/hash>` |
 | EXACT-VERIFY | `<required>` | `python tools/exact_validation.py --mode full --provenance-only --verify reference/validation_results_v0.json` | `<required>` | `<required>` | `<required>` | `<PASS/FAIL>` |
 | EXACT-EXT | `<required>` | `python tools/exact_validation.py --mode full --output <artifact-path>` | `<required>` | `<required>` | `<required>` | `<PASS/FAIL>` |
-| LEAN | `formal/` | `lake update` then `lake build` | `<required>` | `<required>` | `<required>` | `<KERNEL PASS/FAIL/NOT RUN>` |
+| LEAN | `formal/` | `lake --wfail build` (committed manifest; no update) | `<required>` | `<required>` | `<required>` | `<KERNEL PASS/FAIL/NOT RUN>` |
 
 The expected historical provenance baseline for `EXACT-V0` and `EXACT-VERIFY` is:
 
@@ -240,7 +240,8 @@ Mandatory known-limitations checklist:
 - [ ] Current `step` is ballistic only; no force/contact/fracture solver.
 - [ ] Sparse grid is a disposable index; no MPM scatter/gather.
 - [ ] Chemistry uses configured integer reaction extents; no kinetics/equilibrium.
-- [ ] Ledger omits angular momentum, charge, local transaction pairs, and named reservoirs.
+- [ ] Ledger includes checked orbital angular momentum but omits spin/couples,
+      charge, local transaction pairs, and named reservoirs.
 - [ ] FNV-1a physical hash is non-cryptographic and omits ledger history.
 - [ ] No unit-test pass is being presented as physical validity.
 - [ ] Lean status is stated from an executed build, or explicitly `NOT RUN`.

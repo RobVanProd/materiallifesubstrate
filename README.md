@@ -35,6 +35,8 @@ or `reward`. Those may exist only as observer interpretations.
 - [MLS v0.1 integrated specification](docs/specification-v0.1.md)
 - [Architecture and state contract](docs/architecture.md)
 - [Implemented subsystem contracts](docs/implemented-subsystem-contracts.md)
+- [Physical interaction support contract](docs/physical-support-contract.md)
+- [Point-interaction angular-momentum contract](docs/angular-momentum-contract.md)
 - [Forbidden-semantics contract](docs/forbidden-semantics.md)
 - [Accounting invariants](docs/accounting-invariants.md)
 - [Research roadmap and gates](docs/roadmap.md)
@@ -44,9 +46,14 @@ or `reward`. Those may exist only as observer interpretations.
 - [Dynamic similarity](docs/dynamic-similarity.md)
 - [Hypotheses and falsifiers](docs/hypotheses.md)
 - [Validation and proof boundary](docs/validation-status.md)
+- [Cross-environment replication gate](docs/replication-gate.md)
 - [Publication/review evidence template](docs/review-evidence-template.md)
 - [2026-08-28 MLS-0 baseline evidence](docs/review-evidence-2026-08-28-baseline.md)
 - [Prior-art debts](docs/prior-art.md)
+
+The historical and hardening Python oracles under `reference/` import no C++
+bindings or production implementation modules. Their role is independent exact
+cross-checking, not validation of physical behavior.
 
 ## Intended implementation boundary
 
