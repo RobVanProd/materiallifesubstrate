@@ -5,6 +5,7 @@ import MLSFormal.Scaling
 import MLSFormal.SimulationSafety
 import MLSFormal.TransitionModel
 import MLSFormal.TransferLab
+import MLSFormal.AffineAdvection
 
 /-!
 Complete kernel axiom report for every theorem exported by the MLSFormal
@@ -46,3 +47,13 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.g2pPIC_reproduces_affineVelocity
 #print axioms MLSFormal.g2pAPIC_reproduces_affine
 #print axioms MLSFormal.p2gAPIC_preserves_angularMomentum
+#print axioms MLSFormal.convectedAffine_preserves_material_velocity
+#print axioms MLSFormal.staleAffineGradient_exact_defect
+#print axioms MLSFormal.convectedAffine_two_half_steps_material_refinement
+#print axioms MLSFormal.convectedGenerator_preserves_material_velocity
+#print axioms MLSFormal.convectedGenerator_two_half_steps_equal_full_step
+#print axioms MLSFormal.homogeneousAffineGenerator_on_position
+#print axioms MLSFormal.homogeneousGeneratorStep_on_position
+#print axioms MLSFormal.homogeneousAffineStepInverse_is_inverse
+#print axioms MLSFormal.convectedHomogeneousAffineGenerator_formula
+#print axioms MLSFormal.convectedAffine_two_half_steps_equal_full_update

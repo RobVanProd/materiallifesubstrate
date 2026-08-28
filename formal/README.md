@@ -51,6 +51,16 @@ Lean kernel build is authoritative for theorem acceptance.
   assumptions, and transition-definition-level mass, linear-momentum, affine
   reproduction, and APIC orbital-plus-affine angular-momentum theorems. It does
   not model a time integrator or continuum mechanics.
+- `AffineAdvection.lean`: exact force-free affine advection with explicit
+  two-sided inverse witnesses, the convected formulas
+  `A' = A (I + dt A)⁻¹` and `b' = (I + dt A)⁻¹ b`, material-velocity
+  preservation, an exact stale-gradient defect, and a homogeneous-coordinate
+  proof that two analytic half steps equal one full step. The formal bridge
+  constructs the full homogeneous inverse from the stated affine inverse and
+  reduces the generator update back to the displayed `A'` and `b'` formulas;
+  the resulting coefficient-level theorem proves that two half-step updates
+  equal one full-step update. It introduces no inverse or conservation axioms
+  and models no forces or constitutive laws.
 - `AxiomReport.lean`: committed `#print axioms` coverage for every theorem
   exported by all project modules; CI checks declarations against this list.
 
