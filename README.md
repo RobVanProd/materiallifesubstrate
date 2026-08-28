@@ -45,6 +45,7 @@ or `reward`. Those may exist only as observer interpretations.
 - [Hypotheses and falsifiers](docs/hypotheses.md)
 - [Validation and proof boundary](docs/validation-status.md)
 - [Publication/review evidence template](docs/review-evidence-template.md)
+- [2026-08-28 MLS-0 baseline evidence](docs/review-evidence-2026-08-28-baseline.md)
 - [Prior-art debts](docs/prior-art.md)
 
 ## Intended implementation boundary
