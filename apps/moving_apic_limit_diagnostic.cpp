@@ -53,7 +53,6 @@ using mls::experimental::affine_advection::MovingApicStep;
 using mls::experimental::moving_apic_limit::OracleBIntervention;
 
 constexpr std::uint64_t seed = 260828;
-constexpr std::int64_t time_quantum_denominator = 160;
 constexpr std::int64_t horizon_quanta = 16;
 constexpr double time_quantum_s = 1.0 / 160.0;
 constexpr double horizon_s = 0.1;
