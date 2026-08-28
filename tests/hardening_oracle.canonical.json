@@ -1,0 +1,14 @@
+{
+  "angular_delta_cases": 10000,
+  "canonical_isomorphism_cases": 1,
+  "dissipative_cycle_cases": 1,
+  "noncentral_counterexample_delta": [
+    0,
+    0,
+    1
+  ],
+  "rejected_graph_cases": 2,
+  "result_sha256_before_hash_field": "9546019b4f346fe25463f2e065bc04b139987391b39c684df178f319a9e70630",
+  "seed": 260828,
+  "support_translation_cases": 1596
+}

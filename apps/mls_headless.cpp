@@ -29,8 +29,9 @@ namespace {
     const mls::SparseVoxelGrid& grid, mls::ElementId first, mls::ElementId second) {
     for (const auto& [coordinate, cell] : grid.cells()) {
         static_cast<void>(coordinate);
-        if (cell.totals.elements.amount(first) > 0 &&
-            cell.totals.elements.amount(second) > 0) {
+        if (cell.totals.has_value() &&
+            cell.totals->elements.amount(first) > 0 &&
+            cell.totals->elements.amount(second) > 0) {
             return true;
         }
     }
@@ -87,11 +88,11 @@ int main() {
     const auto lossy_aggregate_looks_reactable =
         aggregated.elements.amount(a) > 0 && aggregated.elements.amount(b) > 0;
 
-    world.exchange_momentum_with_boundary(
+    world.apply_point_impulse_from_boundary(
         packet_a,
         Momentum3{
             Momentum::from_raw(10), Momentum::from_raw(0), Momentum::from_raw(0)});
-    world.exchange_momentum_with_boundary(
+    world.apply_point_impulse_from_boundary(
         packet_b,
         Momentum3{
             Momentum::from_raw(-10), Momentum::from_raw(0), Momentum::from_raw(0)});

@@ -81,6 +81,9 @@ World::World(ElementCatalog elements, CompoundRegistry compounds, WorldConfig co
     if (config_.kinetic_energy_scale_denominator <= 0) {
         throw std::invalid_argument("kinetic energy scale denominator must be positive");
     }
+    if (config_.interaction_radius.raw() <= 0) {
+        throw std::invalid_argument("interaction radius must be positive");
+    }
     // Validate all configured structures eagerly so laws cannot change merely
     // because a compound first participates in an operation.
     for (const auto& [id, compound] : compounds_.compounds()) {
@@ -90,7 +93,7 @@ World::World(ElementCatalog elements, CompoundRegistry compounds, WorldConfig co
         static_cast<void>(elements_.molecule_structural_energy(compound));
     }
     grid_.rebuild(packets_);
-    ledger_.establish_baseline(grid_.totals());
+    ledger_.establish_baseline(authoritative_totals(packets_));
 }
 
 PacketHandle World::introduce_material_from_boundary(const MaterialSeed& seed) {
@@ -146,17 +149,17 @@ void World::remove_material_to_boundary(PacketHandle packet) {
     *this = std::move(candidate);
 }
 
-void World::require_local(PacketHandle first, PacketHandle second) const {
-    const auto first_coordinate = grid_.coordinate_for(packets_.snapshot(first).position);
-    const auto second_coordinate = grid_.coordinate_for(packets_.snapshot(second).position);
-    if (!face_local(first_coordinate, second_coordinate)) {
-        throw std::domain_error("operation requires packets in the same or face-adjacent voxel");
+void World::require_physical_support(PacketHandle first, PacketHandle second) const {
+    const auto first_position = packets_.snapshot(first).position;
+    const auto second_position = packets_.snapshot(second).position;
+    if (!within_spherical_support(first_position, second_position, config_.interaction_radius)) {
+        throw std::domain_error("operation requires packets inside physical interaction support");
     }
 }
 
 void World::transfer_heat(PacketHandle from, PacketHandle to, Energy amount) {
     auto candidate = *this;
-    candidate.require_local(from, to);
+    candidate.require_physical_support(from, to);
     candidate.packets_.transfer_heat(from, to, amount, candidate.tick_);
     candidate.rebuild_and_verify();
     *this = std::move(candidate);
@@ -170,15 +173,22 @@ void World::convert_energy(
     *this = std::move(candidate);
 }
 
-void World::exchange_momentum(
+void World::apply_actuated_dissipative_central_impulse(
     PacketHandle first,
     PacketHandle second,
     Momentum3 impulse_to_first,
     PacketHandle energy_source,
     PacketHandle dissipation_sink) {
     auto candidate = *this;
-    candidate.require_local(first, second);
-    candidate.packets_.exchange_momentum(
+    candidate.require_physical_support(first, second);
+    const auto first_position = candidate.packets_.snapshot(first).position;
+    const auto second_position = candidate.packets_.snapshot(second).position;
+    if (pair_angular_momentum_delta(first_position, second_position, impulse_to_first) !=
+        AngularMomentum3{}) {
+        throw std::domain_error(
+            "point interaction impulse must be central to conserve angular momentum");
+    }
+    candidate.packets_.apply_actuated_dissipative_central_pair_impulse(
         first,
         second,
         impulse_to_first,
@@ -227,14 +237,14 @@ void World::exchange_energy_with_boundary(
     *this = std::move(candidate);
 }
 
-void World::exchange_momentum_with_boundary(PacketHandle packet, Momentum3 impulse) {
+void World::apply_point_impulse_from_boundary(PacketHandle packet, Momentum3 impulse) {
     auto candidate = *this;
     const auto before = candidate.packets_.snapshot(packet);
     const auto after_momentum = before.momentum + impulse;
     const auto after_kinetic = kinetic_energy_of(
         before.mass, after_momentum, candidate.config_.kinetic_energy_scale_denominator);
     const auto energy_delta = after_kinetic - before.kinetic_energy;
-    candidate.ledger_.record_boundary_momentum(impulse);
+    candidate.ledger_.record_boundary_point_impulse(before.position, impulse);
     candidate.ledger_.record_boundary_energy(energy_delta);
     const auto applied_delta =
         candidate.packets_.adjust_boundary_momentum(packet, impulse, candidate.tick_);
@@ -264,11 +274,11 @@ void World::step(Tick count) {
 
 void World::establish_current_state_as_baseline() {
     grid_.rebuild(packets_);
-    ledger_.establish_baseline(grid_.totals());
+    ledger_.establish_baseline(authoritative_totals(packets_));
 }
 
 ExtensiveTotals World::totals() const {
-    return grid_.totals();
+    return authoritative_totals(packets_);
 }
 
 ConservationReport World::audit() const {
@@ -286,6 +296,7 @@ std::uint64_t World::physical_state_hash() const {
     std::uint64_t hash = 14695981039346656037ULL;
     hash = hash_integer(hash, tick_);
     hash = hash_integer(hash, config_.voxel_edge.raw());
+    hash = hash_integer(hash, config_.interaction_radius.raw());
     hash = hash_integer(hash, config_.kinetic_energy_scale_denominator);
 
     for (const auto& [element, properties] : elements_.elements()) {

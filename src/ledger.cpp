@@ -27,6 +27,7 @@ void BoundaryBalance::clear() noexcept {
     mass_net = Mass{};
     energy_net = Energy{};
     momentum_net = Momentum3{};
+    angular_momentum_net = AngularMomentum3{};
 }
 
 ConservationLedger::ConservationLedger(ExtensiveTotals baseline)
@@ -57,10 +58,13 @@ void ConservationLedger::record_boundary_ingress(const ExtensiveTotals& amount) 
     auto updated_mass = boundary_.mass_net + amount.mass;
     auto updated_energy = boundary_.energy_net + amount.total_energy();
     auto updated_momentum = boundary_.momentum_net + amount.momentum;
+    auto updated_angular_momentum =
+        boundary_.angular_momentum_net + amount.angular_momentum;
     record_elements(amount.elements, 1);
     boundary_.mass_net = updated_mass;
     boundary_.energy_net = updated_energy;
     boundary_.momentum_net = updated_momentum;
+    boundary_.angular_momentum_net = updated_angular_momentum;
 }
 
 void ConservationLedger::record_boundary_egress(const ExtensiveTotals& amount) {
@@ -68,18 +72,26 @@ void ConservationLedger::record_boundary_egress(const ExtensiveTotals& amount) {
     auto updated_mass = boundary_.mass_net - amount.mass;
     auto updated_energy = boundary_.energy_net - amount.total_energy();
     auto updated_momentum = boundary_.momentum_net - amount.momentum;
+    auto updated_angular_momentum =
+        boundary_.angular_momentum_net - amount.angular_momentum;
     record_elements(amount.elements, -1);
     boundary_.mass_net = updated_mass;
     boundary_.energy_net = updated_energy;
     boundary_.momentum_net = updated_momentum;
+    boundary_.angular_momentum_net = updated_angular_momentum;
 }
 
 void ConservationLedger::record_boundary_energy(Energy signed_amount) {
     boundary_.energy_net += signed_amount;
 }
 
-void ConservationLedger::record_boundary_momentum(Momentum3 signed_amount) {
-    boundary_.momentum_net += signed_amount;
+void ConservationLedger::record_boundary_point_impulse(
+    Position3 position, Momentum3 signed_amount) {
+    const auto updated_momentum = boundary_.momentum_net + signed_amount;
+    const auto updated_angular_momentum =
+        boundary_.angular_momentum_net + cross(position, signed_amount);
+    boundary_.momentum_net = updated_momentum;
+    boundary_.angular_momentum_net = updated_angular_momentum;
 }
 
 ConservationReport ConservationLedger::audit(const ExtensiveTotals& current) const {
@@ -119,6 +131,12 @@ ConservationReport ConservationLedger::audit(const ExtensiveTotals& current) con
     const auto expected_momentum = baseline_.momentum + boundary_.momentum_net;
     report.momentum_error = current.momentum - expected_momentum;
     report.momentum_conserved = report.momentum_error == Momentum3{};
+
+    const auto expected_angular_momentum =
+        baseline_.angular_momentum + boundary_.angular_momentum_net;
+    report.angular_momentum_error = current.angular_momentum - expected_angular_momentum;
+    report.angular_momentum_conserved =
+        report.angular_momentum_error == AngularMomentum3{};
     return report;
 }
 

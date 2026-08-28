@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -27,6 +28,7 @@ struct ExtensiveTotals final {
     Energy thermal_energy{};
     Energy kinetic_energy{};
     Momentum3 momentum{};
+    AngularMomentum3 angular_momentum{};
     std::size_t packet_count{0};
 
     [[nodiscard]] Energy total_energy() const {
@@ -41,8 +43,14 @@ struct ExtensiveTotals final {
 
 struct VoxelCell final {
     std::vector<PacketHandle> packets{};
-    ExtensiveTotals totals{};
+    // Diagnostic only. A cell total that is outside the fixed-width reporting
+    // range is unavailable rather than making grid phase reject world physics.
+    std::optional<ExtensiveTotals> totals{};
 };
+
+// Authoritative fixed-width world fold. Signed momentum channels are summed in
+// a cancellation-safe order independent of voxel grouping and packet order.
+[[nodiscard]] ExtensiveTotals authoritative_totals(const PacketStore& packets);
 
 // SparseVoxelGrid is a disposable control-volume index. PacketStore remains the
 // authoritative material state, and aggregates are never fed into reactions.
@@ -65,8 +73,7 @@ public:
 private:
     Length voxel_edge_{};
     std::map<VoxelCoord, VoxelCell> cells_;
+    std::map<VoxelCoord, std::vector<PacketSnapshot>> snapshots_by_cell_;
 };
-
-[[nodiscard]] bool face_local(VoxelCoord first, VoxelCoord second) noexcept;
 
 } // namespace mls

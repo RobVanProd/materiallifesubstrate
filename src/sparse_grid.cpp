@@ -1,6 +1,7 @@
 #include "mls/sparse_grid.hpp"
 
 #include <array>
+#include <algorithm>
 #include <limits>
 #include <set>
 #include <stdexcept>
@@ -17,11 +18,80 @@ namespace {
     return quotient;
 }
 
-[[nodiscard]] std::uint64_t unsigned_distance(std::int64_t lhs, std::int64_t rhs) noexcept {
-    if (lhs >= rhs) {
-        return static_cast<std::uint64_t>(lhs) - static_cast<std::uint64_t>(rhs);
+[[nodiscard]] Scalar cancellation_safe_sum(std::vector<Scalar> values) {
+    std::vector<Scalar> positive;
+    std::vector<Scalar> negative;
+    positive.reserve(values.size());
+    negative.reserve(values.size());
+    for (const auto value : values) {
+        if (value > 0) {
+            positive.push_back(value);
+        } else if (value < 0) {
+            negative.push_back(value);
+        }
     }
-    return static_cast<std::uint64_t>(rhs) - static_cast<std::uint64_t>(lhs);
+
+    std::size_t positive_index = 0;
+    std::size_t negative_index = 0;
+    Scalar total = 0;
+    while (positive_index < positive.size() || negative_index < negative.size()) {
+        if (total > 0 && negative_index < negative.size()) {
+            total = detail::checked_add(total, negative[negative_index++]);
+        } else if (total < 0 && positive_index < positive.size()) {
+            total = detail::checked_add(total, positive[positive_index++]);
+        } else if (positive_index < positive.size()) {
+            total = detail::checked_add(total, positive[positive_index++]);
+        } else {
+            total = detail::checked_add(total, negative[negative_index++]);
+        }
+    }
+    return total;
+}
+
+[[nodiscard]] ExtensiveTotals totals_of(std::span<const PacketSnapshot> packets) {
+    ExtensiveTotals result;
+    std::vector<Scalar> momentum_x;
+    std::vector<Scalar> momentum_y;
+    std::vector<Scalar> momentum_z;
+    std::vector<Scalar> angular_x;
+    std::vector<Scalar> angular_y;
+    std::vector<Scalar> angular_z;
+    momentum_x.reserve(packets.size());
+    momentum_y.reserve(packets.size());
+    momentum_z.reserve(packets.size());
+    angular_x.reserve(packets.size());
+    angular_y.reserve(packets.size());
+    angular_z.reserve(packets.size());
+
+    for (const auto& packet : packets) {
+        result.elements.add_inventory(packet.elements);
+        result.mass += packet.mass;
+        result.structural_energy += packet.structural_energy;
+        result.stored_energy += packet.stored_energy;
+        result.thermal_energy += packet.thermal_energy;
+        result.kinetic_energy += packet.kinetic_energy;
+        if (result.packet_count == std::numeric_limits<std::size_t>::max()) {
+            throw std::overflow_error("packet count overflow");
+        }
+        ++result.packet_count;
+
+        momentum_x.push_back(packet.momentum.x.raw());
+        momentum_y.push_back(packet.momentum.y.raw());
+        momentum_z.push_back(packet.momentum.z.raw());
+        const auto angular = cross(packet.position, packet.momentum);
+        angular_x.push_back(angular.x.raw());
+        angular_y.push_back(angular.y.raw());
+        angular_z.push_back(angular.z.raw());
+    }
+    result.momentum = {
+        Momentum::from_raw(cancellation_safe_sum(std::move(momentum_x))),
+        Momentum::from_raw(cancellation_safe_sum(std::move(momentum_y))),
+        Momentum::from_raw(cancellation_safe_sum(std::move(momentum_z)))};
+    result.angular_momentum = {
+        AngularMomentum::from_raw(cancellation_safe_sum(std::move(angular_x))),
+        AngularMomentum::from_raw(cancellation_safe_sum(std::move(angular_y))),
+        AngularMomentum::from_raw(cancellation_safe_sum(std::move(angular_z)))};
+    return result;
 }
 
 } // namespace
@@ -35,6 +105,7 @@ void ExtensiveTotals::add(const PacketSnapshot& packet) {
     updated.thermal_energy += packet.thermal_energy;
     updated.kinetic_energy += packet.kinetic_energy;
     updated.momentum += packet.momentum;
+    updated.angular_momentum += cross(packet.position, packet.momentum);
     if (updated.packet_count == std::numeric_limits<std::size_t>::max()) {
         throw std::overflow_error("packet count overflow");
     }
@@ -51,6 +122,7 @@ void ExtensiveTotals::add(const ExtensiveTotals& other) {
     updated.thermal_energy += other.thermal_energy;
     updated.kinetic_energy += other.kinetic_energy;
     updated.momentum += other.momentum;
+    updated.angular_momentum += other.angular_momentum;
     if (other.packet_count > std::numeric_limits<std::size_t>::max() - updated.packet_count) {
         throw std::overflow_error("packet count overflow");
     }
@@ -73,12 +145,22 @@ VoxelCoord SparseVoxelGrid::coordinate_for(const Position3& position) const noex
 
 void SparseVoxelGrid::rebuild(const PacketStore& packets) {
     std::map<VoxelCoord, VoxelCell> rebuilt;
+    std::map<VoxelCoord, std::vector<PacketSnapshot>> rebuilt_snapshots;
     for (const auto& packet : packets.snapshots()) {
-        auto& cell = rebuilt[coordinate_for(packet.position)];
+        const auto coordinate = coordinate_for(packet.position);
+        auto& cell = rebuilt[coordinate];
         cell.packets.push_back(packet.handle);
-        cell.totals.add(packet);
+        rebuilt_snapshots[coordinate].push_back(packet);
+    }
+    for (auto& [coordinate, cell] : rebuilt) {
+        try {
+            cell.totals = totals_of(rebuilt_snapshots.at(coordinate));
+        } catch (const std::overflow_error&) {
+            cell.totals.reset();
+        }
     }
     cells_.swap(rebuilt);
+    snapshots_by_cell_.swap(rebuilt_snapshots);
 }
 
 const VoxelCell* SparseVoxelGrid::find(VoxelCoord coordinate) const noexcept {
@@ -93,34 +175,31 @@ std::span<const PacketHandle> SparseVoxelGrid::packets_at(VoxelCoord coordinate)
 }
 
 ExtensiveTotals SparseVoxelGrid::totals() const {
-    ExtensiveTotals result;
-    for (const auto& [coordinate, cell] : cells_) {
+    std::vector<PacketSnapshot> packets;
+    for (const auto& [coordinate, cell_packets] : snapshots_by_cell_) {
         static_cast<void>(coordinate);
-        result.add(cell.totals);
+        packets.insert(packets.end(), cell_packets.begin(), cell_packets.end());
     }
-    return result;
+    return totals_of(packets);
 }
 
 ExtensiveTotals SparseVoxelGrid::aggregate(std::span<const VoxelCoord> coordinates) const {
-    ExtensiveTotals result;
+    std::vector<PacketSnapshot> packets;
     std::set<VoxelCoord> visited;
     for (const auto coordinate : coordinates) {
         if (!visited.insert(coordinate).second) {
             throw std::invalid_argument("aggregate coordinates must be unique");
         }
-        const auto* cell = find(coordinate);
-        if (cell != nullptr) {
-            result.add(cell->totals);
+        const auto found = snapshots_by_cell_.find(coordinate);
+        if (found != snapshots_by_cell_.end()) {
+            packets.insert(packets.end(), found->second.begin(), found->second.end());
         }
     }
-    return result;
+    return totals_of(packets);
 }
 
-bool face_local(VoxelCoord first, VoxelCoord second) noexcept {
-    const auto dx = unsigned_distance(first.x, second.x);
-    const auto dy = unsigned_distance(first.y, second.y);
-    const auto dz = unsigned_distance(first.z, second.z);
-    return dx <= 1U && dy <= 1U && dz <= 1U && dx + dy + dz <= 1U;
+ExtensiveTotals authoritative_totals(const PacketStore& packets) {
+    return totals_of(packets.snapshots());
 }
 
 } // namespace mls

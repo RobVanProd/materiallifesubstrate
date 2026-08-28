@@ -1,7 +1,11 @@
 add_executable(
   mls_validation
   test_main.cpp
-  core_validation_tests.cpp)
+  core_validation_tests.cpp
+  angular_momentum_tests.cpp
+  authoritative_api_tests.cpp
+  compound_identity_tests.cpp
+  physical_support_tests.cpp)
 
 target_link_libraries(mls_validation PRIVATE mls_core)
 target_include_directories(mls_validation PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -52,5 +56,16 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(
       mls.exact.extended.full
       PROPERTIES LABELS "deterministic;exact;extended;full" TIMEOUT 180)
+
+    add_test(
+      NAME mls.hardening.independent.oracle
+      COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/reference/hardening_oracle.py"
+        --verify
+        "${CMAKE_CURRENT_SOURCE_DIR}/hardening_oracle.canonical.json")
+    set_tests_properties(
+      mls.hardening.independent.oracle
+      PROPERTIES LABELS "deterministic;exact;hardening;independent" TIMEOUT 30)
   endif()
 endif()

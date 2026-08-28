@@ -1,4 +1,5 @@
 #include "test_harness.hpp"
+#include "packet_store_test_access.hpp"
 
 #include "mls/chemistry.hpp"
 #include "mls/ledger.hpp"
@@ -17,6 +18,7 @@
 namespace {
 
 constexpr std::uint64_t validation_seed = 260828;
+using StoreAccess = mls::test::PacketStoreTestAccess;
 
 [[nodiscard]] mls::CompoundGraph atom(mls::ElementId element) {
     return mls::CompoundGraph(std::vector<mls::ElementId>{element}, {});
@@ -200,7 +202,7 @@ struct WorldFixture final {
             (coordinate.y - camera.y) * (coordinate.y - camera.y) +
             (coordinate.z - camera.z) * (coordinate.z - camera.z);
         if (distance <= camera.field_of_view * camera.field_of_view) {
-            observation ^= static_cast<std::uint64_t>(cell.totals.packet_count) +
+            observation ^= static_cast<std::uint64_t>(cell.packets.size()) +
                            UINT64_C(0x9e3779b97f4a7c15) + (observation << 6U) +
                            (observation >> 2U);
         }
@@ -254,41 +256,54 @@ MLS_TEST("G0.G1.G2/equal_and_opposite_momentum_exchange") {
 MLS_TEST("G0.G1/packet_heat_transfer_closes_energy_and_rejects_overdraw") {
     ChemistryFixture fixture;
     mls::PacketStore packets;
-    const auto first = packets.create(packet_state(fixture, {}, mls::Energy::from_raw(20'000)));
-    const auto second = packets.create(packet_state(fixture, {}, mls::Energy::from_raw(30'000)));
+    const auto first = StoreAccess::create(
+        packets, packet_state(fixture, {}, mls::Energy::from_raw(20'000)));
+    const auto second = StoreAccess::create(
+        packets, packet_state(fixture, {}, mls::Energy::from_raw(30'000)));
     const auto before = packets.snapshot(first).total_energy() + packets.snapshot(second).total_energy();
-    packets.transfer_heat(first, second, mls::Energy::from_raw(12'345), 1);
+    StoreAccess::transfer_heat(
+        packets, first, second, mls::Energy::from_raw(12'345), 1);
     const auto after = packets.snapshot(first).total_energy() + packets.snapshot(second).total_energy();
     MLS_REQUIRE_EQ(after, before);
     MLS_REQUIRE_EQ(packets.snapshot(first).thermal_energy, mls::Energy::from_raw(7'655));
     MLS_REQUIRE_EQ(packets.snapshot(second).thermal_energy, mls::Energy::from_raw(42'345));
     MLS_REQUIRE_THROWS(
         std::domain_error,
-        packets.transfer_heat(first, second, mls::Energy::from_raw(7'656), 2));
+        StoreAccess::transfer_heat(
+            packets, first, second, mls::Energy::from_raw(7'656), 2));
     MLS_REQUIRE_EQ(packets.snapshot(first).total_energy() + packets.snapshot(second).total_energy(), after);
 }
 
 MLS_TEST("G0.G1.G3/unified_ledger_closes_internal_and_boundary_energy") {
     ChemistryFixture fixture;
     mls::PacketStore packets;
-    const auto first = packets.create(packet_state(fixture, {}, mls::Energy::from_raw(20'000)));
-    const auto second = packets.create(packet_state(fixture, {}, mls::Energy::from_raw(30'000)));
+    const auto first = StoreAccess::create(
+        packets, packet_state(fixture, {}, mls::Energy::from_raw(20'000)));
+    const auto second = StoreAccess::create(
+        packets, packet_state(fixture, {}, mls::Energy::from_raw(30'000)));
     mls::SparseVoxelGrid grid(mls::Length::from_raw(10));
     grid.rebuild(packets);
     mls::ConservationLedger ledger(grid.totals());
     MLS_REQUIRE(ledger.audit(grid.totals()).ok());
 
-    packets.transfer_heat(first, second, mls::Energy::from_raw(12'345), 1);
+    StoreAccess::transfer_heat(
+        packets, first, second, mls::Energy::from_raw(12'345), 1);
     grid.rebuild(packets);
     MLS_REQUIRE(ledger.audit(grid.totals()).ok());
 
     const auto boundary_energy = mls::Energy::from_raw(777);
-    packets.adjust_boundary_energy(first, mls::EnergyChannel::thermal, boundary_energy, 2);
+    StoreAccess::adjust_boundary_energy(
+        packets, first, mls::EnergyChannel::thermal, boundary_energy, 2);
     ledger.record_boundary_energy(boundary_energy);
     grid.rebuild(packets);
     MLS_REQUIRE(ledger.audit(grid.totals()).ok());
 
-    packets.adjust_boundary_energy(second, mls::EnergyChannel::stored, -mls::Energy::from_raw(333), 3);
+    StoreAccess::adjust_boundary_energy(
+        packets,
+        second,
+        mls::EnergyChannel::stored,
+        -mls::Energy::from_raw(333),
+        3);
     ledger.record_boundary_energy(-mls::Energy::from_raw(333));
     grid.rebuild(packets);
     MLS_REQUIRE(ledger.audit(grid.totals()).ok());
@@ -322,15 +337,16 @@ MLS_TEST("G0.G1.G2/packet_momentum_exchange_closes_momentum_and_energy") {
             };
         };
         mls::PacketStore packets;
-        const auto first = packets.create(packet_state(
+        const auto first = StoreAccess::create(packets, packet_state(
             fixture, vector(100), mls::Energy::from_raw(10'000), mls::Energy::from_raw(1'000'000)));
-        const auto second = packets.create(packet_state(
+        const auto second = StoreAccess::create(packets, packet_state(
             fixture, vector(100), mls::Energy::from_raw(10'000), mls::Energy::from_raw(1'000'000)));
         const auto before_first = packets.snapshot(first);
         const auto before_second = packets.snapshot(second);
         const auto before_momentum = before_first.momentum + before_second.momentum;
         const auto before_energy = before_first.total_energy() + before_second.total_energy();
-        packets.exchange_momentum(first, second, vector(20), first, second, 1);
+        StoreAccess::apply_actuated_dissipative_central_pair_impulse(
+            packets, first, second, vector(20), first, second, 1);
         const auto after_first = packets.snapshot(first);
         const auto after_second = packets.snapshot(second);
         MLS_REQUIRE_EQ(after_first.momentum + after_second.momentum, before_momentum);
@@ -467,7 +483,7 @@ MLS_TEST("G1/sparse_grid_hierarchical_extensive_aggregation") {
             mls::Length::from_raw(rng.integer(-1'000'000, 1'000'000)),
             mls::Length::from_raw(rng.integer(-1'000'000, 1'000'000)),
         };
-        static_cast<void>(packets.create(std::move(initial)));
+        static_cast<void>(StoreAccess::create(packets, std::move(initial)));
     }
 
     mls::ExtensiveTotals direct;
@@ -484,8 +500,9 @@ MLS_TEST("G1/sparse_grid_hierarchical_extensive_aggregation") {
     mls::ExtensiveTotals by_cell;
     for (const auto& [coordinate, cell] : grid.cells()) {
         coordinates.push_back(coordinate);
-        by_cell.add(cell.totals);
-        MLS_REQUIRE_EQ(cell.packets.size(), cell.totals.packet_count);
+        MLS_REQUIRE(cell.totals.has_value());
+        by_cell.add(*cell.totals);
+        MLS_REQUIRE_EQ(cell.packets.size(), cell.totals->packet_count);
     }
     MLS_REQUIRE_EQ(by_cell, direct);
     MLS_REQUIRE_EQ(grid.aggregate(coordinates), direct);
@@ -502,6 +519,40 @@ MLS_TEST("G1/sparse_grid_hierarchical_extensive_aggregation") {
     MLS_REQUIRE_EQ(
         grid.coordinate_for({mls::Length::from_raw(-65), {}, {}}),
         (mls::VoxelCoord{-2, 0, 0}));
+}
+
+MLS_TEST("hardening/grid/diagnostic_cell_overflow_cannot_gate_authoritative_totals") {
+    ChemistryFixture fixture;
+    mls::PacketStore packets;
+    const auto add_packet = [&](const mls::Scalar y) {
+        auto initial = packet_state(
+            fixture,
+            mls::Momentum3{mls::Momentum::from_raw(2), {}, {}},
+            mls::Energy{},
+            mls::Energy{});
+        initial.position.y = mls::Length::from_raw(y);
+        static_cast<void>(StoreAccess::create(packets, std::move(initial)));
+    };
+    constexpr mls::Scalar lever = INT64_C(3000000000000000000);
+    add_packet(-lever);
+    add_packet(-lever);
+    add_packet(lever);
+    add_packet(lever);
+
+    mls::SparseVoxelGrid grid(mls::Length::from_raw(100));
+    grid.rebuild(packets);
+    std::size_t unavailable_cells = 0;
+    for (const auto& [coordinate, cell] : grid.cells()) {
+        static_cast<void>(coordinate);
+        if (!cell.totals.has_value()) {
+            ++unavailable_cells;
+        }
+    }
+    MLS_REQUIRE_EQ(unavailable_cells, std::size_t{2});
+    const auto authoritative = mls::authoritative_totals(packets);
+    MLS_REQUIRE_EQ(authoritative.packet_count, std::size_t{4});
+    MLS_REQUIRE_EQ(authoritative.angular_momentum, mls::AngularMomentum3{});
+    MLS_REQUIRE_EQ(grid.totals(), authoritative);
 }
 
 MLS_TEST("G7/coarse_graining_false_affordance_counterexample") {
@@ -583,6 +634,7 @@ MLS_TEST("hard-contract/camera_and_renderer_invariance") {
 MLS_TEST("hard-contract/deterministic_replay_and_state_hash") {
     auto config = mls::WorldConfig{};
     config.voxel_edge = mls::Length::from_raw(1'000'000);
+    config.kinetic_energy_scale_denominator = 1'000;
     config.packet_history_limit = 16;
     auto first = make_world(config);
     auto replay = make_world(config);
@@ -598,10 +650,12 @@ MLS_TEST("hard-contract/deterministic_replay_and_state_hash") {
     mls::test::SplitMix64 events(validation_seed ^ UINT64_C(0x589965cc75374cc3));
     for (int iteration = 0; iteration < 512; ++iteration) {
         const auto heat = mls::Energy::from_raw(events.integer(0, 20));
+        // The point pair is separated on x. Alternate an exactly-integrable
+        // central impulse so replay covers the accepted transition contract.
         const auto impulse = mls::Momentum3{
-            mls::Momentum::from_raw(events.integer(-3, 3)),
-            mls::Momentum::from_raw(events.integer(-3, 3)),
-            mls::Momentum::from_raw(events.integer(-3, 3)),
+            mls::Momentum::from_raw(iteration % 2 == 0 ? 30'000 : -30'000),
+            {},
+            {},
         };
         if (iteration % 2 == 0) {
             first.world.transfer_heat(first_a, first_b, heat);
@@ -610,8 +664,10 @@ MLS_TEST("hard-contract/deterministic_replay_and_state_hash") {
             first.world.transfer_heat(first_b, first_a, heat);
             replay.world.transfer_heat(replay_b, replay_a, heat);
         }
-        first.world.exchange_momentum(first_a, first_b, impulse, first_a, first_b);
-        replay.world.exchange_momentum(replay_a, replay_b, impulse, replay_a, replay_b);
+        first.world.apply_actuated_dissipative_central_impulse(
+            first_a, first_b, impulse, first_a, first_b);
+        replay.world.apply_actuated_dissipative_central_impulse(
+            replay_a, replay_b, impulse, replay_a, replay_b);
         if (iteration % 64 == 0) {
             first.world.apply_reaction(first_a, first.association, 1);
             replay.world.apply_reaction(replay_a, replay.association, 1);
@@ -636,11 +692,11 @@ MLS_TEST("adversarial/unauthorized_material_duplication_and_loss_are_detected") 
     ChemistryFixture fixture;
 
     mls::PacketStore duplicated_packets;
-    static_cast<void>(duplicated_packets.create(packet_state(fixture)));
+    static_cast<void>(StoreAccess::create(duplicated_packets, packet_state(fixture)));
     mls::SparseVoxelGrid duplicated_grid(mls::Length::from_raw(10));
     duplicated_grid.rebuild(duplicated_packets);
     mls::ConservationLedger duplication_ledger(duplicated_grid.totals());
-    static_cast<void>(duplicated_packets.create(packet_state(fixture)));
+    static_cast<void>(StoreAccess::create(duplicated_packets, packet_state(fixture)));
     duplicated_grid.rebuild(duplicated_packets);
     const auto duplication_report = duplication_ledger.audit(duplicated_grid.totals());
     MLS_REQUIRE(!duplication_report.ok());
@@ -649,12 +705,12 @@ MLS_TEST("adversarial/unauthorized_material_duplication_and_loss_are_detected") 
     MLS_REQUIRE(!duplication_report.energy_conserved);
 
     mls::PacketStore lost_packets;
-    const auto doomed = lost_packets.create(packet_state(fixture));
-    static_cast<void>(lost_packets.create(packet_state(fixture)));
+    const auto doomed = StoreAccess::create(lost_packets, packet_state(fixture));
+    static_cast<void>(StoreAccess::create(lost_packets, packet_state(fixture)));
     mls::SparseVoxelGrid lost_grid(mls::Length::from_raw(10));
     lost_grid.rebuild(lost_packets);
     mls::ConservationLedger loss_ledger(lost_grid.totals());
-    lost_packets.erase(doomed, 1);
+    StoreAccess::erase(lost_packets, doomed, 1);
     lost_grid.rebuild(lost_packets);
     const auto loss_report = loss_ledger.audit(lost_grid.totals());
     MLS_REQUIRE(!loss_report.ok());
@@ -676,7 +732,7 @@ MLS_TEST("adversarial/all_boundary_channels_round_trip_through_one_ledger") {
         packet, mls::EnergyChannel::thermal, -mls::Energy::from_raw(100));
     fixture.world.exchange_energy_with_boundary(
         packet, mls::EnergyChannel::stored, mls::Energy::from_raw(200));
-    fixture.world.exchange_momentum_with_boundary(
+    fixture.world.apply_point_impulse_from_boundary(
         packet,
         mls::Momentum3{
             mls::Momentum::from_raw(10'000),
@@ -686,6 +742,9 @@ MLS_TEST("adversarial/all_boundary_channels_round_trip_through_one_ledger") {
     MLS_REQUIRE(!fixture.world.ledger().boundary().element_net.empty());
     MLS_REQUIRE(fixture.world.ledger().boundary().mass_net != mls::Mass{});
     MLS_REQUIRE(fixture.world.ledger().boundary().momentum_net != mls::Momentum3{});
+    MLS_REQUIRE(
+        fixture.world.ledger().boundary().angular_momentum_net !=
+        mls::AngularMomentum3{});
 
     fixture.world.remove_material_to_boundary(packet);
     MLS_REQUIRE_EQ(fixture.world.totals(), mls::ExtensiveTotals{});
@@ -698,6 +757,9 @@ MLS_TEST("adversarial/all_boundary_channels_round_trip_through_one_ledger") {
     MLS_REQUIRE_EQ(fixture.world.ledger().boundary().mass_net, mls::Mass{});
     MLS_REQUIRE_EQ(fixture.world.ledger().boundary().energy_net, mls::Energy{});
     MLS_REQUIRE_EQ(fixture.world.ledger().boundary().momentum_net, mls::Momentum3{});
+    MLS_REQUIRE_EQ(
+        fixture.world.ledger().boundary().angular_momentum_net,
+        mls::AngularMomentum3{});
 }
 
 MLS_TEST("adversarial/zero_state_and_zero_tick_are_stable") {
@@ -864,11 +926,12 @@ MLS_TEST("adversarial/uniform_grid_translation_preserves_extensive_outcomes") {
     const auto translated_second = translated.world.introduce_material_from_boundary(translated_second_seed);
 
     const mls::Momentum3 impulse{
-        mls::Momentum::from_raw(3'000),
-        mls::Momentum::from_raw(-2'000),
-        mls::Momentum::from_raw(1'000)};
-    origin.world.exchange_momentum(origin_first, origin_second, impulse, origin_first, origin_second);
-    translated.world.exchange_momentum(
+        mls::Momentum::from_raw(30'000),
+        {},
+        {}};
+    origin.world.apply_actuated_dissipative_central_impulse(
+        origin_first, origin_second, impulse, origin_first, origin_second);
+    translated.world.apply_actuated_dissipative_central_impulse(
         translated_first, translated_second, impulse, translated_first, translated_second);
     origin.world.transfer_heat(origin_first, origin_second, mls::Energy::from_raw(321));
     translated.world.transfer_heat(translated_first, translated_second, mls::Energy::from_raw(321));
@@ -901,16 +964,16 @@ MLS_TEST("G5/adversarial_rational_off_axis_rotation_preserves_ballistic_invarian
     const auto rotated_second =
         off_axis.world.introduce_material_from_boundary(rotated_second_seed);
 
-    axis_aligned.world.exchange_momentum(
+    axis_aligned.world.apply_actuated_dissipative_central_impulse(
         axis_first,
         axis_second,
-        {mls::Momentum::from_raw(30'000), {}, {}},
+        {mls::Momentum::from_raw(150'000), {}, {}},
         axis_first,
         axis_second);
-    off_axis.world.exchange_momentum(
+    off_axis.world.apply_actuated_dissipative_central_impulse(
         rotated_first,
         rotated_second,
-        {mls::Momentum::from_raw(18'000), mls::Momentum::from_raw(24'000), {}},
+        {mls::Momentum::from_raw(90'000), mls::Momentum::from_raw(120'000), {}},
         rotated_first,
         rotated_second);
     axis_aligned.world.step(20);
@@ -931,12 +994,12 @@ MLS_TEST("G5/adversarial_rational_off_axis_rotation_preserves_ballistic_invarian
     MLS_REQUIRE_EQ(
         rotated_second_state.momentum.y,
         mls::Momentum::from_raw(axis_second_state.momentum.x.raw() * 4 / 5));
-    MLS_REQUIRE_EQ(axis_first_state.position.x, mls::Length::from_raw(500'020));
-    MLS_REQUIRE_EQ(rotated_first_state.position.x, mls::Length::from_raw(500'012));
-    MLS_REQUIRE_EQ(rotated_first_state.position.y, mls::Length::from_raw(500'016));
-    MLS_REQUIRE_EQ(axis_second_state.position.x, mls::Length::from_raw(500'030));
-    MLS_REQUIRE_EQ(rotated_second_state.position.x, mls::Length::from_raw(500'018));
-    MLS_REQUIRE_EQ(rotated_second_state.position.y, mls::Length::from_raw(500'024));
+    MLS_REQUIRE_EQ(axis_first_state.position.x, mls::Length::from_raw(500'100));
+    MLS_REQUIRE_EQ(rotated_first_state.position.x, mls::Length::from_raw(500'060));
+    MLS_REQUIRE_EQ(rotated_first_state.position.y, mls::Length::from_raw(500'080));
+    MLS_REQUIRE_EQ(axis_second_state.position.x, mls::Length::from_raw(499'950));
+    MLS_REQUIRE_EQ(rotated_second_state.position.x, mls::Length::from_raw(499'970));
+    MLS_REQUIRE_EQ(rotated_second_state.position.y, mls::Length::from_raw(499'960));
     MLS_REQUIRE_EQ(
         axis_aligned.world.totals().total_energy(), off_axis.world.totals().total_energy());
     MLS_REQUIRE_EQ(axis_aligned.world.totals().mass, off_axis.world.totals().mass);
@@ -953,9 +1016,9 @@ MLS_TEST("adversarial/tick_batching_is_exact_but_not_a_convergence_claim") {
     auto batched_seed = mixed_seed(batched, mls::Length::from_raw(0));
     auto incremental_seed = mixed_seed(incremental, mls::Length::from_raw(0));
     const mls::Momentum3 momentum{
-        mls::Momentum::from_raw(37'001),
-        mls::Momentum::from_raw(-29'003),
-        mls::Momentum::from_raw(13'007)};
+        mls::Momentum::from_raw(30'000),
+        mls::Momentum::from_raw(-60'000),
+        mls::Momentum::from_raw(90'000)};
     batched_seed.momentum = momentum;
     incremental_seed.momentum = momentum;
     static_cast<void>(batched.world.introduce_material_from_boundary(batched_seed));

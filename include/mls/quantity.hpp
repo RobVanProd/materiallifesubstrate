@@ -121,6 +121,7 @@ struct MassDimension;
 struct TimeDimension;
 struct VelocityDimension;
 struct MomentumDimension;
+struct AngularMomentumDimension;
 struct EnergyDimension;
 struct TemperatureDimension;
 struct HeatCapacityDimension;
@@ -130,6 +131,9 @@ using Mass = Quantity<MassDimension>;
 using Time = Quantity<TimeDimension>;
 using Velocity = Quantity<VelocityDimension>;
 using Momentum = Quantity<MomentumDimension>;
+// Exact orbital-angular-momentum quanta. The configured length and momentum
+// quanta determine this derived unit; no hidden conversion is performed.
+using AngularMomentum = Quantity<AngularMomentumDimension>;
 using Energy = Quantity<EnergyDimension>;
 using Temperature = Quantity<TemperatureDimension>;
 using HeatCapacity = Quantity<HeatCapacityDimension>;
@@ -180,6 +184,35 @@ struct Vector3 final {
 using Position3 = Vector3<Length>;
 using Velocity3 = Vector3<Velocity>;
 using Momentum3 = Vector3<Momentum>;
+using AngularMomentum3 = Vector3<AngularMomentum>;
+
+// Checked r x p in the reference backend's exact fixed-point quanta. Products
+// that do not fit Scalar are rejected before a transition can be accepted.
+[[nodiscard]] constexpr AngularMomentum3 cross(
+    const Position3& position, const Momentum3& momentum) {
+    return {
+        AngularMomentum::from_raw(detail::checked_subtract(
+            detail::checked_multiply(position.y.raw(), momentum.z.raw()),
+            detail::checked_multiply(position.z.raw(), momentum.y.raw()))),
+        AngularMomentum::from_raw(detail::checked_subtract(
+            detail::checked_multiply(position.z.raw(), momentum.x.raw()),
+            detail::checked_multiply(position.x.raw(), momentum.z.raw()))),
+        AngularMomentum::from_raw(detail::checked_subtract(
+            detail::checked_multiply(position.x.raw(), momentum.y.raw()),
+            detail::checked_multiply(position.y.raw(), momentum.x.raw()))),
+    };
+}
+
+// For equal/opposite point impulses p1 += J and p2 -= J, this is exactly
+// Delta L = (r1 - r2) x J. A zero result is the accepted central/coincident
+// point-interaction contract. Non-central interactions require future explicit
+// spin/torque/couple state and are intentionally not represented here.
+[[nodiscard]] constexpr AngularMomentum3 pair_angular_momentum_delta(
+    const Position3& first,
+    const Position3& second,
+    const Momentum3& impulse_to_first) {
+    return cross(first - second, impulse_to_first);
+}
 
 [[nodiscard]] constexpr bool is_nonnegative(Energy value) noexcept {
     return value.raw() >= 0;

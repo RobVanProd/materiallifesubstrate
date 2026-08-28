@@ -3,6 +3,7 @@
 #include "mls/chemistry.hpp"
 #include "mls/ledger.hpp"
 #include "mls/packet_store.hpp"
+#include "mls/physical_support.hpp"
 #include "mls/sparse_grid.hpp"
 
 #include <cstddef>
@@ -16,6 +17,7 @@ namespace mls {
 
 struct WorldConfig final {
     Length voxel_edge{Length::from_raw(1)};
+    Length interaction_radius{Length::from_raw(1'000)};
     Scalar kinetic_energy_scale_denominator{1};
     std::size_t packet_history_limit{0};
     bool audit_after_each_operation{MLS_AUDIT_DEFAULT != 0};
@@ -52,7 +54,10 @@ public:
     void transfer_heat(PacketHandle from, PacketHandle to, Energy amount);
     void convert_energy(
         PacketHandle packet, EnergyChannel from, EnergyChannel to, Energy amount);
-    void exchange_momentum(
+    // Deliberately named scaffold: this transition is actuated/dissipative,
+    // not a universal mechanics force. Its point impulse must be central so
+    // accepted internal transitions conserve orbital angular momentum.
+    void apply_actuated_dissipative_central_impulse(
         PacketHandle first,
         PacketHandle second,
         Momentum3 impulse_to_first,
@@ -65,7 +70,7 @@ public:
     // same ledger used to audit all internal conservation.
     void exchange_energy_with_boundary(
         PacketHandle packet, EnergyChannel channel, Energy signed_amount);
-    void exchange_momentum_with_boundary(PacketHandle packet, Momentum3 impulse);
+    void apply_point_impulse_from_boundary(PacketHandle packet, Momentum3 impulse);
 
     void step(Tick count = 1);
     void establish_current_state_as_baseline();
@@ -78,7 +83,7 @@ public:
 
 private:
     void rebuild_and_verify();
-    void require_local(PacketHandle first, PacketHandle second) const;
+    void require_physical_support(PacketHandle first, PacketHandle second) const;
 
     WorldConfig config_{};
     Tick tick_{0};

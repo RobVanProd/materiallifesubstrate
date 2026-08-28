@@ -32,7 +32,7 @@ enum class PacketEventKind : std::uint8_t {
     advanced,
     heat_transferred,
     energy_converted,
-    momentum_exchanged,
+    actuated_dissipative_impulse,
     composition_changed,
     boundary_exchange,
     removed,
@@ -99,15 +99,17 @@ enum class EnergyChannel : std::uint8_t {
 [[nodiscard]] Energy kinetic_energy_of(
     Mass mass, const Momentum3& momentum, Scalar scale_denominator = 1);
 
+class World;
+namespace test {
+class PacketStoreTestAccess;
+}
+
 // Structure-of-arrays packet storage. Variable-length mixture/inventory/history
 // lanes remain separate vectors; scalar hot fields never live in an AoS object.
 class PacketStore final {
 public:
     explicit PacketStore(
         std::size_t history_limit = 0, Scalar kinetic_energy_scale_denominator = 1);
-
-    [[nodiscard]] PacketHandle create(PacketInitialState initial, Tick tick = 0);
-    void erase(PacketHandle packet, Tick tick);
 
     [[nodiscard]] bool contains(PacketHandle packet) const noexcept;
     [[nodiscard]] std::size_t alive_count() const noexcept { return alive_count_; }
@@ -122,29 +124,29 @@ public:
     // Tombstone-safe audit access. PacketId is not accepted by physics methods.
     [[nodiscard]] const std::vector<PacketEvent>& debug_history(PacketId packet) const;
 
+private:
+    friend class World;
+    // Test-only seam is declared here but defined outside the installed/public
+    // library API. Authoritative callers mutate packets only through World.
+    friend class test::PacketStoreTestAccess;
+
+    [[nodiscard]] PacketHandle create(PacketInitialState initial, Tick tick = 0);
+    void erase(PacketHandle packet, Tick tick);
     void advance_positions_one_tick(Tick resulting_tick);
-    void transfer_heat(
-        PacketHandle from, PacketHandle to, Energy amount, Tick tick);
+    void transfer_heat(PacketHandle from, PacketHandle to, Energy amount, Tick tick);
     void convert_energy(
         PacketHandle packet,
         EnergyChannel from,
         EnergyChannel to,
         Energy amount,
         Tick tick);
-
-    // Applies equal/opposite momentum and pays any kinetic-energy increase from
-    // the selected interacting packet's stored channel. Lost kinetic energy is
-    // deposited as heat in the selected interacting packet.
-    void exchange_momentum(
+    void apply_actuated_dissipative_central_pair_impulse(
         PacketHandle first,
         PacketHandle second,
         Momentum3 impulse_to_first,
         PacketHandle energy_source,
         PacketHandle dissipation_sink,
         Tick tick);
-
-    // Replaces structural state only when exact element inventory and mass are
-    // unchanged. Structural energy changes are paid from/released to heat.
     void replace_composition(
         PacketHandle packet,
         CompoundMixture composition,
@@ -154,15 +156,11 @@ public:
         Energy structural_energy,
         Energy activation_threshold,
         Tick tick);
-
-    // Boundary mutation primitives are deliberately explicit so World can put
-    // each change in the unified boundary ledger.
     void adjust_boundary_energy(
         PacketHandle packet, EnergyChannel channel, Energy signed_delta, Tick tick);
     [[nodiscard]] Energy adjust_boundary_momentum(
         PacketHandle packet, Momentum3 impulse, Tick tick);
 
-private:
     [[nodiscard]] std::size_t index_of(PacketHandle packet) const;
     [[nodiscard]] PacketSnapshot snapshot_at(std::size_t index) const;
     void append_history(std::size_t index, PacketEvent event);

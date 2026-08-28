@@ -16,45 +16,14 @@ namespace {
     return detail::checked_multiply(magnitude, magnitude);
 }
 
-struct DivisionResult final {
-    Scalar quotient{0};
-    Scalar remainder{0};
-};
-
-[[nodiscard]] DivisionResult euclidean_division(
-    Scalar numerator, Scalar positive_denominator) {
-    auto quotient = static_cast<Scalar>(numerator / positive_denominator);
-    auto remainder = static_cast<Scalar>(numerator % positive_denominator);
-    if (remainder < 0) {
-        quotient = detail::checked_subtract(quotient, 1);
-        remainder = detail::checked_add(remainder, positive_denominator);
-    }
-    return {quotient, remainder};
-}
-
-struct AdvanceResult final {
-    Length position{};
-    Scalar remainder{0};
-};
-
-[[nodiscard]] AdvanceResult advance_axis(
+[[nodiscard]] Length advance_axis_exact(
     Length position, Scalar old_remainder, Momentum momentum, Mass mass) {
     const auto denominator = mass.raw();
-    const auto divided = euclidean_division(momentum.raw(), denominator);
-    auto quotient = divided.quotient;
-    const auto momentum_remainder = divided.remainder;
-
-    Scalar new_remainder = 0;
-    const auto remaining_room = detail::checked_subtract(
-        detail::checked_subtract(denominator, 1), old_remainder);
-    if (momentum_remainder > remaining_room) {
-        quotient = detail::checked_add(quotient, 1);
-        new_remainder = detail::checked_subtract(
-            old_remainder, detail::checked_subtract(denominator, momentum_remainder));
-    } else {
-        new_remainder = detail::checked_add(old_remainder, momentum_remainder);
+    if (old_remainder != 0 || momentum.raw() % denominator != 0) {
+        throw std::domain_error(
+            "reference ballistic step requires an exactly representable integer displacement");
     }
-    return {position + Length::from_raw(quotient), new_remainder};
+    return position + Length::from_raw(momentum.raw() / denominator);
 }
 
 void require_nonnegative(Energy value, const char* message) {
@@ -246,18 +215,18 @@ void PacketStore::advance_positions_one_tick(Tick resulting_tick) {
         if (!alive_[index]) {
             continue;
         }
-        const auto x = advance_axis(
+        const auto x = advance_axis_exact(
             position_x_[index], position_remainder_x_[index], momentum_x_[index], masses_[index]);
-        const auto y = advance_axis(
+        const auto y = advance_axis_exact(
             position_y_[index], position_remainder_y_[index], momentum_y_[index], masses_[index]);
-        const auto z = advance_axis(
+        const auto z = advance_axis_exact(
             position_z_[index], position_remainder_z_[index], momentum_z_[index], masses_[index]);
-        next_x[index] = x.position;
-        next_y[index] = y.position;
-        next_z[index] = z.position;
-        next_remainder_x[index] = x.remainder;
-        next_remainder_y[index] = y.remainder;
-        next_remainder_z[index] = z.remainder;
+        next_x[index] = x;
+        next_y[index] = y;
+        next_z[index] = z;
+        next_remainder_x[index] = 0;
+        next_remainder_y[index] = 0;
+        next_remainder_z[index] = 0;
     }
     position_x_.swap(next_x);
     position_y_.swap(next_y);
@@ -351,7 +320,7 @@ void PacketStore::convert_energy(
                               stored_delta});
 }
 
-void PacketStore::exchange_momentum(
+void PacketStore::apply_actuated_dissipative_central_pair_impulse(
     PacketHandle first,
     PacketHandle second,
     Momentum3 impulse_to_first,
@@ -367,6 +336,15 @@ void PacketStore::exchange_momentum(
     }
     const auto first_index = index_of(first);
     const auto second_index = index_of(second);
+    const Position3 first_position{
+        position_x_[first_index], position_y_[first_index], position_z_[first_index]};
+    const Position3 second_position{
+        position_x_[second_index], position_y_[second_index], position_z_[second_index]};
+    if (pair_angular_momentum_delta(first_position, second_position, impulse_to_first) !=
+        AngularMomentum3{}) {
+        throw std::domain_error(
+            "point interaction impulse must be central to conserve angular momentum");
+    }
     const auto source_index = index_of(energy_source);
     const auto sink_index = index_of(dissipation_sink);
     const Momentum3 before_first{
@@ -406,7 +384,7 @@ void PacketStore::exchange_momentum(
     const auto kinetic_delta = after_kinetic - before_kinetic;
     append_history(first_index, PacketEvent{
                                     tick,
-                                    PacketEventKind::momentum_exchanged,
+                                    PacketEventKind::actuated_dissipative_impulse,
                                     second.id,
                                     {position_x_[first_index], position_y_[first_index], position_z_[first_index]},
                                     impulse_to_first,
@@ -418,7 +396,7 @@ void PacketStore::exchange_momentum(
                                         : Energy{}});
     append_history(second_index, PacketEvent{
                                      tick,
-                                     PacketEventKind::momentum_exchanged,
+                                     PacketEventKind::actuated_dissipative_impulse,
                                      first.id,
                                      {position_x_[second_index], position_y_[second_index], position_z_[second_index]},
                                      -impulse_to_first,
