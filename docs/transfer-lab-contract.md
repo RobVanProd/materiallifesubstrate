@@ -76,6 +76,14 @@ contract. Grid indexing finds candidate support, while the kernel weight
 defines participation. Voxel adjacency is not an independent authorization for
 an interaction.
 
+Binary64 cannot preserve an arbitrary subcell phase when very large global
+coordinates are divided by a small `h`. The reference lab therefore requires
+the absolute particle coordinate, grid origin, and their displacement—each
+divided by `h`—to remain strictly below `2^14` grid units per axis. Near that
+bound the binary64 spacing is below `2^-38` grid units. A larger sparse world
+must transfer in rebased brick-local coordinates; it may not silently rely on a
+large global binary64 coordinate and claim phase invariance.
+
 ## Transfer candidates and update laws
 
 All reductions sort particles by stable ID and grid nodes by integer coordinate.
@@ -162,7 +170,10 @@ The second term is reported as `affine_auxiliary` and the first is reported as
 equaling the center-only orbital quantity. MLS-0's authoritative point-packet
 ledger contains only the center term. The lab therefore reports all three
 values and does not use the APIC theorem to assert conservation of the existing
-physical ledger.
+physical ledger. The bakeoff evaluates APIC's center-plus-affine total as the
+candidate's declared numerical angular state. A numerical APIC win would still
+require a separate head-agent decision before that affine state could enter the
+authoritative packet ontology.
 
 Likewise, the lab separately reports center kinetic energy and the represented
 affine auxiliary
@@ -194,7 +205,9 @@ ordering removes deliberate schedule nondeterminism.
 The implementation rejects nonpositive/nonfinite spacing or mass scale,
 nonpositive particle mass, duplicate particle IDs, nonfinite state, unsafe grid
 indices, nonfinite node coordinates, exact-mass overflow, missing stencil nodes,
-zero/nonfinite grid mass, and a singular moment matrix.
+zero/nonfinite grid mass, a singular moment matrix, and global/normalized
+coordinates whose binary64 spacing is too coarse to retain the lab's required
+subcell phase.
 
 Known scientific failure modes include PIC damping, FLIP null modes/noise, APIC
 transfer of center orbital content into an unphysical auxiliary under the
@@ -213,7 +226,12 @@ particle reduction order.
 The sealed sweep and promotion rule are in
 [`time-transfer-preregistration.md`](time-transfer-preregistration.md). Final
 evidence must include every PIC, APIC, and FLIP diagnostic row, refinement and
-timestep convergence tables, losing candidates, and failures.
+timestep convergence tables, losing candidates, and failures. The C++ harness
+can issue only a provisional numerical ordering. A separate verifier must
+reread the files, check SHA-256 digests and exact Cartesian-product counts,
+compare an independent deterministic rerun, and combine checkpoint, local
+build, Python, Lean, clean-source, and CI gates before the bundle can state an
+overall recommendation.
 
 ## Primary-method references
 

@@ -124,6 +124,21 @@ MLS_TEST("transfer rejects invalid state duplicate IDs and exact mass overflow")
     MLS_REQUIRE_THROWS(
         std::overflow_error,
         mls::experimental::quadratic_bspline_samples(huge_position.position_m, {}));
+    const auto unsafe_normalized = std::ldexp(1.0, 14);
+    MLS_REQUIRE_THROWS(
+        std::overflow_error,
+        mls::experimental::quadratic_bspline_samples(
+            Vec3d{unsafe_normalized, 0.0, 0.0}, TransferConfig{}));
+    MLS_REQUIRE_THROWS(
+        std::overflow_error,
+        mls::experimental::quadratic_bspline_samples(
+            Vec3d{-unsafe_normalized, 0.0, 0.0}, TransferConfig{}));
+    auto unsafe_origin = TransferConfig{};
+    unsafe_origin.grid_origin_m = {unsafe_normalized, 0.0, 0.0};
+    MLS_REQUIRE_THROWS(
+        std::overflow_error,
+        mls::experimental::quadratic_bspline_samples(
+            Vec3d{unsafe_normalized + 0.25, 0.0, 0.0}, unsafe_origin));
     const std::array overflowing_mass{
         TransferParticle{1, std::numeric_limits<std::int64_t>::max(), {}, {}, {}},
         TransferParticle{2, 1, {}, {}, {}},

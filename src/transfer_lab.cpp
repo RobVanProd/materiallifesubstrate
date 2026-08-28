@@ -78,10 +78,13 @@ void validate_particles(std::span<const TransferParticle> particles) {
 }
 
 [[nodiscard]] std::array<double, 3> axis_weights(double coordinate) {
+    const auto left = 1.5 - coordinate;
+    const auto middle = coordinate - 1.0;
+    const auto right = coordinate - 0.5;
     return {
-        0.5 * std::pow(1.5 - coordinate, 2.0),
-        0.75 - std::pow(coordinate - 1.0, 2.0),
-        0.5 * std::pow(coordinate - 0.5, 2.0),
+        0.5 * left * left,
+        0.75 - middle * middle,
+        0.5 * right * right,
     };
 }
 
@@ -119,7 +122,8 @@ void validate_particles(std::span<const TransferParticle> particles) {
 
 [[nodiscard]] Matrix3d inverse(const Matrix3d& matrix) {
     const auto det = determinant(matrix);
-    const auto scale = std::max(1.0, std::pow(frobenius_norm(matrix), 3.0));
+    const auto matrix_norm = frobenius_norm(matrix);
+    const auto scale = std::max(1.0, matrix_norm * matrix_norm * matrix_norm);
     if (!std::isfinite(det) || std::abs(det) <= 64.0 * std::numeric_limits<double>::epsilon() * scale) {
         throw std::domain_error("singular transfer kernel moment matrix");
     }
@@ -279,8 +283,27 @@ std::vector<KernelSample> quadratic_bspline_samples(
     if (!finite(particle_position_m)) {
         throw std::invalid_argument("particle position must be finite");
     }
+    const auto scaled_position = particle_position_m / config.grid_spacing_m;
+    const auto scaled_origin = config.grid_origin_m / config.grid_spacing_m;
     const auto normalized = (particle_position_m - config.grid_origin_m) /
         config.grid_spacing_m;
+    // This deterministic reference lab deliberately stays within 2^14 grid
+    // units of its coordinate origin. Near that boundary binary64 spacing is
+    // below 2^-38 grid units; accepting globally large coordinates would lose
+    // fractional kernel phase before subtraction. Larger worlds must use local,
+    // rebased brick coordinates rather than weakening this fail-closed guard.
+    constexpr double maximum_lab_coordinate_grid_units = 0x1p14;
+    const auto coordinate_is_unsafe = [](Vec3d value) noexcept {
+        return !finite(value) ||
+            std::abs(value.x) >= maximum_lab_coordinate_grid_units ||
+            std::abs(value.y) >= maximum_lab_coordinate_grid_units ||
+            std::abs(value.z) >= maximum_lab_coordinate_grid_units;
+    };
+    if (coordinate_is_unsafe(scaled_position) || coordinate_is_unsafe(scaled_origin) ||
+        coordinate_is_unsafe(normalized)) {
+        throw std::overflow_error(
+            "transfer coordinate exceeds deterministic local-grid safety range");
+    }
     const GridIndex base{
         checked_floor_to_i64(normalized.x - 0.5),
         checked_floor_to_i64(normalized.y - 0.5),
