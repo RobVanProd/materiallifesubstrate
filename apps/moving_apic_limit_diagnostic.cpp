@@ -135,7 +135,7 @@ constexpr std::string_view convergence_header =
     "mode,seed,scope,path,phase,metric,level_ids,hard_tolerance,error_level_0,"
     "error_level_1,error_level_2,error_level_3,all_below,contraction_01,contraction_12,"
     "contraction_23,endpoint_contraction,finest_increase_failure,ratio_rule,pass,"
-    "failure_reason\n";
+    "failure_reason,failure_count,worst_value,worst_configuration\n";
 
 constexpr std::string_view hard_header =
     "mode,seed,scope,path,phase,gate,applicable,expected_configurations,"
@@ -244,6 +244,9 @@ struct ConvergenceRow final {
     bool ratio_rule{false};
     bool pass{false};
     std::string failure_reason{};
+    std::size_t failure_count{0};
+    std::optional<double> worst_value{};
+    std::string worst_configuration{"NA"};
 };
 
 struct GateRow final {
@@ -436,6 +439,114 @@ template <typename Value>
         result.push_back(config);
     }
     return result;
+}
+
+[[nodiscard]] std::uint64_t configuration_error_count(
+    const Configuration& config,
+    std::size_t particle_count,
+    std::int64_t initial_mass_quanta) {
+    std::uint64_t errors = 0;
+    const auto require = [&errors](bool condition) {
+        if (!condition) {
+            ++errors;
+        }
+    };
+    const auto same = [](double lhs, double rhs) {
+        return relative_scalar(lhs, rhs) <= 8.0e-16;
+    };
+
+    require(config.level >= 0 && config.level < 3);
+    if (config.level < 0 || config.level >= 3) {
+        return errors;
+    }
+    const auto scale = std::int64_t{1} << config.level;
+    if (config.scope == "co_refinement") {
+        require(config.phase == phase_zero || config.phase == phase_hard);
+        require(same(config.h_m, 0.5 / static_cast<double>(scale)));
+        require(config.dt_quanta == 4 / scale);
+        require(same(config.dt_s,
+                     static_cast<double>(config.dt_quanta) * time_quantum_s));
+        require(config.steps == horizon_quanta / config.dt_quanta);
+        require(config.cells_per_axis == 4 * static_cast<int>(scale));
+        require(config.particles_per_axis == 8 * static_cast<int>(scale));
+        require(config.particles_per_cell == 8);
+        require(same(config.particle_spacing_m, 0.25 / static_cast<double>(scale)));
+        require(config.mass_quanta_per_particle == 64 / scale / scale / scale);
+    } else if (config.scope == "particles_per_cell") {
+        require(config.phase == phase_hard);
+        require(same(config.h_m, 0.25));
+        require(config.dt_quanta == 2);
+        require(same(config.dt_s, 1.0 / 80.0));
+        require(config.steps == 8);
+        require(config.cells_per_axis == 8);
+        require(config.particles_per_axis == 8 * static_cast<int>(scale));
+        require(config.particles_per_cell == static_cast<int>(scale * scale * scale));
+        require(same(config.particle_spacing_m, 0.25 / static_cast<double>(scale)));
+        require(config.mass_quanta_per_particle == 64 / scale / scale / scale);
+    } else {
+        ++errors;
+    }
+
+    if (config.phase == phase_zero || config.phase == phase_hard) {
+        const auto expected_phase = phase_fraction(config.phase);
+        require(relative_vector(config.phase_fraction, expected_phase) <= 8.0e-16);
+    } else {
+        ++errors;
+    }
+    require(config.h_m > 0.0 && config.dt_s > 0.0 && config.dt_quanta > 0);
+    require(config.cells_per_axis > 0 && config.particles_per_axis > 0);
+    require(config.mass_quanta_per_particle > 0);
+    require(config.steps > 0 && config.steps <= horizon_quanta);
+    if (config.steps > 0 && config.steps <= horizon_quanta && config.dt_quanta > 0) {
+        require(config.steps * config.dt_quanta == horizon_quanta);
+    }
+    if (config.h_m > 0.0) {
+        require(same(u_ref_m_per_s * config.dt_s / config.h_m, cfl));
+    }
+    require(same(static_cast<double>(config.cells_per_axis) * config.h_m,
+                 domain_max_m - domain_min_m));
+    require(same(static_cast<double>(config.particles_per_axis) *
+                     config.particle_spacing_m,
+                 domain_max_m - domain_min_m));
+    if (config.cells_per_axis > 0 && config.particles_per_axis > 0) {
+        require(config.particles_per_axis % config.cells_per_axis == 0);
+    }
+    if (config.cells_per_axis > 0 && config.particles_per_axis > 0 &&
+        config.particles_per_axis % config.cells_per_axis == 0) {
+        const auto ppc_axis = config.particles_per_axis / config.cells_per_axis;
+        const auto ppc_cube = static_cast<std::int64_t>(ppc_axis) * ppc_axis * ppc_axis;
+        require(ppc_cube <= std::numeric_limits<int>::max());
+        if (ppc_cube <= std::numeric_limits<int>::max()) {
+            require(config.particles_per_cell == static_cast<int>(ppc_cube));
+        }
+    }
+    const auto axis = static_cast<std::size_t>(config.particles_per_axis);
+    require(axis == 0U || axis <= std::numeric_limits<std::size_t>::max() / axis);
+    if (axis != 0U && axis > std::numeric_limits<std::size_t>::max() / axis) {
+        return errors;
+    }
+    const auto axis_squared = axis * axis;
+    require(axis == 0U || axis_squared <= std::numeric_limits<std::size_t>::max() / axis);
+    if (axis != 0U && axis_squared > std::numeric_limits<std::size_t>::max() / axis) {
+        return errors;
+    }
+    const auto expected_particles = axis_squared * axis;
+    require(particle_count == expected_particles);
+    require(initial_mass_quanta == expected_mass_quanta);
+    const auto mass_quantum = static_cast<std::uint64_t>(config.mass_quanta_per_particle);
+    require(config.mass_quanta_per_particle > 0 &&
+            expected_particles <= static_cast<std::size_t>(
+                std::numeric_limits<std::int64_t>::max()) / mass_quantum);
+    if (config.mass_quanta_per_particle > 0 &&
+        expected_particles <= static_cast<std::size_t>(
+            std::numeric_limits<std::int64_t>::max()) / mass_quantum) {
+        require(static_cast<std::int64_t>(expected_particles) *
+                    config.mass_quanta_per_particle == expected_mass_quanta);
+    }
+    require(same(static_cast<double>(expected_mass_quanta) * kg_per_mass_quantum,
+                 density_kg_per_m3 *
+                     std::pow(domain_max_m - domain_min_m, 3.0)));
+    return errors;
 }
 
 [[nodiscard]] std::vector<TransferParticle> make_lattice_particles(
@@ -846,17 +957,8 @@ void accumulate_step_residuals(RawRow& row, const MovingApicStep& step) {
         row.terminal_mass_quanta == expected_mass_quanta;
     row.exact_clock_ok = row.elapsed_quanta == horizon_quanta;
     row.id_error_count = id_errors(row.terminal_particles, initial);
-    row.configuration_error_count = 0;
-    const auto nominal_particles = static_cast<std::size_t>(config.particles_per_axis) *
-        static_cast<std::size_t>(config.particles_per_axis) *
-        static_cast<std::size_t>(config.particles_per_axis);
-    if (row.particle_count != nominal_particles ||
-        config.mass_quanta_per_particle <= 0 ||
-        row.initial_mass_quanta != expected_mass_quanta ||
-        std::abs(u_ref_m_per_s * config.dt_s / config.h_m - cfl) > 8.0e-16 ||
-        config.steps * config.dt_quanta != horizon_quanta) {
-        ++row.configuration_error_count;
-    }
+    row.configuration_error_count = configuration_error_count(
+        config, row.particle_count, row.initial_mass_quanta);
 
     const auto reference_particles = ballistic_reference(initial);
     const auto statistics = affine_statistics(row.terminal_particles, exact_field);
@@ -1141,12 +1243,18 @@ void write_phase_row(Csv& csv, const PhaseRow& row, bool smoke) {
     row.level_ids = errors.size() == 4U ? "0|1|2|3" : "0|1|2";
     for (std::size_t index = 0; index < errors.size() && index < 4U; ++index) {
         row.errors[index] = errors[index];
+        if (std::isfinite(errors[index]) &&
+            (!row.worst_value.has_value() || errors[index] > *row.worst_value)) {
+            row.worst_value = errors[index];
+            row.worst_configuration = "level_" + to_text(index);
+        }
     }
     if ((errors.size() != 3U && errors.size() != 4U) ||
         std::ranges::any_of(errors, [](double value) {
             return !std::isfinite(value) || value < 0.0;
         })) {
         row.failure_reason = "missing_or_nonfinite";
+        row.failure_count = 1;
         return row;
     }
     row.all_below = std::ranges::all_of(
@@ -1166,6 +1274,9 @@ void write_phase_row(Csv& csv, const PhaseRow& row, bool smoke) {
         row.ratio_rule = row.ratio_rule && row.contractions[index].value_or(false);
     }
     row.pass = row.all_below || row.ratio_rule;
+    // This table has one registered convergence decision per
+    // scope/path/phase/metric group, so its group-failure count is exactly 0/1.
+    row.failure_count = row.pass ? 0U : 1U;
     if (row.all_below) {
         row.failure_reason = "pass_all_below";
     } else if (row.ratio_rule) {
@@ -1203,6 +1314,9 @@ void write_convergence_row(Csv& csv, const ConvergenceRow& row, bool smoke) {
         to_text(row.ratio_rule),
         to_text(row.pass),
         row.failure_reason,
+        to_text(row.failure_count),
+        format_optional(row.worst_value),
+        row.worst_configuration,
     });
 }
 
@@ -1598,7 +1712,10 @@ using CausalAccessor = std::function<double(const CausalRow&)>;
         double tolerance{0.0};
         bool boolean{false};
     };
-    const std::array<Spec, 12> applicable_specs{{
+    // The immutable sealed CSV contains only these eight hard-gate fields.
+    // Count/ID fields absent from that schema must remain explicitly
+    // inapplicable; synthesizing zero observations would fabricate evidence.
+    const std::array<Spec, 8> applicable_specs{{
         {"exact_mass_ok", "exact_mass_ok", 0.0, true},
         {"exact_clock_ok", "exact_clock_ok", 0.0, true},
         {"max_p2g_mass_error", "max_p2g_mass_error", mass_tolerance, false},
@@ -1609,11 +1726,6 @@ using CausalAccessor = std::function<double(const CausalRow&)>;
         {"max_g2p_paper_augmented_angular_error",
          "max_g2p_paper_augmented_angular_error", angular_tolerance, false},
         {"static_grid_error", "static_grid_error", representation_tolerance, false},
-        {"nonfinite_or_missing_count", std::nullopt, 0.0, false},
-        {"configuration_error_count", std::nullopt, 0.0, false},
-        {"id_error_count", std::nullopt, 0.0, false},
-        // Placeholder is replaced by the inapplicable vocabulary loop below.
-        {"", std::nullopt, 0.0, false},
     }};
     const std::array<std::string_view, 17> vocabulary{
         "exact_mass_ok",
@@ -1970,15 +2082,15 @@ struct Counts final {
         return "E remains viable from proper co-refinement but E_oracleB is invalid for causal attribution; no promotion";
     }
     if (!e_core && !oracle_core) {
-        return "reject standard JST moving APIC; both E and E_oracleB fail, remaining defect classified as projection/quadrature";
+        return "reject standard JST moving APIC as the MLS mechanics foundation for this affine-advection requirement; both E and E_oracleB fail, with the remaining defect classified as projection/quadrature in this preregistered experiment";
     }
     if (!e_density && oracle_density) {
-        return "reject standard JST moving APIC; E fails while E_oracleB passes core and density, supporting affine-state mismatch";
+        return "reject standard JST moving APIC as the MLS mechanics foundation for this affine-advection requirement; E fails while E_oracleB passes core and density, supporting affine-state mismatch within this preregistered experiment";
     }
     if (!e_density && !oracle_density) {
-        return "reject standard JST moving APIC; affine-state support coexists with remaining density projection/quadrature";
+        return "reject standard JST moving APIC as the MLS mechanics foundation for this affine-advection requirement; affine-state support coexists with remaining density projection/quadrature in this preregistered experiment";
     }
-    return "reject standard JST moving APIC; proper co-refinement and density sequences disagree";
+    return "reject standard JST moving APIC as the MLS mechanics foundation for this affine-advection requirement; proper co-refinement and density sequences disagree in this preregistered experiment";
 }
 
 void write_summary(
