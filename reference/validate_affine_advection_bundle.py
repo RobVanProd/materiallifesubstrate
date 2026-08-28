@@ -21,7 +21,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 
 SCHEMA = "mls-affine-advection-diagnostic-v1"
