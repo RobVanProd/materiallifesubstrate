@@ -1391,9 +1391,9 @@ def validate_summary_results(
     audit.check(summary.get("decision") ==
                 "no viability or causal verdict: external prerequisites or completeness gate pending",
                 "producer must retain pending external-prerequisite verdict")
-    prerequisite_complete = summary.get("prerequisite_complete")
+    prerequisite_complete = summary.get("prerequisites_complete")
     audit.check(prerequisite_complete is False,
-                "producer prerequisite_complete must retain deferred source/tag gates")
+                "producer prerequisites_complete must retain deferred source/tag gates")
     if sealed_source_verified:
         # This is the verifier's external result, intentionally not rewritten
         # into the producer-owned summary.
