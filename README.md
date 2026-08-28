@@ -40,6 +40,8 @@ or `reward`. Those may exist only as observer interpretations.
 - [Exact physical-time and checkpoint contract](docs/time-checkpoint-contract.md)
 - [Particle/grid transfer laboratory contract](docs/transfer-lab-contract.md)
 - [Sealed Time + Transfer bakeoff protocol](docs/time-transfer-preregistration.md)
+- [Affine Advection Lab implementation contract](docs/affine-advection-lab-contract.md)
+- [Affine Advection Lab preregistration](docs/affine-advection-preregistration.md)
 - [Forbidden-semantics contract](docs/forbidden-semantics.md)
 - [Accounting invariants](docs/accounting-invariants.md)
 - [Research roadmap and gates](docs/roadmap.md)
@@ -55,7 +57,7 @@ or `reward`. Those may exist only as observer interpretations.
 - [2026-08-28 baseline-hardening evidence](docs/review-evidence-2026-08-28-hardening.md)
 - [Prior-art debts](docs/prior-art.md)
 
-The historical and hardening Python oracles under `reference/` import no C++
+The historical, hardening, and affine-advection Python oracles under `reference/` import no C++
 bindings or production implementation modules. Their role is independent exact
 cross-checking, not validation of physical behavior.
 
