@@ -108,7 +108,7 @@ public:
         if (stop == 0) {
             throw std::invalid_argument("SplitMix64 bound must be positive");
         }
-        const auto threshold = static_cast<std::uint64_t>(-stop) % stop;
+        const auto threshold = (std::uint64_t{0} - stop) % stop;
         while (true) {
             const auto value = next();
             if (value >= threshold) {

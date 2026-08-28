@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_SOURCE_DIR}/api_compile_contracts.cmake")
+
 add_executable(
   mls_validation
   test_main.cpp

@@ -130,7 +130,7 @@ private:
     // library API. Authoritative callers mutate packets only through World.
     friend class test::PacketStoreTestAccess;
 
-    [[nodiscard]] PacketHandle create(PacketInitialState initial, Tick tick = 0);
+    [[nodiscard]] PacketHandle create(PacketInitialState initial, Tick tick);
     void erase(PacketHandle packet, Tick tick);
     void advance_positions_one_tick(Tick resulting_tick);
     void transfer_heat(PacketHandle from, PacketHandle to, Energy amount, Tick tick);
