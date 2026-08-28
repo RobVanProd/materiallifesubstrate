@@ -175,10 +175,14 @@ passes. The same rule applies to the coupled `h,dt` sequence.
 
 Path C reproduces the fingerprint only when all 18 translation families remain
 below `2e-9`, and at least 17 of 18 families in each nontranslation field are
-defect-positive: the one-remap result is below `2e-9`, a finer schedule becomes
-resolved above `2e-9`, the finest primary velocity and affine-state errors are
-at least ten times both roundoff and their one-remap errors, and convergence
-fails. Every exception is reported.
+defect-positive: one-remap **trajectory position and material velocity** remain
+below `2e-9`; the one-remap affine-gradient error matches the exact
+`A-A' = dt A^2(I+dt A)^-1` stale-state witness within `5e-11`; a finer schedule
+produces resolved material-velocity error above `2e-9`; the finest velocity
+error is at least ten times both roundoff and its one-remap value; and its
+four-level convergence gate fails. The affine-state error is expected to be
+resolved at one remap—it is the proposed cause, not part of the sealed
+near-roundoff trajectory fingerprint. Every exception is reported.
 
 Path D removes the defect only when every selected family in all three fields
 passes position, velocity, gradient, intercept, and dispersion at all four
@@ -211,4 +215,3 @@ project-defined conservation axiom, or invertibility axiom.
 After the diagnostic evidence is sealed, stop. Do not add stress, forces,
 gravity, elasticity, contact, fracture, diffusion, reaction kinetics,
 organisms, rendering, GPU work, or a new transfer family.
-
