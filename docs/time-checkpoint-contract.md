@@ -6,9 +6,10 @@ candidate.
 
 ## Physical-time state and units
 
-`Tick` remains an unsigned deterministic transition-order counter. It is not a
-physical unit and is never converted to seconds. Authoritative physical time is
-the distinct signed fixed-point `Time` quantity:
+`Tick` remains an unsigned deterministic ballistic-step sequence counter.
+Other low-level world transitions can share a Tick; it is not a total operation
+counter, is not a physical unit, and is never converted to seconds.
+Authoritative physical time is the distinct signed fixed-point `Time` quantity:
 
 | State/configuration | Representation | Unit and constraint |
 |---|---|---|
@@ -16,7 +17,7 @@ the distinct signed fixed-point `Time` quantity:
 | `WorldConfig::physical_timestep` | signed 64-bit `Time` quanta | strictly positive |
 | `seconds_per_time_quantum_numerator` | unsigned 64-bit integer | strictly positive |
 | `seconds_per_time_quantum_denominator` | unsigned 64-bit integer | strictly positive |
-| `World::tick()` | unsigned 64-bit sequence count | ordering/debugging only |
+| `World::tick()` | unsigned 64-bit sequence count | ballistic-step ordering/debugging only |
 
 One raw time quantum is exactly
 
@@ -95,7 +96,7 @@ Failure modes are rejected transactionally:
 - a checkpoint clock inconsistent with its stored `Tick`, timestep, and
   zero-time origin.
 
-## Canonical checkpoint v1
+## Canonical checkpoint v2
 
 `serialize_canonical_checkpoint` emits versioned little-endian bytes. The image
 contains every authoritative state field used by this laboratory:
@@ -113,14 +114,18 @@ contains every authoritative state field used by this laboratory:
 Maps and live packets are encoded in strictly increasing key order. Integers
 have fixed widths. Signed integers use a specified 64-bit two's-complement byte
 encoding. A trailing FNV-1a checksum detects accidental corruption; it is not a
-cryptographic authenticity mechanism.
+cryptographic authenticity mechanism. The header records the byte-format
+version separately from the authoritative physics ABI. A change that can alter
+continued evolution from identical state must increment the physics ABI even
+when the byte layout itself does not change. Evidence also binds checkpoints to
+the exact source SHA.
 
-The v1 byte order is fixed as follows. Every field is little endian; every
+The v2 byte order is fixed as follows. Every field is little endian; every
 `count` and `size` is `u64` regardless of host `size_t`.
 
 | Section | Fields in order |
 |---|---|
-| Header | eight bytes `MLSTTLAB`, `u32 version=1`, `u32 feature_flags=0` |
+| Header | eight bytes `MLSTTLAB`, `u32 format_version=2`, `u32 physics_abi_version=1` |
 | Configuration | `i64 voxel_edge`, `i64 interaction_radius`, `i64 kinetic_energy_scale_denominator`, `i64 physical_timestep`, `u64 seconds numerator`, `u64 seconds denominator`, `i64 velocity-scale numerator`, `i64 velocity-scale denominator`, `u64 history_limit`, `u8 audit` |
 | Clock | `u64 Tick`, `i64 physical_time` |
 | Element catalogue | count, then sorted `(u16 id, i64 mass, i64 heat_capacity, i64 isolated_energy)` |
@@ -136,7 +141,7 @@ omitted because they are debug metadata and are never read by an authoritative
 transition. The next unused packet ID is retained, so omitting tombstone payloads
 does not change future live packet identity.
 
-Decoding rejects bad magic, unknown version/feature flags, checksum failure,
+Decoding rejects bad magic, unknown format or physics-ABI versions, checksum failure,
 truncation, trailing payload bytes, noncanonical/duplicate map order, invalid
 compound encodings, inconsistent derived packet material fields, bad IDs,
 invalid unit configuration, clock inconsistency, and a reconstructed world that
@@ -164,7 +169,7 @@ The Time + Transfer suite must cover:
 
 The focused suite implements these checks in `tests/time_checkpoint_tests.cpp`.
 It also rebuilds a valid checksum around deliberately malformed payloads so bad
-magic/version/flags, invalid time and packet state, duplicate/reordered keys,
+magic/format/physics-ABI versions, invalid time and packet state, duplicate/reordered keys,
 and trailing payload rejection exercise the decoder rather than merely failing
 the checksum preflight.
 

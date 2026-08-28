@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <iostream>
 #include <limits>
 #include <span>
 #include <stdexcept>
@@ -115,9 +116,9 @@ void skip_bytes(
     offset += count;
 }
 
-[[nodiscard]] std::size_t first_packet_mass_offset(
+[[nodiscard]] std::size_t first_packet_offset(
     const std::vector<std::uint8_t>& checkpoint) {
-    // Skip magic/version/flags, configuration, Tick, and physical Time.
+    // Skip magic/format/physics ABI, configuration, Tick, and physical Time.
     std::size_t offset = 105;
     const auto element_count = read_size_little_endian(checkpoint, offset);
     skip_bytes(checkpoint, offset, element_count * 26U);
@@ -136,6 +137,12 @@ void skip_bytes(
     if (packet_count == 0) {
         throw std::logic_error("canonical test fixture contains no packet");
     }
+    return offset;
+}
+
+[[nodiscard]] std::size_t first_packet_mass_offset(
+    const std::vector<std::uint8_t>& checkpoint) {
+    auto offset = first_packet_offset(checkpoint);
     skip_bytes(
         checkpoint,
         offset,
@@ -226,13 +233,47 @@ MLS_TEST("time/invalid_scales_and_fractional_steps_reject_transactionally") {
     MLS_REQUIRE_EQ(fixture.world.physical_time(), mls::Time{});
 }
 
+MLS_TEST("time/clock_and_displacement_overflow_reject_whole_batch") {
+    auto clock = make_time_world();
+    const auto clock_hash = clock.world.physical_state_hash();
+    MLS_REQUIRE_THROWS(
+        std::overflow_error,
+        clock.world.step(std::numeric_limits<mls::Tick>::max()));
+    MLS_REQUIRE_EQ(clock.world.physical_state_hash(), clock_hash);
+
+    auto position = make_time_world();
+    const auto packet = position.world.introduce_material_from_boundary(seed(
+        position.a_id,
+        {mls::Length::from_raw(std::numeric_limits<mls::Scalar>::max() - 1), {}, {}},
+        {mls::Momentum::from_raw(4), {}, {}}));
+    const auto position_hash = position.world.physical_state_hash();
+    MLS_REQUIRE_THROWS(std::overflow_error, position.world.step(2));
+    MLS_REQUIRE_EQ(position.world.physical_state_hash(), position_hash);
+    MLS_REQUIRE_EQ(
+        position.world.packets().snapshot(packet).position.x,
+        mls::Length::from_raw(std::numeric_limits<mls::Scalar>::max() - 1));
+
+    auto denominator_config = mls::WorldConfig{};
+    denominator_config.momentum_mass_to_velocity_scale.length_quanta_denominator =
+        std::numeric_limits<mls::Scalar>::max();
+    auto denominator = make_time_world(denominator_config);
+    static_cast<void>(
+        denominator.world.introduce_material_from_boundary(seed(denominator.a_id)));
+    const auto denominator_hash = denominator.world.physical_state_hash();
+    MLS_REQUIRE_THROWS(std::overflow_error, denominator.world.step());
+    MLS_REQUIRE_EQ(denominator.world.physical_state_hash(), denominator_hash);
+}
+
 MLS_TEST("checkpoint/canonical_roundtrip_preserves_authoritative_state") {
     auto config = mls::WorldConfig{};
     config.voxel_edge = mls::Length::from_raw(17);
     config.interaction_radius = mls::Length::from_raw(41);
+    config.kinetic_energy_scale_denominator = 2;
     config.physical_timestep = mls::Time::from_raw(2);
     config.physical_time_scale = mls::PhysicalTimeScale{1, 1'000'000};
+    config.momentum_mass_to_velocity_scale = mls::MomentumMassToVelocityScale{3, 2};
     config.packet_history_limit = 16;
+    config.audit_after_each_operation = false;
     auto original = make_time_world(config);
     const auto removed = original.world.introduce_material_from_boundary(
         seed(original.b_id, {mls::Length::from_raw(-20), {}, {}}));
@@ -241,8 +282,11 @@ MLS_TEST("checkpoint/canonical_roundtrip_preserves_authoritative_state") {
         original.a_id,
         {mls::Length::from_raw(3), mls::Length::from_raw(4), {}},
         {mls::Momentum::from_raw(4), {}, {}}));
+    const auto second_live = original.world.introduce_material_from_boundary(seed(
+        original.b_id, {mls::Length::from_raw(-9), mls::Length::from_raw(2), {}}));
+    original.world.establish_current_state_as_baseline();
     original.world.exchange_energy_with_boundary(
-        live, mls::EnergyChannel::stored, mls::Energy::from_raw(7));
+        live, mls::EnergyChannel::stored, mls::Energy::from_raw(-7));
     original.world.apply_point_impulse_from_boundary(
         live, {mls::Momentum::from_raw(4), {}, {}});
     original.world.step(2);
@@ -250,13 +294,30 @@ MLS_TEST("checkpoint/canonical_roundtrip_preserves_authoritative_state") {
     const auto checkpoint = mls::serialize_canonical_checkpoint(original.world);
     auto restored = mls::deserialize_canonical_checkpoint(checkpoint);
     MLS_REQUIRE_EQ(mls::serialize_canonical_checkpoint(restored), checkpoint);
+    MLS_REQUIRE_EQ(restored.config().voxel_edge, config.voxel_edge);
+    MLS_REQUIRE_EQ(restored.config().interaction_radius, config.interaction_radius);
+    MLS_REQUIRE_EQ(
+        restored.config().kinetic_energy_scale_denominator,
+        config.kinetic_energy_scale_denominator);
     MLS_REQUIRE_EQ(restored.config().physical_timestep, config.physical_timestep);
     MLS_REQUIRE_EQ(restored.config().physical_time_scale, config.physical_time_scale);
+    MLS_REQUIRE_EQ(
+        restored.config().momentum_mass_to_velocity_scale,
+        config.momentum_mass_to_velocity_scale);
+    MLS_REQUIRE_EQ(restored.config().packet_history_limit, config.packet_history_limit);
+    MLS_REQUIRE_EQ(
+        restored.config().audit_after_each_operation,
+        config.audit_after_each_operation);
     MLS_REQUIRE_EQ(restored.tick(), original.world.tick());
     MLS_REQUIRE_EQ(restored.physical_time(), original.world.physical_time());
     MLS_REQUIRE_EQ(restored.packets().snapshot(live), original.world.packets().snapshot(live));
+    MLS_REQUIRE_EQ(
+        restored.packets().snapshot(second_live),
+        original.world.packets().snapshot(second_live));
     MLS_REQUIRE_EQ(restored.ledger().baseline(), original.world.ledger().baseline());
     MLS_REQUIRE_EQ(restored.ledger().boundary(), original.world.ledger().boundary());
+    MLS_REQUIRE(original.world.ledger().baseline().packet_count > 0U);
+    MLS_REQUIRE(original.world.ledger().boundary().energy_net.raw() < 0);
     MLS_REQUIRE(restored.audit().ok());
 
     // The removed packet's payload is non-authoritative, but its consumed ID
@@ -270,14 +331,16 @@ MLS_TEST("checkpoint/canonical_roundtrip_preserves_authoritative_state") {
         mls::serialize_canonical_checkpoint(original.world));
 }
 
-MLS_TEST("checkpoint/v1_empty_world_bytes_match_cross_compiler_golden") {
+MLS_TEST("checkpoint/v2_empty_world_bytes_match_cross_compiler_golden") {
     const auto fixture = make_time_world();
     const auto checkpoint = mls::serialize_canonical_checkpoint(fixture.world);
     MLS_REQUIRE_EQ(checkpoint.size(), std::size_t{483});
     auto checksum_offset = checkpoint.size() - sizeof(std::uint64_t);
+    const auto checksum = read_size_little_endian(checkpoint, checksum_offset);
+    std::cout << "[EVIDENCE] checkpoint_v2_empty_fnv1a64=" << checksum << '\n';
     MLS_REQUIRE_EQ(
-        read_size_little_endian(checkpoint, checksum_offset),
-        UINT64_C(13334878849264054549));
+        checksum,
+        UINT64_C(6948438975031162627));
     MLS_REQUIRE_EQ(checksum_offset, checkpoint.size());
 }
 
@@ -374,7 +437,7 @@ MLS_TEST("checkpoint/rejects_a_clock_inconsistent_with_Tick") {
     const auto fixture = make_time_world();
     auto inconsistent = mls::serialize_canonical_checkpoint(fixture.world);
 
-    // Canonical v1 prefix: 16-byte header and 73-byte configuration. Tick is
+    // Canonical v2 prefix: 16-byte header and 73-byte configuration. Tick is
     // the next eight bytes; physical Time follows at byte 97.
     constexpr std::size_t physical_time_offset = 97;
     inconsistent[physical_time_offset] = UINT8_C(1);
@@ -382,15 +445,16 @@ MLS_TEST("checkpoint/rejects_a_clock_inconsistent_with_Tick") {
     MLS_REQUIRE(rejects_checkpoint(inconsistent));
 }
 
-MLS_TEST("checkpoint/rejects_unsupported_flags_and_invalid_time_scale") {
+MLS_TEST("checkpoint/rejects_wrong_physics_abi_and_invalid_time_scale") {
     const auto fixture = make_time_world();
     const auto canonical = mls::serialize_canonical_checkpoint(fixture.world);
 
-    auto flags = canonical;
-    constexpr std::size_t feature_flags_offset = 12;
-    flags[feature_flags_offset] = UINT8_C(1);
-    refresh_checksum(flags);
-    MLS_REQUIRE(rejects_checkpoint(flags));
+    auto physics_abi = canonical;
+    constexpr std::size_t physics_abi_offset = 12;
+    physics_abi[physics_abi_offset] = static_cast<std::uint8_t>(
+        mls::authoritative_physics_abi_version + 1U);
+    refresh_checksum(physics_abi);
+    MLS_REQUIRE(rejects_checkpoint(physics_abi));
 
     auto time_scale = canonical;
     constexpr std::size_t seconds_numerator_offset = 48;
@@ -415,4 +479,20 @@ MLS_TEST("checkpoint/rejects_inconsistent_packet_derived_material_state") {
     inconsistent[mass_offset] = UINT8_C(5); // configured/derived mass is four
     refresh_checksum(inconsistent);
     MLS_REQUIRE(rejects_checkpoint(inconsistent));
+}
+
+MLS_TEST("checkpoint/rejects_unreachable_live_packet_generation") {
+    auto fixture = make_time_world();
+    static_cast<void>(
+        fixture.world.introduce_material_from_boundary(seed(fixture.a_id)));
+    auto unreachable = mls::serialize_canonical_checkpoint(fixture.world);
+    const auto generation_offset =
+        first_packet_offset(unreachable) + sizeof(std::uint64_t);
+    std::fill_n(
+        unreachable.begin() + static_cast<std::ptrdiff_t>(generation_offset),
+        sizeof(std::uint32_t),
+        std::uint8_t{0});
+    unreachable[generation_offset] = UINT8_C(2);
+    refresh_checksum(unreachable);
+    MLS_REQUIRE(rejects_checkpoint(unreachable));
 }

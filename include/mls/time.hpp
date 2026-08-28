@@ -7,8 +7,9 @@
 
 namespace mls {
 
-// Tick is a deterministic operation/order counter. It is deliberately not a
-// physical-time quantity and carries no unit conversion.
+// Tick is the deterministic ballistic-step sequence counter. Other world
+// transitions may share a Tick; it is deliberately not a physical-time
+// quantity and carries no unit conversion.
 using Tick = std::uint64_t;
 
 // Exact scale for the Time fixed-point quantity. One raw Time quantum denotes

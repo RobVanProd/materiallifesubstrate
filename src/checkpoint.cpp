@@ -414,7 +414,9 @@ void require_packet_invariants(
     const CompoundRegistry& compounds,
     const ElementCatalog& elements,
     Scalar kinetic_energy_scale_denominator) {
-    if (packet.handle.id.value == 0 || packet.handle.generation == 0 ||
+    // Checkpoint format v2 encodes only currently reachable live handles.
+    // Packet IDs are not reused, so every live packet has generation one.
+    if (packet.handle.id.value == 0 || packet.handle.generation != 1U ||
         packet.composition.empty()) {
         reject("checkpoint contains an invalid live packet identity or composition");
     }
@@ -460,7 +462,7 @@ public:
         Writer writer;
         writer.write_magic();
         writer.write_u32(canonical_checkpoint_format_version);
-        writer.write_u32(0); // reserved feature flags
+        writer.write_u32(authoritative_physics_abi_version);
 
         write_quantity(writer, world.config_.voxel_edge);
         write_quantity(writer, world.config_.interaction_radius);
@@ -536,8 +538,8 @@ public:
         if (reader.read_u32() != canonical_checkpoint_format_version) {
             reject("checkpoint format version is unsupported");
         }
-        if (reader.read_u32() != 0) {
-            reject("checkpoint uses unsupported feature flags");
+        if (reader.read_u32() != authoritative_physics_abi_version) {
+            reject("checkpoint physics ABI version is unsupported");
         }
 
         WorldConfig config;

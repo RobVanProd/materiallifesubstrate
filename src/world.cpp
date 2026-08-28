@@ -263,6 +263,12 @@ void World::step(Tick count) {
     if (count > std::numeric_limits<Tick>::max() - tick_) {
         throw std::overflow_error("world tick overflow");
     }
+    if (count > static_cast<Tick>(std::numeric_limits<Scalar>::max())) {
+        throw std::overflow_error("physical-time step count overflow");
+    }
+    const auto physical_time_delta = Time::from_raw(detail::checked_multiply(
+        static_cast<Scalar>(count), config_.physical_timestep.raw()));
+    const auto final_physical_time = physical_time_ + physical_time_delta;
     auto candidate = *this;
     for (Tick index = 0; index < count; ++index) {
         const auto next_tick = candidate.tick_ + 1;
@@ -278,6 +284,9 @@ void World::step(Tick count) {
         if (candidate.config_.audit_after_each_operation && !candidate.audit().ok()) {
             throw std::logic_error("conservation audit failed during world step");
         }
+    }
+    if (candidate.physical_time_ != final_physical_time) {
+        throw std::logic_error("preflight and iterative physical clocks diverged");
     }
     *this = std::move(candidate);
 }

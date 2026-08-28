@@ -586,7 +586,7 @@ direct-store exception recovery.
   kinetic-energy scale denominator, positive dimensioned physical timestep,
   rational seconds/time-quantum scale, rational raw momentum/mass/time-to-length
   bridge, packet history limit, and audit-after-each-operation flag;
-- unsigned operation-order `tick` and distinct signed fixed-point physical time;
+- unsigned ballistic-step sequence `tick` and distinct signed fixed-point physical time;
 - immutable-by-interface element catalog and compound registry after construction;
 - packet store, disposable sparse grid, and conservation ledger; and
 - no random stream, renderer, observer, agent, reward, or semantic world state.
@@ -668,8 +668,9 @@ cryptographic digest, checkpoint, audit-evidence hash, or proof of equivalence.
 - full-world copy staging on every mutating operation, deliberately favoring
   exception atomicity over production performance;
 - FNV-1a 64-bit regression hash with finite collision probability; and
-- a separate canonical v1 checkpoint whose FNV trailer detects accidental
-  corruption but provides no cryptographic authenticity.
+- a separate canonical v2 checkpoint with an explicit physics-ABI version;
+  its FNV trailer detects accidental corruption but provides no cryptographic
+  authenticity.
 
 ### Failure modes and open review items
 
@@ -684,7 +685,7 @@ cryptographic digest, checkpoint, audit-evidence hash, or proof of equivalence.
 - the hash omits ledger state, so equal physical hashes can have different audit
   histories or expected baselines;
 - FNV collisions are possible and hashes are not tamper evidence;
-- canonical v1 roundtrip and restart are tested, but version migration and
+- canonical v2 roundtrip and restart are tested, but version migration and
   backend replay remain unimplemented; and
 - deterministic replay in present unit tests does not establish determinism under
   future parallel/GPU reduction, different compilers, or changed laws.
@@ -709,6 +710,7 @@ cryptographic digest, checkpoint, audit-evidence hash, or proof of equivalence.
 - `time/physical_clock_is_dimensioned_and_not_Tick`
 - `time/dt_dt2_dt4_agree_at_a_common_exact_physical_horizon`
 - `time/invalid_scales_and_fractional_steps_reject_transactionally`
+- `time/clock_and_displacement_overflow_reject_whole_batch`
 - all `checkpoint/` canonical, replay, golden, and corruption cases
 - the complete angular transition mapping in
   [point-interaction angular momentum](angular-momentum-contract.md)
