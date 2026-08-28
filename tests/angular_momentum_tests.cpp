@@ -184,9 +184,10 @@ MLS_TEST("hardening/angular/boundary_cross_overflow_rejects_whole_transition") {
     MLS_REQUIRE(fixture.world.audit().ok());
 }
 
-MLS_TEST("hardening/timestep/no_dimensioned_refinement_claim_exists") {
-    // `step(Tick)` batching is deterministic, but MLS-0 has no physical dt and
-    // therefore cannot pass a dt/2 sensitivity or convergence claim.
+MLS_TEST("hardening/timestep/physical_dt_is_configured_not_passed_as_Tick") {
+    // Physical dt now lives in WorldConfig as a dimensioned Time. The step
+    // argument remains only an operation count, preventing an unconfigured
+    // caller-supplied Time from bypassing the authoritative clock contract.
     MLS_REQUIRE(!StepAcceptsDimensionedTime<mls::World>);
 }
 

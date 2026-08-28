@@ -5,6 +5,7 @@
 #include "mls/packet_store.hpp"
 #include "mls/physical_support.hpp"
 #include "mls/sparse_grid.hpp"
+#include "mls/time.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -19,6 +20,9 @@ struct WorldConfig final {
     Length voxel_edge{Length::from_raw(1)};
     Length interaction_radius{Length::from_raw(1'000)};
     Scalar kinetic_energy_scale_denominator{1};
+    Time physical_timestep{Time::from_raw(1)};
+    PhysicalTimeScale physical_time_scale{};
+    MomentumMassToVelocityScale momentum_mass_to_velocity_scale{};
     std::size_t packet_history_limit{0};
     bool audit_after_each_operation{MLS_AUDIT_DEFAULT != 0};
 };
@@ -40,6 +44,7 @@ public:
 
     [[nodiscard]] const WorldConfig& config() const noexcept { return config_; }
     [[nodiscard]] Tick tick() const noexcept { return tick_; }
+    [[nodiscard]] Time physical_time() const noexcept { return physical_time_; }
     [[nodiscard]] const ElementCatalog& element_catalog() const noexcept { return elements_; }
     [[nodiscard]] const CompoundRegistry& compound_registry() const noexcept { return compounds_; }
     [[nodiscard]] const PacketStore& packets() const noexcept { return packets_; }
@@ -82,11 +87,14 @@ public:
     [[nodiscard]] std::uint64_t physical_state_hash() const;
 
 private:
+    friend class CanonicalCheckpointCodec;
+
     void rebuild_and_verify();
     void require_physical_support(PacketHandle first, PacketHandle second) const;
 
     WorldConfig config_{};
     Tick tick_{0};
+    Time physical_time_{};
     ElementCatalog elements_{};
     CompoundRegistry compounds_{};
     PacketStore packets_;

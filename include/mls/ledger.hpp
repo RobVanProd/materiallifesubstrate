@@ -6,6 +6,8 @@
 
 namespace mls {
 
+class CanonicalCheckpointCodec;
+
 struct BoundaryBalance final {
     std::map<ElementId, ElementCount> element_net{};
     Mass mass_net{};
@@ -57,6 +59,8 @@ public:
     [[nodiscard]] ConservationReport audit(const ExtensiveTotals& current) const;
 
 private:
+    friend class CanonicalCheckpointCodec;
+
     void record_elements(const ElementInventory& inventory, Scalar sign);
 
     ExtensiveTotals baseline_{};

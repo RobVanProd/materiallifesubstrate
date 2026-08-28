@@ -17,13 +17,21 @@ namespace {
 }
 
 [[nodiscard]] Length advance_axis_exact(
-    Length position, Scalar old_remainder, Momentum momentum, Mass mass) {
-    const auto denominator = mass.raw();
-    if (old_remainder != 0 || momentum.raw() % denominator != 0) {
+    Length position,
+    Scalar old_remainder,
+    Momentum momentum,
+    Mass mass,
+    Time physical_timestep,
+    MomentumMassToVelocityScale unit_scale) {
+    auto numerator = detail::checked_multiply(momentum.raw(), physical_timestep.raw());
+    numerator = detail::checked_multiply(numerator, unit_scale.length_quanta_numerator);
+    const auto denominator = detail::checked_multiply(
+        mass.raw(), unit_scale.length_quanta_denominator);
+    if (old_remainder != 0 || numerator % denominator != 0) {
         throw std::domain_error(
-            "reference ballistic step requires an exactly representable integer displacement");
+            "reference ballistic timestep requires an exactly representable displacement");
     }
-    return position + Length::from_raw(momentum.raw() / denominator);
+    return position + Length::from_raw(numerator / denominator);
 }
 
 void require_nonnegative(Energy value, const char* message) {
@@ -204,7 +212,14 @@ void PacketStore::append_history(std::size_t index, PacketEvent event) {
     events.push_back(event);
 }
 
-void PacketStore::advance_positions_one_tick(Tick resulting_tick) {
+void PacketStore::advance_positions_one_timestep(
+    Time physical_timestep,
+    MomentumMassToVelocityScale unit_scale,
+    Tick resulting_tick) {
+    if (physical_timestep.raw() <= 0 || unit_scale.length_quanta_numerator <= 0 ||
+        unit_scale.length_quanta_denominator <= 0) {
+        throw std::invalid_argument("ballistic timestep and raw-unit scale must be positive");
+    }
     auto next_x = position_x_;
     auto next_y = position_y_;
     auto next_z = position_z_;
@@ -216,11 +231,26 @@ void PacketStore::advance_positions_one_tick(Tick resulting_tick) {
             continue;
         }
         const auto x = advance_axis_exact(
-            position_x_[index], position_remainder_x_[index], momentum_x_[index], masses_[index]);
+            position_x_[index],
+            position_remainder_x_[index],
+            momentum_x_[index],
+            masses_[index],
+            physical_timestep,
+            unit_scale);
         const auto y = advance_axis_exact(
-            position_y_[index], position_remainder_y_[index], momentum_y_[index], masses_[index]);
+            position_y_[index],
+            position_remainder_y_[index],
+            momentum_y_[index],
+            masses_[index],
+            physical_timestep,
+            unit_scale);
         const auto z = advance_axis_exact(
-            position_z_[index], position_remainder_z_[index], momentum_z_[index], masses_[index]);
+            position_z_[index],
+            position_remainder_z_[index],
+            momentum_z_[index],
+            masses_[index],
+            physical_timestep,
+            unit_scale);
         next_x[index] = x;
         next_y[index] = y;
         next_z[index] = z;
@@ -244,6 +274,11 @@ void PacketStore::advance_positions_one_tick(Tick resulting_tick) {
                                   {},
                                   {position_x_[index], position_y_[index], position_z_[index]}});
     }
+}
+
+void PacketStore::advance_positions_one_tick(Tick resulting_tick) {
+    advance_positions_one_timestep(
+        Time::from_raw(1), MomentumMassToVelocityScale{}, resulting_tick);
 }
 
 Energy PacketStore::energy_at(std::size_t index, EnergyChannel channel) const noexcept {

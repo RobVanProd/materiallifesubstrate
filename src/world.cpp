@@ -84,6 +84,10 @@ World::World(ElementCatalog elements, CompoundRegistry compounds, WorldConfig co
     if (config_.interaction_radius.raw() <= 0) {
         throw std::invalid_argument("interaction radius must be positive");
     }
+    validate_time_configuration(
+        config_.physical_timestep,
+        config_.physical_time_scale,
+        config_.momentum_mass_to_velocity_scale);
     // Validate all configured structures eagerly so laws cannot change merely
     // because a compound first participates in an operation.
     for (const auto& [id, compound] : compounds_.compounds()) {
@@ -262,8 +266,14 @@ void World::step(Tick count) {
     auto candidate = *this;
     for (Tick index = 0; index < count; ++index) {
         const auto next_tick = candidate.tick_ + 1;
-        candidate.packets_.advance_positions_one_tick(next_tick);
+        const auto next_physical_time =
+            candidate.physical_time_ + candidate.config_.physical_timestep;
+        candidate.packets_.advance_positions_one_timestep(
+            candidate.config_.physical_timestep,
+            candidate.config_.momentum_mass_to_velocity_scale,
+            next_tick);
         candidate.tick_ = next_tick;
+        candidate.physical_time_ = next_physical_time;
         candidate.grid_.rebuild(candidate.packets_);
         if (candidate.config_.audit_after_each_operation && !candidate.audit().ok()) {
             throw std::logic_error("conservation audit failed during world step");
@@ -295,9 +305,19 @@ void World::rebuild_and_verify() {
 std::uint64_t World::physical_state_hash() const {
     std::uint64_t hash = 14695981039346656037ULL;
     hash = hash_integer(hash, tick_);
+    hash = hash_integer(hash, physical_time_.raw());
     hash = hash_integer(hash, config_.voxel_edge.raw());
     hash = hash_integer(hash, config_.interaction_radius.raw());
     hash = hash_integer(hash, config_.kinetic_energy_scale_denominator);
+    hash = hash_integer(hash, config_.physical_timestep.raw());
+    hash = hash_integer(
+        hash, config_.physical_time_scale.seconds_per_time_quantum_numerator);
+    hash = hash_integer(
+        hash, config_.physical_time_scale.seconds_per_time_quantum_denominator);
+    hash = hash_integer(
+        hash, config_.momentum_mass_to_velocity_scale.length_quanta_numerator);
+    hash = hash_integer(
+        hash, config_.momentum_mass_to_velocity_scale.length_quanta_denominator);
 
     for (const auto& [element, properties] : elements_.elements()) {
         hash = hash_integer(hash, element.value);

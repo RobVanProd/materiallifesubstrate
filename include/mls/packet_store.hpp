@@ -2,6 +2,7 @@
 
 #include "mls/chemistry.hpp"
 #include "mls/quantity.hpp"
+#include "mls/time.hpp"
 
 #include <compare>
 #include <cstddef>
@@ -11,8 +12,6 @@
 #include <vector>
 
 namespace mls {
-
-using Tick = std::uint64_t;
 
 struct PacketId final {
     std::uint64_t value{0};
@@ -86,6 +85,8 @@ struct PacketSnapshot final {
     [[nodiscard]] Energy total_energy() const {
         return structural_energy + stored_energy + thermal_energy + kinetic_energy;
     }
+
+    [[nodiscard]] bool operator==(const PacketSnapshot&) const noexcept = default;
 };
 
 enum class EnergyChannel : std::uint8_t {
@@ -100,6 +101,7 @@ enum class EnergyChannel : std::uint8_t {
     Mass mass, const Momentum3& momentum, Scalar scale_denominator = 1);
 
 class World;
+class CanonicalCheckpointCodec;
 namespace test {
 class PacketStoreTestAccess;
 }
@@ -126,12 +128,19 @@ public:
 
 private:
     friend class World;
+    friend class CanonicalCheckpointCodec;
     // Test-only seam is declared here but defined outside the installed/public
     // library API. Authoritative callers mutate packets only through World.
     friend class test::PacketStoreTestAccess;
 
     [[nodiscard]] PacketHandle create(PacketInitialState initial, Tick tick);
     void erase(PacketHandle packet, Tick tick);
+    void advance_positions_one_timestep(
+        Time physical_timestep,
+        MomentumMassToVelocityScale unit_scale,
+        Tick resulting_tick);
+    // Compatibility seam for the accepted MLS-0 tests. Production World
+    // stepping uses advance_positions_one_timestep with explicit units.
     void advance_positions_one_tick(Tick resulting_tick);
     void transfer_heat(PacketHandle from, PacketHandle to, Energy amount, Tick tick);
     void convert_energy(
