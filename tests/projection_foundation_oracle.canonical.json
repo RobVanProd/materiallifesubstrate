@@ -1,0 +1,28 @@
+{
+  "arithmetic": "fractions.Fraction exact rationals",
+  "basis": "one bilinear unit cell with four deterministically ordered nodes",
+  "condition_one_decimal": 7.329446064139941,
+  "condition_one_exact": "2514/343",
+  "fields": [
+    "general_affine",
+    "rigid_rotation"
+  ],
+  "fmpm_angular_deltas": {
+    "1": "-921401/1895040",
+    "2": "-91802668277/359117660160",
+    "3": "-9282539024459489/68054233070960640",
+    "4": "-953607378962630674973/12896549383879325122560"
+  },
+  "fmpm_linear_momentum_exact_checks": 4,
+  "fmpm_pic_identity_component_checks": 2,
+  "fmpm_recurrence_equivalence_component_checks": 8,
+  "fmpm_residual_identity_component_checks": 8,
+  "full_affine_rhs_solve_reconstruction_checks": 6,
+  "full_rigid_linear_angular_recovery_checks": 3,
+  "implementation": "independent exact Gauss-Jordan and finite recurrences",
+  "result_sha256_before_hash_field": "7f3119d609bf022fa31bfc5bf01a6c15189aaede7e35f9cfad13f4c275fae4bc",
+  "scope": "finite exact projection algebra only; not floating mechanics validation",
+  "seed": 260828,
+  "singular_matrix_rejections": 1,
+  "witness_sha256": "de48d84f087f06ee0ed796c20009e40ab6305b74cc941662192288f2c3a00370"
+}
