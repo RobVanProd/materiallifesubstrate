@@ -148,6 +148,38 @@ def main(argv: Sequence[str] | None = None) -> int:
                     rows[0]["pass"] = "false" if rows[0]["pass"] == "true" else "true"
                 mutate_csv(bundle / "convergence.csv", change)
 
+            def tamper_convergence_failure_count(bundle: Path) -> None:
+                def change(rows: list[dict[str, str]]) -> None:
+                    rows[0]["failure_count"] = (
+                        "1" if rows[0]["failure_count"] == "0" else "0"
+                    )
+                mutate_csv(bundle / "convergence.csv", change)
+
+            def tamper_convergence_worst(bundle: Path) -> None:
+                def change(rows: list[dict[str, str]]) -> None:
+                    rows[0]["worst_value"] = str(float(rows[0]["worst_value"]) + 1.0)
+                    rows[0]["worst_configuration"] = "level_99"
+                mutate_csv(bundle / "convergence.csv", change)
+
+            def synthesize_sealed_absent_observation(bundle: Path) -> None:
+                def change(rows: list[dict[str, str]]) -> None:
+                    target = next(
+                        row for row in rows
+                        if row["scope"] == "fixed_particle_control"
+                        and row["gate"] == "nonfinite_or_missing_count"
+                    )
+                    target.update({
+                        "applicable": "true",
+                        "expected_configurations": "4",
+                        "evaluated_configurations": "4",
+                        "failure_count": "0",
+                        "worst_value": "0",
+                        "tolerance": "0",
+                        "worst_configuration": "level_0",
+                        "pass": "true",
+                    })
+                mutate_csv(bundle / "hard_gates.csv", change)
+
             def tamper_sealed_byte(bundle: Path) -> None:
                 path = bundle / "fixed_particle_control.csv"
                 data = bytearray(path.read_bytes())
@@ -158,6 +190,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             for name, mutation in (
                 ("convergence-flag", tamper_convergence_flag),
+                ("convergence-failure-count", tamper_convergence_failure_count),
+                ("convergence-worst", tamper_convergence_worst),
+                ("sealed-absent-observation", synthesize_sealed_absent_observation),
                 ("sealed-control-byte", tamper_sealed_byte),
             ):
                 expect_rejection(validator, source, root, name, mutation)

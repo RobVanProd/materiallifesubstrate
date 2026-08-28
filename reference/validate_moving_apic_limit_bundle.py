@@ -101,6 +101,7 @@ CONVERGENCE_FIELDS = (
     "error_level_3", "all_below", "contraction_01", "contraction_12",
     "contraction_23", "endpoint_contraction", "finest_increase_failure",
     "ratio_rule", "pass", "failure_reason",
+    "failure_count", "worst_value", "worst_configuration",
 )
 
 HARD_FIELDS = (
@@ -956,6 +957,20 @@ def validate_convergence_rows(
                     f"{label}: pass mismatch")
         audit.check(row["failure_reason"] == result.reason,
                     f"{label}: failure reason mismatch")
+        expected_failure_count = 0 if result.passes else 1
+        audit.check(parse_int(row["failure_count"], f"{label}.failure_count")
+                    == expected_failure_count,
+                    f"{label}: failure count mismatch")
+        worst_level = 0
+        worst_value = result.values[0]
+        for level, value in enumerate(result.values[1:], 1):
+            if value > worst_value:
+                worst_level = level
+                worst_value = value
+        audit.check_float(parse_float(row["worst_value"], f"{label}.worst_value"),
+                          worst_value, f"{label}: worst value")
+        audit.check(row["worst_configuration"] == f"level_{worst_level}",
+                    f"{label}: worst configuration mismatch")
     audit.check(observed == set(expected), "convergence group set differs")
     return dict(expected)
 
@@ -1048,6 +1063,15 @@ def expected_hard_results(
         sealed_family = ordered[0][2]
         for gate in GATE_NAMES:
             key = scope, path, phase, gate
+            if sealed_family and gate in {
+                "nonfinite_or_missing_count", "configuration_error_count",
+                "id_error_count",
+            }:
+                # These fields do not exist in the immutable sealed CSV.  A
+                # hash-valid control proves its bytes, but cannot be promoted
+                # into observations the historical schema never recorded.
+                output[key] = inapplicable_hard()
+                continue
             if gate in base_tolerances:
                 values: list[tuple[int, float]] = []
                 for level, row, is_sealed in ordered:
@@ -1220,22 +1244,29 @@ def compute_decision(path_gates: Mapping[str, Mapping[str, bool]]) -> str:
         )
     if not e_core and not oracle_core:
         return (
-            "reject standard JST moving APIC; both E and E_oracleB fail, "
-            "remaining defect classified as projection/quadrature"
+            "reject standard JST moving APIC as the MLS mechanics foundation for "
+            "this affine-advection requirement; both E and E_oracleB fail, with "
+            "the remaining defect classified as projection/quadrature in this "
+            "preregistered experiment"
         )
     if not e_density and oracle_density:
         return (
-            "reject standard JST moving APIC; E fails while E_oracleB passes core "
-            "and density, supporting affine-state mismatch"
+            "reject standard JST moving APIC as the MLS mechanics foundation for "
+            "this affine-advection requirement; E fails while E_oracleB passes "
+            "core and density, supporting affine-state mismatch within this "
+            "preregistered experiment"
         )
     if not e_density and not oracle_density:
         return (
-            "reject standard JST moving APIC; affine-state support coexists with "
-            "remaining density projection/quadrature"
+            "reject standard JST moving APIC as the MLS mechanics foundation for "
+            "this affine-advection requirement; affine-state support coexists "
+            "with remaining density projection/quadrature in this preregistered "
+            "experiment"
         )
     return (
-        "reject standard JST moving APIC; proper co-refinement and density "
-        "sequences disagree"
+        "reject standard JST moving APIC as the MLS mechanics foundation for this "
+        "affine-advection requirement; proper co-refinement and density sequences "
+        "disagree in this preregistered experiment"
     )
 
 
