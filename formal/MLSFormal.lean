@@ -1,8 +1,4 @@
-import MLSFormal.Chemistry
-import MLSFormal.CoarseGraining
-import MLSFormal.Conservation
-import MLSFormal.Scaling
-import MLSFormal.SimulationSafety
+import MLSFormal.AxiomReport
 
 /-!
 # Material Life Substrate formal accounting candidates

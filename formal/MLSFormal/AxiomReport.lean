@@ -1,0 +1,40 @@
+import MLSFormal.Chemistry
+import MLSFormal.CoarseGraining
+import MLSFormal.Conservation
+import MLSFormal.Scaling
+import MLSFormal.SimulationSafety
+import MLSFormal.TransitionModel
+
+/-!
+Complete kernel axiom report for every theorem exported by the MLSFormal
+modules. Keep this list synchronized with project theorem declarations; CI also
+scans project sources for proof placeholders and project-defined axioms.
+-/
+
+#print axioms MLSFormal.pairTransfer_preserves_total
+#print axioms MLSFormal.pairTransfer_preserves_nonnegativity
+#print axioms MLSFormal.equalOppositeImpulse_preserves_momentum
+#print axioms MLSFormal.chemicalThermalConversion_preserves_energy
+#print axioms MLSFormal.worldReservoirExchange_preserves_energy
+#print axioms MLSFormal.disjointAggregation_preserves_total
+#print axioms MLSFormal.balancedReaction_preserves_elements
+#print axioms MLSFormal.aggregation_preserves_reactantTotals
+#print axioms MLSFormal.conservativeAggregation_canInventReaction
+#print axioms MLSFormal.reynolds_scale_invariant
+#print axioms MLSFormal.froudeSquared_scale_invariant
+#print axioms MLSFormal.peclet_scale_invariant
+#print axioms MLSFormal.damkohlerFirstOrder_scale_invariant
+#print axioms MLSFormal.identityCompression_isSafe
+#print axioms MLSFormal.interventionalAgreement_oneStep
+#print axioms MLSFormal.transferHeat_preserves_energy
+#print axioms MLSFormal.applyReaction_preserves_element
+#print axioms MLSFormal.replaceStructuralEnergy_preserves_energy
+#print axioms MLSFormal.boundaryMaterialTransfer_preserves_material
+#print axioms MLSFormal.boundaryEnergyTransfer_preserves_energy
+#print axioms MLSFormal.actuatedDissipativePairImpulse_preserves_momentum
+#print axioms MLSFormal.actuatedDissipativePairImpulse_preserves_energy
+#print axioms MLSFormal.pairImpulse_orbitalAngular_delta
+#print axioms MLSFormal.centralActuatedDissipativePairImpulse_preserves_angularMomentum
+#print axioms MLSFormal.boundaryPointImpulse_preserves_momentum
+#print axioms MLSFormal.boundaryPointImpulse_preserves_angularMomentum
+#print axioms MLSFormal.boundaryPointImpulse_preserves_energy

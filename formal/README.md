@@ -1,15 +1,18 @@
 # MLS Lean accounting proofs
 
-This directory contains small formal models of accounting identities and one
-coarse-graining counterexample. They are not a formalization of the full
-simulator.
+This directory contains small formal models of accounting identities, an
+executable traceability model for the implemented MLS transfer/reaction/boundary/
+point-impulse transition shapes, and one coarse-graining counterexample. They are
+not a formalization of the full simulator.
 
 ## Verification status
 
-**PINNED BUILD PASSED:** On 2026-08-28, Lean `v4.33.0-rc1` and Lake `5.0.0`
-compiled the project successfully (`963 jobs`). A source scan found no `sorry` or
-`admit` tokens. This establishes only that the pinned Lean kernel accepted the
-encoded statements; it does not verify the C++ implementation or physics.
+**HISTORICAL PINNED BUILD PASSED:** On 2026-08-28, Lean `v4.33.0-rc1` and
+Lake `5.0.0` compiled the pre-hardening project at
+`31c5733c618aead558dd7e4232a0976e2fc88bda` (`963 jobs`). A source scan found no
+proof placeholders. That result does not cover later working-tree changes; each
+hardening SHA requires its own captured build and axiom report. A kernel pass
+establishes only the encoded statements, not the C++ implementation or physics.
 
 The project pins both Lean and Mathlib to `v4.33.0-rc1`. Release candidates may be
 less reproducible over time than archived stable releases; retain the generated
@@ -20,12 +23,12 @@ Lake manifest and dependency hashes in any evidence bundle.
 From this directory, with `elan` available:
 
 ```powershell
-lake update
-lake build
-rg -n "\b(sorry|admit)\b" --glob "*.lean" .
+lake --wfail build
+rg -n "\b(sorry|admit|sorryAx)\b|^\s*axiom\s+" --glob "*.lean" .
 ```
 
-Archive the complete command output, source commit, dirty status, `lean --version`,
+Do not run `lake update` as a reproduction step: it can rewrite the committed
+manifest. Archive the complete command output, source commit, dirty status, `lean --version`,
 `lake --version`, `lake-manifest.json`, and hashes. The grep is a review aid; the
 Lean kernel build is authoritative for theorem acceptance.
 
@@ -39,6 +42,12 @@ Lean kernel build is authoritative for theorem acceptance.
 - `CoarseGraining.lean`: exact separated-reactant false-affordance example.
 - `SimulationSafety.lean`: an initial exact interventional agreement definition
   and identity-compression sanity theorem.
+- `TransitionModel.lean`: executable `PacketLite`/`WorldLite` transfers,
+  reaction, boundary exchange, central pair impulse, the exact
+  `Delta L = (r1-r2) x J` equation, transition-level conservation theorems, and
+  emitted `#print axioms` reports for every exported claim in that module.
+- `AxiomReport.lean`: committed `#print axioms` coverage for every theorem
+  exported by all project modules; CI checks declarations against this list.
 
 These theorems do not prove that production C++ matches the model, that floating-
 point solvers converge, or that MLS supports material affordances or life. See
