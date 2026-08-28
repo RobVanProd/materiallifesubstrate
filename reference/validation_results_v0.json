@@ -1,0 +1,18 @@
+{
+  "coarse_grain_counterexample": {
+    "A_conserved": true,
+    "B_conserved": true,
+    "coarse_reactable": true,
+    "fine_reactable": false,
+    "meaning": "conservative aggregation can create a false local affordance"
+  },
+  "dynamic_similarity_cases": 10000,
+  "energy_ledger_cases": 100000,
+  "hierarchical_aggregation_cases": 25000,
+  "momentum_exchange_cases": 100000,
+  "pair_transfer_cases": 100000,
+  "result_sha256_before_hash_field": "92405699657c404e4dcd324a16ca0d3cd0e7a82ff395ccfb277c47c10766a2da",
+  "seed": 260828,
+  "stoichiometric_random_extent_cases": 100000,
+  "stoichiometric_reactions_balanced": 6
+}
