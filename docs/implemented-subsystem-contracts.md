@@ -719,9 +719,145 @@ cryptographic digest, checkpoint, audit-evidence hash, or proof of equivalence.
 - `mls_headless` is an executable audit demonstration, not a test of physical
   validity
 
+## 7. Center-only consistent projection laboratory
+
+**Implementation:** `include/mls/projection_foundation_lab.hpp` and
+`src/projection_foundation_lab.cpp`. This is an experimental reference layer,
+not authoritative continuum mechanics and not a promoted transfer scheme.
+
+### State variables
+
+Persistent experimental state is limited to:
+
+- `CenterParticle`: stable ID, exact positive mass quanta, binary64 center
+  position, and binary64 center velocity;
+- `ProjectionLabState`: transfer configuration, exact physical-time scale,
+  exact elapsed time quanta, and canonically ordered center particles; and
+- no persistent grid, mass matrix, RHS, factorization, solver iterate, affine
+  or polynomial mode, spin, correction field, or numerical-energy reservoir.
+
+`ProjectionSystem` is a deterministic transient reconstruction containing
+ordered grid indices/positions, per-particle basis stencils, binary64 particle
+masses, lumped nodal mass `D`, sparse consistent mass rows `M`, and RHS `q`.
+It is observable for audit but absent from checkpoints.
+
+### Units
+
+- center position and grid spacing/origin: metres;
+- center and grid velocity: metres per second;
+- exact particle mass: signed positive integer quanta, with configured
+  kilograms per quantum;
+- `M` and `D`: kilograms;
+- `q`: kilogram-metres per second;
+- exact clock: unsigned time quanta with an explicit rational seconds/quantum
+  scale; and
+- kinetic/quadratic-energy diagnostics: joules.
+
+The binary64 timestep must agree with the exact quantum count and scale. It is
+not inferred from `Tick`.
+
+### Update law
+
+For `S_pi=N_i(x_p)` on the complete quadratic B-spline stencil:
+
+\[
+M=S^TWS,\qquad q=S^TWV,\qquad
+D_{ii}=\sum_jM_{ij}.
+\]
+
+Active nodes are exactly the union of nonzero stencil weights and are ordered
+lexicographically; particles are ordered by ID. The paths are:
+
+- lumped/PIC: `v=D^-1 q`;
+- full consistent: unregularized deterministic PCG solution of `Mv=q`, after
+  structural and numerical rank/condition gates; and
+- FMPM(1–4): the audited 2026 incremental recurrence
+  `delta_1=D^-1q`, `delta_l=(I-D^-1M)delta_(l-1)`,
+  `v_k=sum_l delta_l`.
+
+All paths reconstruct `V'=Sv`. A successful physical-time lab step then uses
+
+\[
+x_p'=x_p+\tfrac12\Delta t(V_p+V_p'),
+\]
+
+stores `V_p'`, advances the exact clock, and discards the grid. A failed full
+solve leaves center state and clock unchanged.
+
+The experimental checkpoint is canonical little-endian center state with an
+FNV-1a corruption trailer. It deliberately excludes every transient transfer
+and solver value and does not change the authoritative World checkpoint ABI.
+
+### Conservation and algebraic laws
+
+- exact integer particle mass is unchanged by every successful and failed
+  projection path;
+- full normal-equation reconstruction preserves center linear momentum under
+  partition of unity and fixed-position orbital angular momentum under linear
+  reproduction;
+- finite FMPM preserves linear momentum in exact algebra but has no generic
+  orbital-angular invariant; its angular error is measured rather than
+  corrected;
+- `q-Mv_k=D delta_(k+1)` is an FMPM implementation identity; and
+- affine full-mass recovery additionally requires an accurate unique solve.
+
+No generic kinetic-energy conservation law is claimed. Projection energy
+change and consistent-grid quadratic energy are numerical diagnostics only.
+
+### Numerical approximation
+
+- binary64 assembly and reconstruction with long-double scalar reductions in
+  selected norms/dots;
+- deterministic serial sparse maps and PCG with lumped Jacobi preconditioning;
+- dense Cholesky pivot diagnostics only for bounded small systems;
+- at most 64 deterministic Lanczos steps for larger raw/preconditioned spectral
+  estimates; these estimates are explicitly labeled, not rank certificates;
+- exact integer mass/clock and byte-exact center-only checkpoint replay; and
+- no regularization, pseudoinverse, lumped fallback, post-correction, parallel
+  reduction, or numerical-loss-to-heat conversion.
+
+### Failure modes and open review items
+
+- active-node count above particle count proves structural rank deficiency,
+  but the converse does not prove full rank;
+- finite Lanczos/Ritz estimates can miss extreme modes, so a reported large
+  system condition is diagnostic rather than certified;
+- normal equations square the sampling operator's condition and PCG may
+  break down, hit its iteration limit, or meet residual tolerance despite an
+  imperfect condition estimate;
+- FMPM can run when the full matrix is singular, but such a row has no eligible
+  full-reference distance and cannot be promoted on plausibility;
+- quadratic grid support is a projection basis, not permission for physical
+  interaction;
+- direct `V'=Sv` is the MLS experimental reconstruction, not Love–Sulsky's
+  incremental Eq. (32);
+- checkpoint FNV is accidental-corruption detection, not authentication; and
+- passing the unit suite establishes software contracts, not physical validity
+  or continuum convergence.
+
+### Mapped tests
+
+- `projection foundation center state has no hidden persistent modes`
+- `projection assembly is canonical under input permutation`
+- `projection full mass recovers affine field and agrees with dense comparator`
+- `projection full static cycle preserves center linear and orbital moments`
+- `projection PIC and FMPM1 are identical and translation is reproduced`
+- `projection FMPM recurrence satisfies residual identity at every frozen order`
+- `projection smooth nonaffine field is not falsely claimed exact`
+- `projection singular systems and solver limits fail closed`
+- `projection rejects invalid zero duplicate overflow and nonfinite inputs`
+- `projection trapezoid step uses exact clock and has no numerical energy ledger`
+- `projection checkpoint is canonical corruptible and excludes solver state`
+- `projection checkpoint restart reproduces continued center evolution exactly`
+- independent exact-rational full/FMPM oracle and its canonical digest
+
+The final co-refinement, phase/orientation, particles-per-cell, compiler, and
+independent evidence bundle remains necessary before any research-candidate
+decision.
+
 ## Review rule
 
-All records (the six numbered records here plus the dedicated physical-support,
+All records (the seven numbered records here plus the dedicated physical-support,
 time/checkpoint, transfer-lab, and angular contracts) must be updated when their
 public state, operation, formula, or test mapping changes. Changes to point
 interaction, boundary, or ledger semantics must also update the cross-cutting
