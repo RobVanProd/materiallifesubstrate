@@ -1,6 +1,7 @@
 #include "mls/chemistry.hpp"
 
 #include <algorithm>
+#include <numeric>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -39,6 +40,64 @@ template <typename Integer>
         hash = fnv_byte(hash, byte);
     }
     return hash;
+}
+
+struct CanonicalEncoding final {
+    std::vector<ElementId> atoms;
+    std::vector<std::uint8_t> upper_triangle_bond_orders;
+
+    [[nodiscard]] bool operator<(const CanonicalEncoding& other) const noexcept {
+        if (atoms != other.atoms) {
+            return std::lexicographical_compare(
+                atoms.begin(), atoms.end(), other.atoms.begin(), other.atoms.end());
+        }
+        return std::lexicographical_compare(
+            upper_triangle_bond_orders.begin(),
+            upper_triangle_bond_orders.end(),
+            other.upper_triangle_bond_orders.begin(),
+            other.upper_triangle_bond_orders.end());
+    }
+};
+
+[[nodiscard]] CanonicalEncoding encode_permutation(
+    const std::vector<ElementId>& atoms,
+    const std::vector<std::uint8_t>& adjacency,
+    const std::vector<std::size_t>& new_to_old) {
+    const auto site_count = atoms.size();
+    CanonicalEncoding encoding;
+    encoding.atoms.reserve(site_count);
+    encoding.upper_triangle_bond_orders.reserve(site_count * (site_count - 1U) / 2U);
+    for (const auto old_site : new_to_old) {
+        encoding.atoms.push_back(atoms[old_site]);
+    }
+    for (std::size_t first = 0; first < site_count; ++first) {
+        for (std::size_t second = first + 1U; second < site_count; ++second) {
+            encoding.upper_triangle_bond_orders.push_back(
+                adjacency[new_to_old[first] * site_count + new_to_old[second]]);
+        }
+    }
+    return encoding;
+}
+
+void require_connected(
+    const std::vector<std::uint8_t>& adjacency, const std::size_t site_count) {
+    std::vector<bool> visited(site_count, false);
+    std::vector<std::size_t> pending{0};
+    visited[0] = true;
+    while (!pending.empty()) {
+        const auto current = pending.back();
+        pending.pop_back();
+        for (std::size_t candidate = 0; candidate < site_count; ++candidate) {
+            if (!visited[candidate] && adjacency[current * site_count + candidate] != 0) {
+                visited[candidate] = true;
+                pending.push_back(candidate);
+            }
+        }
+    }
+    if (std::ranges::find(visited, false) != visited.end()) {
+        throw std::invalid_argument(
+            "a compound graph must be connected; spatial complexes are not implemented");
+    }
 }
 
 } // namespace
@@ -136,6 +195,9 @@ CompoundGraph::CompoundGraph(std::vector<ElementId> atoms, std::vector<Bond> bon
     if (atoms_.empty()) {
         throw std::invalid_argument("a compound graph must contain at least one atom site");
     }
+    if (atoms_.size() > max_compound_atom_sites) {
+        throw std::length_error("compound graph exceeds the canonicalization site bound");
+    }
     for (auto& bond : bonds_) {
         if (bond.first >= atoms_.size() || bond.second >= atoms_.size()) {
             throw std::out_of_range("compound bond references a missing atom site");
@@ -151,8 +213,50 @@ CompoundGraph::CompoundGraph(std::vector<ElementId> atoms, std::vector<Bond> bon
         }
     }
     std::sort(bonds_.begin(), bonds_.end());
-    if (std::adjacent_find(bonds_.begin(), bonds_.end()) != bonds_.end()) {
-        throw std::invalid_argument("duplicate compound bond");
+    if (std::adjacent_find(
+            bonds_.begin(),
+            bonds_.end(),
+            [](const Bond& first, const Bond& second) {
+                return first.first == second.first && first.second == second.second;
+            }) != bonds_.end()) {
+        throw std::invalid_argument(
+            "multiple compound bonds between the same atom sites are not supported");
+    }
+
+    const auto site_count = atoms_.size();
+    std::vector<std::uint8_t> adjacency(site_count * site_count, 0);
+    for (const auto& bond : bonds_) {
+        adjacency[static_cast<std::size_t>(bond.first) * site_count + bond.second] = bond.order;
+        adjacency[static_cast<std::size_t>(bond.second) * site_count + bond.first] = bond.order;
+    }
+    require_connected(adjacency, site_count);
+
+    std::vector<std::size_t> permutation(site_count);
+    std::iota(permutation.begin(), permutation.end(), std::size_t{0});
+    auto best_permutation = permutation;
+    auto best_encoding = encode_permutation(atoms_, adjacency, permutation);
+    while (std::next_permutation(permutation.begin(), permutation.end())) {
+        auto candidate = encode_permutation(atoms_, adjacency, permutation);
+        if (candidate < best_encoding) {
+            best_encoding = std::move(candidate);
+            best_permutation = permutation;
+        }
+    }
+
+    atoms_ = std::move(best_encoding.atoms);
+    bonds_.clear();
+    for (std::size_t first = 0; first < site_count; ++first) {
+        for (std::size_t second = first + 1U; second < site_count; ++second) {
+            const auto order = adjacency[
+                best_permutation[first] * site_count + best_permutation[second]];
+            if (order != 0) {
+                bonds_.push_back(Bond{
+                    static_cast<std::uint32_t>(first),
+                    static_cast<std::uint32_t>(second),
+                    order,
+                });
+            }
+        }
     }
 }
 

@@ -3,6 +3,7 @@
 #include "mls/quantity.hpp"
 
 #include <compare>
+#include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 #include <map>
@@ -10,6 +11,11 @@
 #include <vector>
 
 namespace mls {
+
+// Canonicalization deliberately uses an exhaustive permutation search in the
+// small reference model. The bound makes its factorial cost explicit and keeps
+// adversarial inputs from turning compound construction into unbounded work.
+inline constexpr std::size_t max_compound_atom_sites = 8;
 
 using ElementCount = std::int64_t;
 using MoleculeCount = std::int64_t;
@@ -71,9 +77,9 @@ public:
     [[nodiscard]] const std::vector<Bond>& bonds() const noexcept { return bonds_; }
     [[nodiscard]] ElementInventory formula() const;
 
-    // Stable FNV-1a hash of atom site order and normalized bond topology. Atom
-    // site order is part of the encoding; producers should emit one canonical
-    // site ordering when graph-isomorphic structures must share a cache key.
+    // Stable FNV-1a cache hash of the canonical labeled-graph encoding. Site
+    // numbering and input bond order are not species identity. Registry
+    // equality remains authoritative when detecting a hash collision.
     [[nodiscard]] CompoundId structural_hash() const noexcept;
 
     [[nodiscard]] bool operator==(const CompoundGraph&) const noexcept = default;
