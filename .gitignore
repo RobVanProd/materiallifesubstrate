@@ -1,0 +1,14 @@
+/build/
+/out/
+/.cache/
+/.tools/
+/.vs/
+/.vscode/
+*.user
+*.suo
+*.VC.db
+__pycache__/
+*.pyc
+/.lake/
+/formal/.lake/
+validation-results.local.json
