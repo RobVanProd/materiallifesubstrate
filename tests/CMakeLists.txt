@@ -10,6 +10,7 @@ add_executable(
   physical_support_tests.cpp
   affine_advection_tests.cpp
   moving_apic_limit_tests.cpp
+  projection_foundation_tests.cpp
   transfer_lab_tests.cpp
   time_checkpoint_tests.cpp)
 
