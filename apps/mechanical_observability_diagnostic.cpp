@@ -52,6 +52,11 @@ constexpr double kg_per_mass_quantum = 1.0 / 4096.0;
 constexpr std::int64_t packet_mass_quanta = 4096;
 constexpr double epsilon64 = std::numeric_limits<double>::epsilon();
 constexpr double minimum_normal64 = std::numeric_limits<double>::min();
+constexpr int affine_lattice_fraction_bits = 50;
+constexpr std::int64_t affine_lattice_denominator =
+    std::int64_t{1} << affine_lattice_fraction_bits;
+constexpr std::int64_t maximum_exact_binary64_integer =
+    std::int64_t{1} << 53;
 constexpr std::string_view summary_schema =
     "mls.mechanical-observability.summary.v2";
 constexpr std::string_view manifest_schema =
@@ -550,15 +555,6 @@ struct RationalVec3 final {
     std::array<Rational, 3> value{};
 };
 
-[[nodiscard]] RationalVec3 operator+(const RationalVec3& lhs,
-                                     const RationalVec3& rhs) {
-    RationalVec3 result{};
-    for (std::size_t axis = 0U; axis < 3U; ++axis) {
-        result.value[axis] = lhs.value[axis] + rhs.value[axis];
-    }
-    return result;
-}
-
 [[nodiscard]] RationalVec3 operator*(Rational scale,
                                      const RationalVec3& vector) {
     RationalVec3 result{};
@@ -583,13 +579,187 @@ struct RationalVec3 final {
     return result;
 }
 
-[[nodiscard]] Vec3d binary64(const RationalVec3& value) {
-    return {value.value[0].binary64(), value.value[1].binary64(),
-        value.value[2].binary64()};
-}
-
 [[nodiscard]] RationalVec3 rational_vec(Rational x, Rational y, Rational z) {
     return {{{x, y, z}}};
+}
+
+[[nodiscard]] std::uint64_t signed_magnitude(std::int64_t value) noexcept {
+    return value < 0
+        ? static_cast<std::uint64_t>(-(value + 1)) + 1U
+        : static_cast<std::uint64_t>(value);
+}
+
+[[nodiscard]] std::int64_t checked_integer_add(
+    std::int64_t lhs, std::int64_t rhs, std::string_view where) {
+    if ((rhs > 0 && lhs > std::numeric_limits<std::int64_t>::max() - rhs) ||
+        (rhs < 0 && lhs < std::numeric_limits<std::int64_t>::min() - rhs)) {
+        throw std::overflow_error(std::string(where) + " integer addition overflow");
+    }
+    return lhs + rhs;
+}
+
+[[nodiscard]] std::int64_t checked_integer_multiply(
+    std::int64_t lhs, std::int64_t rhs, std::string_view where) {
+    const auto lhs_magnitude = signed_magnitude(lhs);
+    const auto rhs_magnitude = signed_magnitude(rhs);
+    if (lhs_magnitude == 0U || rhs_magnitude == 0U) {
+        return 0;
+    }
+    const bool negative = (lhs < 0) != (rhs < 0);
+    constexpr std::uint64_t negative_limit = std::uint64_t{1} << 63;
+    const auto limit = negative
+        ? negative_limit
+        : static_cast<std::uint64_t>(
+            std::numeric_limits<std::int64_t>::max());
+    if (lhs_magnitude > limit / rhs_magnitude) {
+        throw std::overflow_error(
+            std::string(where) + " integer multiplication overflow");
+    }
+    const auto magnitude = lhs_magnitude * rhs_magnitude;
+    if (!negative) {
+        return static_cast<std::int64_t>(magnitude);
+    }
+    if (magnitude == negative_limit) {
+        return std::numeric_limits<std::int64_t>::min();
+    }
+    return -static_cast<std::int64_t>(magnitude);
+}
+
+[[nodiscard]] std::int64_t checked_denominator_lcm(
+    std::int64_t lhs, std::int64_t rhs) {
+    if (lhs <= 0 || rhs <= 0) {
+        throw std::invalid_argument("affine-lattice denominator is nonpositive");
+    }
+    const auto divisor = std::gcd(lhs, rhs);
+    return checked_integer_multiply(
+        lhs / divisor, rhs, "affine-lattice denominator");
+}
+
+[[nodiscard]] std::int64_t round_rational_to_affine_ticks(Rational value) {
+    const auto magnitude = signed_magnitude(value.numerator);
+    const auto quantum = static_cast<std::uint64_t>(affine_lattice_denominator);
+    if (magnitude > std::numeric_limits<std::uint64_t>::max() / quantum) {
+        throw std::overflow_error("affine-lattice quantization overflow");
+    }
+    const auto scaled = magnitude * quantum;
+    const auto denominator = static_cast<std::uint64_t>(value.denominator);
+    auto quotient = scaled / denominator;
+    const auto remainder = scaled % denominator;
+    const bool round_up = remainder > denominator - remainder ||
+        (remainder == denominator - remainder && (quotient & 1U) != 0U);
+    if (round_up) {
+        if (quotient == std::numeric_limits<std::uint64_t>::max()) {
+            throw std::overflow_error("affine-lattice rounding overflow");
+        }
+        ++quotient;
+    }
+    const bool negative = value.numerator < 0;
+    constexpr std::uint64_t negative_limit = std::uint64_t{1} << 63;
+    const auto limit = negative
+        ? negative_limit
+        : static_cast<std::uint64_t>(
+            std::numeric_limits<std::int64_t>::max());
+    if (quotient > limit) {
+        throw std::overflow_error("affine-lattice rounded tick overflow");
+    }
+    if (!negative) {
+        return static_cast<std::int64_t>(quotient);
+    }
+    if (quotient == negative_limit) {
+        return std::numeric_limits<std::int64_t>::min();
+    }
+    return -static_cast<std::int64_t>(quotient);
+}
+
+struct QuantizedAffineFrame final {
+    std::int64_t coordinate_denominator{1};
+    std::array<std::int64_t, 3> origin_ticks{};
+    // input coordinate axis, then emitted spatial component
+    std::array<std::array<std::int64_t, 3>, 3> basis_ticks{};
+};
+
+[[nodiscard]] QuantizedAffineFrame quantized_affine_frame(
+    std::span<const RationalVec3> points,
+    std::span<const RationalVec3> auxiliary_vectors,
+    Rational scale, bool rotate, const RationalVec3& translation) {
+    QuantizedAffineFrame frame{};
+    const auto include_denominators = [&](std::span<const RationalVec3> values) {
+        for (const auto& value : values) {
+            for (const auto& component : value.value) {
+                frame.coordinate_denominator = checked_denominator_lcm(
+                    frame.coordinate_denominator, component.denominator);
+            }
+        }
+    };
+    include_denominators(points);
+    include_denominators(auxiliary_vectors);
+    for (std::size_t output_axis = 0U; output_axis < 3U; ++output_axis) {
+        frame.origin_ticks[output_axis] =
+            round_rational_to_affine_ticks(translation.value[output_axis]);
+    }
+    for (std::size_t input_axis = 0U; input_axis < 3U; ++input_axis) {
+        RationalVec3 basis{};
+        basis.value[input_axis] = Rational(1, frame.coordinate_denominator);
+        if (rotate) {
+            basis = exact_rotate(basis);
+        }
+        basis = scale * basis;
+        for (std::size_t output_axis = 0U; output_axis < 3U; ++output_axis) {
+            frame.basis_ticks[input_axis][output_axis] =
+                round_rational_to_affine_ticks(basis.value[output_axis]);
+        }
+    }
+    return frame;
+}
+
+[[nodiscard]] std::array<std::int64_t, 3> affine_integer_coordinates(
+    const RationalVec3& value, std::int64_t common_denominator) {
+    std::array<std::int64_t, 3> result{};
+    for (std::size_t axis = 0U; axis < 3U; ++axis) {
+        const auto& component = value.value[axis];
+        if (common_denominator % component.denominator != 0) {
+            throw std::logic_error(
+                "affine-lattice coordinate denominator does not divide frame");
+        }
+        result[axis] = checked_integer_multiply(
+            component.numerator,
+            common_denominator / component.denominator,
+            "affine-lattice integer coordinate");
+    }
+    return result;
+}
+
+[[nodiscard]] Vec3d realize_affine_lattice_point(
+    const QuantizedAffineFrame& frame, const RationalVec3& value,
+    bool include_origin) {
+    const auto coordinates = affine_integer_coordinates(
+        value, frame.coordinate_denominator);
+    std::array<std::int64_t, 3> ticks = include_origin
+        ? frame.origin_ticks
+        : std::array<std::int64_t, 3>{};
+    for (std::size_t input_axis = 0U; input_axis < 3U; ++input_axis) {
+        for (std::size_t output_axis = 0U; output_axis < 3U; ++output_axis) {
+            ticks[output_axis] = checked_integer_add(
+                ticks[output_axis],
+                checked_integer_multiply(
+                    coordinates[input_axis],
+                    frame.basis_ticks[input_axis][output_axis],
+                    "affine-lattice reconstruction"),
+                "affine-lattice reconstruction");
+        }
+    }
+    for (const auto tick : ticks) {
+        if (tick < -maximum_exact_binary64_integer ||
+            tick > maximum_exact_binary64_integer) {
+            throw std::overflow_error(
+                "affine-lattice numerator exceeds exact binary64 range");
+        }
+    }
+    return {
+        std::ldexp(static_cast<double>(ticks[0]), -affine_lattice_fraction_bits),
+        std::ldexp(static_cast<double>(ticks[1]), -affine_lattice_fraction_bits),
+        std::ldexp(static_cast<double>(ticks[2]), -affine_lattice_fraction_bits),
+    };
 }
 
 struct Configuration final {
@@ -1116,26 +1286,21 @@ void apply_rational_geometry(Configuration& configuration) {
     } else if (configuration.variant != "original") {
         throw std::logic_error("unknown frozen geometry variant");
     }
-    const RationalVec3 translation{{{Rational(13, 100),
+    const RationalVec3 registered_translation{{{Rational(13, 100),
         Rational(-7, 100), Rational(21, 100)}}};
-    for (std::size_t index = 0U; index < points.size(); ++index) {
-        if (rotate) {
-            points[index] = exact_rotate(points[index]);
-            jitter[index] = exact_rotate(jitter[index]);
-        }
-        points[index] = scale * points[index];
-        jitter[index] = scale * jitter[index];
-        if (translate) {
-            points[index] = points[index] + translation;
-        }
-    }
+    const RationalVec3 applied_translation =
+        translate ? registered_translation : RationalVec3{};
+    const auto affine_frame = quantized_affine_frame(
+        points, jitter, scale, rotate, applied_translation);
     if (points.size() != configuration.packets.size()) {
         throw std::logic_error("rational geometry packet-count mismatch");
     }
     for (std::size_t index = 0U; index < points.size(); ++index) {
-        configuration.packets[index].position_m = binary64(points[index]);
+        configuration.packets[index].position_m =
+            realize_affine_lattice_point(affine_frame, points[index], true);
         configuration.packets[index].velocity_m_per_s = {};
-        configuration.jitter_offsets_m[index] = binary64(jitter[index]);
+        configuration.jitter_offsets_m[index] =
+            realize_affine_lattice_point(affine_frame, jitter[index], false);
     }
     const Rational spacing = scale * Rational(1, 4);
     const Rational support = configuration.exact_control
@@ -4814,6 +4979,76 @@ void logic_audit() {
             throw std::logic_error(
                 "logic audit diagnostic CLI state-machine mismatch");
         }
+    }
+    const auto realized = full_configurations();
+    for (const auto& configuration : realized) {
+        const auto require_dyadic_coordinate = [](Vec3d value) {
+            for (const auto component : {value.x, value.y, value.z}) {
+                const double numerator =
+                    std::ldexp(component, affine_lattice_fraction_bits);
+                if (!std::isfinite(numerator) || std::trunc(numerator) != numerator ||
+                    std::abs(numerator) >
+                        static_cast<double>(maximum_exact_binary64_integer)) {
+                    throw std::logic_error(
+                        "logic audit found a noncanonical affine-lattice coordinate");
+                }
+            }
+        };
+        for (const auto& packet : configuration.packets) {
+            require_dyadic_coordinate(packet.position_m);
+        }
+        for (const auto jitter : configuration.jitter_offsets_m) {
+            require_dyadic_coordinate(jitter);
+        }
+    }
+    std::size_t variant_count = 0U;
+    std::size_t filament_variant_count = 0U;
+    std::size_t sheet_variant_count = 0U;
+    for (const auto& configuration : realized) {
+        if (configuration.id == configuration.base_id) {
+            continue;
+        }
+        const auto base = std::find_if(
+            realized.begin(), realized.end(), [&](const auto& candidate) {
+                return candidate.id == configuration.base_id;
+            });
+        if (base == realized.end()) {
+            throw std::logic_error(
+                "logic audit transformed configuration has no base");
+        }
+        const auto base_facts = topology_facts(*base);
+        const auto transformed_facts = topology_facts(configuration);
+        if (base_facts.affine_rank != transformed_facts.affine_rank ||
+            base_facts.connected != transformed_facts.connected ||
+            base_facts.edge_count != transformed_facts.edge_count ||
+            base_facts.edge_lower_bound != transformed_facts.edge_lower_bound ||
+            base_facts.minimum_direction_rank !=
+                transformed_facts.minimum_direction_rank ||
+            base_facts.rigid_rank != transformed_facts.rigid_rank ||
+            base_facts.generic_solid_gate !=
+                transformed_facts.generic_solid_gate ||
+            bond_relation_ids(*base) != bond_relation_ids(configuration)) {
+            throw std::logic_error(
+                "logic audit affine-lattice transform changed physical topology");
+        }
+        BundleTables finite_tables{};
+        OperatorSnapshot finite_snapshot{};
+        finite_snapshot.id = configuration.id + ".C";
+        finite_snapshot.configuration_id = configuration.id;
+        finite_snapshot.candidate = "C";
+        if (!emit_finite_evidence(
+                finite_tables, finite_snapshot, configuration)) {
+            throw std::logic_error(
+                "logic audit affine-lattice finite objectivity failed");
+        }
+        ++variant_count;
+        filament_variant_count += configuration.family == "filament" ? 1U : 0U;
+        sheet_variant_count += configuration.family == "sheet" ? 1U : 0U;
+    }
+    if (variant_count != 30U || filament_variant_count != 5U ||
+        sheet_variant_count != 5U) {
+        throw std::logic_error(
+            "logic audit affine-lattice transform coverage changed");
     }
     auto bases = base_configurations();
     const auto square = std::find_if(bases.begin(), bases.end(), [](const auto& value) {
