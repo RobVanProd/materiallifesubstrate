@@ -300,6 +300,9 @@ The deterministic bundle contains:
 Every table has a frozen schema and deterministic lexicographic order. Raw
 operators must be exported for every exact/high-precision or decision-driving
 row; unexported rows carry an explicit digest and no stray entries.
+The exact headers, unavailable-value convention, summary enums, manifest
+inventory, and deletion-hash byte preimage are frozen in
+`mechanical-observability-evidence-schema.md` before the final producer run.
 
 Before sealing, require two byte-identical full producers; a clean warnings-
 as-errors build; all C++ tests; canonical checkpoint round-trip/read-only
