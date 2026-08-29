@@ -77,6 +77,19 @@ Lean kernel build is authoritative for theorem acceptance.
   any two exact, possibly non-unique grid solutions reconstruct identical
   particle-center velocities. It assumes no invertibility and selects no
   pseudoinverse representative.
+- `MechanicalObservability.lean`: an exact-rational finite central-distance
+  rigidity matrix and matching linear operator over explicit packet relations.
+  It proves that global translations and infinitesimal rotations are kernel
+  modes, defines mechanical observability as equality between the operator
+  kernel and the sampled rigid-motion image, proves that equality directly for
+  a fully related rational tetrahedron, proves its exact rank and nullity are
+  both six, and preserves an explicit non-rigid kernel counterexample for the
+  same tetrahedron with one relation removed.
+  The operator is half the first-order rate of squared relation length; it adds
+  no force, stiffness, stress, constitutive response, time integration, or grid
+  state. Its rigid generator has six parameters, but its sampled image need not
+  have dimension six for degenerate point configurations such as a collinear
+  filament.
 - `AxiomReport.lean`: committed `#print axioms` coverage for every theorem
   exported by all project modules; CI checks declarations against this list.
 

@@ -9,6 +9,7 @@ import MLSFormal.AffineAdvection
 import MLSFormal.MovingAPICLimit
 import MLSFormal.ConsistentProjection
 import MLSFormal.ProjectionNullspace
+import MLSFormal.MechanicalObservability
 
 /-!
 Complete kernel axiom report for every theorem exported by the MLSFormal
@@ -76,3 +77,17 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.consistentProjection_affine_particle_recovery
 #print axioms MLSFormal.consistentProjection_preserves_linear_momentum
 #print axioms MLSFormal.consistentProjection_preserves_orbital_angular_momentum
+#print axioms MLSFormal.centralRigidityMatrix_mulVec
+#print axioms MLSFormal.centralRigidity_exact_squared_length_expansion
+#print axioms MLSFormal.centralRigidity_translation_in_kernel
+#print axioms MLSFormal.centralRigidity_infinitesimal_rotation_in_kernel
+#print axioms MLSFormal.rigidMotionSubspace_le_centralRigidity_kernel
+#print axioms MLSFormal.mechanicallyObservable_iff_every_kernel_motion_rigid
+#print axioms MLSFormal.rationalTetraK4_mechanicallyObservable
+#print axioms MLSFormal.rationalTetra_rigidMotionGenerator_injective
+#print axioms MLSFormal.rationalTetra_rigidMotionSubspace_finrank
+#print axioms MLSFormal.rationalTetraK4_kernel_finrank
+#print axioms MLSFormal.rationalTetraK4_range_finrank
+#print axioms MLSFormal.rationalTetraMissingRelation_floppy_in_kernel
+#print axioms MLSFormal.rationalTetraMissingRelation_floppy_not_rigid
+#print axioms MLSFormal.rationalTetraMissingRelation_not_mechanicallyObservable
