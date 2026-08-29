@@ -192,7 +192,7 @@ void add_scaled_outer(
         std::size_t p = 0U;
         std::size_t q = 1U;
         auto largest = std::abs(work[p][q]);
-        for (const auto [candidate_p, candidate_q] :
+        for (const auto& [candidate_p, candidate_q] :
              {std::pair{0U, 2U}, std::pair{1U, 2U}}) {
             const auto magnitude = std::abs(work[candidate_p][candidate_q]);
             if (magnitude > largest) {
@@ -1067,7 +1067,7 @@ CorrectedGradientOperator build_corrected_local_gradient(
         copy_diagonal(1U, 1U);
         copy_diagonal(2U, 2U);
         constexpr double inverse_sqrt_two = 0.707106781186547524400844362104849;
-        for (const auto [output, first, second] :
+        for (const auto& [output, first, second] :
              {std::tuple{3U, 0U, 1U}, std::tuple{4U, 0U, 2U},
               std::tuple{5U, 1U, 2U}}) {
             const auto first_row = 9U * particle + 3U * first + second;
@@ -1169,7 +1169,7 @@ VolumeOperator build_oriented_volume_operator(
             throw std::invalid_argument(
                 "volume relation has a zero linearized observable");
         }
-        for (const auto [index, coefficient] :
+        for (const auto& [index, coefficient] :
              {std::pair{i, coefficient_i}, std::pair{j, coefficient_j},
               std::pair{k, coefficient_k}, std::pair{l, coefficient_l}}) {
             for (std::size_t axis = 0; axis < 3U; ++axis) {
