@@ -443,13 +443,49 @@ The exact headers, unavailable-value convention, summary enums, manifest
 inventory, and deletion-hash byte preimage are frozen in
 `mechanical-observability-evidence-schema.md` before the final producer run.
 
-Before sealing, require two byte-identical full producers; a clean warnings-
-as-errors build; all C++ tests; canonical checkpoint round-trip/read-only
-hashes; exact oracle and validator mutation tests; Linux GCC, Linux Clang,
-Windows/MSVC, Python, and pinned Lean CI; `lake --wfail build`; zero proof
-placeholders or project axioms; and `#print axioms` coverage for every exported
-theorem. Preserve all failed runs and publish the immutable bundle. Stop
-without starting a mechanics solver or material law.
+Release review uses the canonical
+`mls.mechanical-observability.validator-findings.v1` artifact and the v3 outer
+seal contracts frozen in that schema document. The findings bind both inner
+manifest pre-hashes, exact per-path byte mismatches, producer summary claims,
+independently derived gates and decision, the exact validator-byte SHA-256,
+and their own before-hash-field preimage. The outer manifest and metadata both
+bind the same fresh-pinned-replay outcome plus the captured findings and
+validator-log byte hashes. Captured Git, GitHub/CI, command, tool, and local
+result metadata remains explicitly unauthenticated by the offline integrity
+seal.
+
+There are two release routes. `deterministic_success` requires byte-identical
+full bundles, no claim mismatch, every independently derived gate passing, and
+one of the two retained-research-direction decisions. All other structurally
+valid results use `preserved_negative`: this includes a byte-identical failed-
+gate STOP, a conclusive `stop_reconsider_packet_abstraction`, or a fully
+enumerated two-run divergence whose independently valid bundles are quarantined
+as inconclusive STOP/no-promotion. Malformed evidence, incomplete mismatch or
+claim inventories, an incorrect validator pin, or structurally invalid
+divergence is rejected rather than preserved.
+
+A well-formed producer basis-construction failure that the independent
+reconstruction successfully resolves is an implementation/oracle disagreement:
+`independent_basis_agreement=false` and
+`first.independent_basis_agreement` and/or
+`second.independent_basis_agreement` enters the closed claim-mismatch list,
+`producer_claims_consistent=false`, and the decision is
+`stop_inconclusive_or_implementation_failure`. The independent basis is not
+substituted into the producer record. If the independent reconstruction also
+fails in agreement with the producer's valid failure, the oracle-agreement
+gate may be true, but the incomplete producer basis still fails the decisive-
+rank gate. Any malformed failure stage/reason, pivot trace, nullable cell, raw
+generator, or suppressed basis inventory remains INVALID.
+
+The deterministic-success target requires two byte-identical full producers.
+A structurally valid divergent pair may instead be sealed only through the
+preserved-negative inconclusive STOP route defined above. Both routes also
+require a clean warnings-as-errors build; all C++ tests; canonical checkpoint
+round-trip/read-only hashes; exact oracle and validator mutation tests; Linux
+GCC, Linux Clang, Windows/MSVC, Python, and pinned Lean CI; `lake --wfail
+build`; zero proof placeholders or project axioms; and `#print axioms`
+coverage for every exported theorem. Preserve all failed runs and publish the
+immutable bundle. Stop without starting a mechanics solver or material law.
 
 The producer's `--smoke` mode is validation-only and permanently
 promotion-ineligible. Its frozen three-configuration subset contains the

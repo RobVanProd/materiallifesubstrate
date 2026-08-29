@@ -390,3 +390,277 @@ preregistration.
 `schema`.  Its schema is `mls.mechanical-observability.manifest.v1`; it covers
 the nineteen CSV files and `summary.json` using SHA-256.  This manifest and a
 later outer seal are integrity records, not signatures.
+
+## Canonical validator findings
+
+The independent validator can emit
+`results/mechanical-observability-findings.json` with schema
+`mls.mechanical-observability.validator-findings.v1`. Its canonical document
+encoding is UTF-8 JSON produced with `ensure_ascii=false`, `sort_keys=true`,
+indent 2, and exactly one final LF. Floats, duplicate members, nonstandard JSON
+constants, CRLF, compact formatting, a missing final LF, and extra members are
+invalid. Because object keys are sorted, the exact top-level wire order is:
+
+```text
+bundle_structural_valid,candidate_findings,claim_mismatches,
+comparison_status,decision,derived_gates,first_manifest_pre_hash,mismatches,
+mode,producer_claims_sha256,promotion,result_sha256_before_hash_field,schema,
+second_manifest_pre_hash,source_sha,validator_sha256
+```
+
+The fields and closed types are:
+
+- `bundle_structural_valid`: an array of one or two Booleans, matching bundle
+  cardinality. An outer seal requires exactly `[true,true]`.
+- `candidate_findings`: exactly the four string members `A`, `B`, `C`, and
+  `D`, in that canonical order. The closed values are:
+  - A: `negative_control_reproduced` or `negative_control_failed`;
+  - B: `reject_averaged_single_gradient_packet_kinematics`,
+    `no_resolved_eligible_nonrigid_mode`, or `inconclusive`;
+  - C: `retain_central_relational_representation_for_research`,
+    `generic_nonrigid_mode_triggers_d`, or `inconclusive`;
+  - D: `not_triggered`,
+    `retain_volume_enriched_relational_representation_for_research`,
+    `stop_reconsider_packet_abstraction`, or `inconclusive`.
+- `claim_mismatches`: a sorted, unique array of closed claim identifiers.
+- `comparison_status`: `single`, `byte_identical`, or `nondeterministic`.
+  Outer sealing permits only the two-bundle latter two values.
+- `decision`: exactly one of
+  `retain_central_relational_representation_for_research`,
+  `retain_volume_enriched_relational_representation_for_research`,
+  `stop_inconclusive_or_implementation_failure`, or
+  `stop_reconsider_packet_abstraction`.
+- `derived_gates`: the exact Boolean object listed below.
+- `first_manifest_pre_hash`: lowercase 64-hex SHA-256.
+- `mismatches`: a path-sorted array of exact objects
+  `{first_sha256,path,second_sha256}` in canonical key order. Each digest is
+  lowercase 64-hex and the two digests differ. A path must be one of the
+  manifest-bound nineteen CSVs, `summary.json`, or `manifest.json`; both
+  compared inventories must otherwise be identical.
+- `mode`: `smoke` or `full`; an outer seal requires `full`.
+- `producer_claims_sha256`: lowercase 64-hex SHA-256.
+- `promotion`: the Boolean `false` only.
+- `result_sha256_before_hash_field`: lowercase 64-hex SHA-256.
+- `schema`: the findings schema literal above.
+- `second_manifest_pre_hash`: lowercase 64-hex for a comparison and JSON
+  `null` only for a single-bundle finding. An outer seal requires a digest.
+- `source_sha`: exactly 40 lowercase hexadecimal characters.
+- `validator_sha256`: lowercase 64-hex SHA-256 of the exact validator bytes.
+
+The exact canonical `derived_gates` key order is:
+
+```text
+affine_objectivity_all_pass,
+checkpoint_round_trip_all_pass,
+decisive_rank_rows_all_unambiguous,
+deterministic_repeatability,
+diagnostics_read_only_all_exact,
+finite_objectivity_all_pass,
+independent_basis_agreement,
+independent_reference_all_pass,
+invariance_all_pass,
+negative_control_reproduced,
+neighbor_lookup_all_agree,
+producer_claims_consistent,
+raw_decision_rows_all_exported
+```
+
+Every value is Boolean. The first/second per-bundle gates are combined by
+logical AND. `deterministic_repeatability` additionally requires an empty byte-
+mismatch inventory. `producer_claims_consistent` is true exactly when
+`claim_mismatches` is empty. `independent_basis_agreement` is false when a
+well-formed producer basis/rank construction outcome disagrees with the
+independent reconstruction; such disagreement is retained as an
+implementation/oracle failure and forces STOP. It does not turn malformed
+producer failure evidence into valid evidence.
+
+The closed claim mismatch identifiers are
+`comparison.nondeterminism_detected` and `first.<claim>` or `second.<claim>`,
+where `<claim>` is one of the ten producer summary contract Booleans,
+`candidate_findings`, `decision`, or the validator-only disagreement token
+`independent_basis_agreement`:
+
+```text
+checkpoint_round_trip_all_pass,diagnostics_read_only_all_exact,
+neighbor_lookup_all_agree,negative_control_reproduced,
+affine_objectivity_all_pass,finite_objectivity_all_pass,invariance_all_pass,
+decisive_rank_rows_all_unambiguous,raw_decision_rows_all_exported,
+independent_reference_all_pass,candidate_findings,decision
+```
+
+`independent_basis_agreement` is not a producer-summary member. The validator
+adds `first.independent_basis_agreement` and/or
+`second.independent_basis_agreement` when its reconstruction disagrees with a
+well-formed producer basis outcome. That token makes
+`producer_claims_consistent=false` as an explicit cross-implementation claim
+disagreement, also clears the decisive-rank gate, and forces the canonical
+inconclusive STOP quarantine.
+
+The array is sorted and unique. A byte-identical comparison that claims
+nondeterminism is invalid; differing bundles require the exact path/digest
+inventory and make deterministic repeatability false.
+
+`producer_claims_sha256` is SHA-256 over compact canonical UTF-8 JSON of the
+ordered complete producer summaries `[first]` or `[first,second]`, after
+removing validator-private keys. Compact canonical JSON means
+`ensure_ascii=false`, `sort_keys=true`, separators `,` and `:`, and no final
+LF or domain prefix. `result_sha256_before_hash_field` uses the same compact
+encoding and raw SHA-256 over the complete findings object before that field
+is inserted. The pretty findings document itself is separately bound by its
+file SHA-256.
+
+The validator accepts `--validator-sha256 <lowercase64>` and emits that pin
+verbatim after executing those exact bytes; without the option it hashes its
+own file. The frozen release-validator SHA-256 is
+`ebf2690072e3c56ff0a8636ebf1c14c3dda76ef0417a1b5535d95329052fcd50`.
+The outer seal always supplies and rechecks that exact pin. A valid claim
+disagreement, byte divergence, or failed derived gate is evidence and produces
+no promotion; malformed structure, noncanonical bytes, invalid provenance, an
+incomplete mismatch inventory, or an unsupported failure tuple is INVALID
+rather than a preserved negative.
+
+### Basis-construction disagreement
+
+A producer `basis_construction` failure remains structurally valid only with
+the closed rank status, reason, pivot trace, basis suppression, nullable cells,
+and raw-generator evidence defined above. If the independent reconstruction
+successfully resolves that same operator, `independent_basis_agreement=false`
+and the outcome is `stop_inconclusive_or_implementation_failure`; a preferred
+independent basis is not silently substituted into producer evidence. If the
+independent reconstruction also fails in agreement with the producer's valid
+failure, agreement may be true, but the incomplete producer basis still makes
+the decisive-rank gate false and forces STOP. A missing pivot,
+fabricated/partial basis, impossible reason, malformed nullable cell, or other
+failure-witness inconsistency is INVALID and cannot use this disagreement
+route.
+
+## Outer evidence seal v3
+
+`outer-manifest.json` uses schema
+`mls.mechanical-observability.outer-evidence-seal.v3`. The outer manifest,
+`metadata.json`, `ci/metadata.json`, both inner manifests, and validator
+findings use the same pretty canonical UTF-8/LF document encoding above.
+Other captured files, including producer summaries, remain opaque bytes bound
+by size and SHA-256 rather than being rewritten by the sealer. The outer
+manifest's exact canonical key order is:
+
+```text
+algorithm,claim_scope,files,metadata_path,pinned_validator_sha256,
+pre_hash_sha256,schema,validator_findings
+```
+
+`algorithm` is `SHA-256`; `claim_scope` is
+`integrity_and_independent_local_semantic_validation_only`; `metadata_path` is
+`metadata.json`; and `pinned_validator_sha256` is the frozen lowercase digest
+of the validator bytes. `files` is the complete path-sorted regular-file
+inventory below the seal root excluding `outer-manifest.json`. Each record has
+exact canonical keys `{path,sha256,size}`: a portable relative path, lowercase
+SHA-256, and nonnegative JSON integer byte count. Missing, extra, duplicate,
+case-colliding, linked, oversized, or digest/size-mismatched files are invalid.
+
+The outer `pre_hash_sha256` is raw SHA-256 of compact canonical UTF-8 JSON for
+the exact outer payload with every outer member except
+`pre_hash_sha256`; there is no LF or domain prefix in this preimage. The outer
+`validator_findings` value is the exact ten-member binding below and must be
+identical to the binding in `metadata.json` and to a fresh isolated execution
+of the pinned validator:
+
+```text
+binding_kind,comparison_status,decision,evidence_route,findings_path,
+findings_sha256,promotion,result_sha256_before_hash_field,
+validator_log_path,validator_log_sha256
+```
+
+The literals are `binding_kind=fresh_pinned_validator_replay`,
+`findings_path=results/mechanical-observability-findings.json`,
+`validator_log_path=logs/full-bundle-validator.log`, and `promotion=false`.
+`comparison_status` is `byte_identical` or `nondeterministic`;
+`evidence_route` is `deterministic_success` or `preserved_negative`; `decision`
+uses the closed four-value enum; and all three hash fields are lowercase
+64-hex. Captured findings and validator stdout must match fresh pinned replay
+byte-for-byte and by digest.
+
+Pinned replay runs the frozen validator bytes through isolated Python with
+`-I -S -B -X utf8`, the validator program supplied on standard input, bounded
+temporary paths, and `--bundle`, `--compare`, `--findings-output`, and
+`--validator-sha256`. Standard error must be empty and standard output is
+UTF-8/LF with exactly two lines: the first begins
+`MECHANICAL OBSERVABILITY BUNDLE VALID:` and the second is exactly
+`findings_sha256=<captured-findings-file-sha256>`.
+
+`metadata.json` uses schema
+`mls.mechanical-observability.outer-evidence-metadata.v3` with exact canonical
+top-level keys:
+
+```text
+captured_external_ci,commands,local,schema,seal_claim_scope,source,
+validator_findings
+```
+
+`seal_claim_scope` repeats the outer claim-scope literal. `source` has exact
+keys `authentication_status,branch,claim_kind,repository_url,sha,tag,
+tag_target_sha`; its claim kind is `captured_external_git_metadata`, its
+authentication status is `not_authenticated_by_offline_seal`, its branch and
+SHA match both bundles, its tag resolves to that SHA, and its repository is
+`https://github.com/RobVanProd/materiallifesubstrate`.
+
+`commands` is a nonempty array of exact `{argv,cwd,name}` objects with unique
+names. It covers `full_bundle_a`, `full_bundle_b`,
+`bundle_compare_validator`, `configure`, `build`, `ctest`, `exact_oracle`,
+`validator_mutation`, `lean_build`, `lean_axiom_report`, `source_scan`, and
+`git_provenance`. The validator command names `--bundle`, `--compare`,
+`--findings-output`, and `--validator-sha256` exactly once and binds the frozen
+pin and findings path.
+
+`local` has exact keys `authentication_status,claim_kind,execution_context,
+result_summaries,tool_versions`. Its literals are
+`captured_local_execution_metadata`, `not_authenticated_by_offline_seal`, and
+`local`. Tool versions include at least Python, CMake, CTest, C++, Git, Lean,
+and Lake. Every required command has one result summary with exact keys
+`evidence_paths,exit_code,status,summary`; required release results are
+`status=pass`, `exit_code=0`, and bind their nonempty logs/results.
+`captured_external_ci` has exact keys
+`authentication_status,claim_kind,metadata_path`, points to
+`ci/metadata.json`, and remains explicitly unauthenticated by the offline
+seal. That CI document uses schema
+`mls.mechanical-observability.captured-external-ci-metadata.v1`, binds the
+repository, branch, head SHA, run ID/URL/conclusion and required GCC, Clang,
+MSVC, Python-oracle and Lean job identities/results. `validator_findings` is
+the exact replay binding above.
+
+The CI document's exact canonical key order is:
+
+```text
+authentication_status,claim_kind,conclusion,head_branch,head_sha,jobs,
+repository_url,run_id,run_url,schema
+```
+
+`run_id` is a positive JSON integer;
+the SHA/branch/repository and derived run URL match the outer source; conclusion
+is `success`. Each job has exact canonical keys
+`conclusion,database_id,id,name,url`, a positive integer `database_id`, unique
+ID/name, URL below the declared run, and `success`. JSON arrays, including
+commands, evidence paths, jobs, and mismatch records, retain their declared
+order; only the file and mismatch inventories have an additional required
+path sort.
+
+### Evidence routes
+
+`deterministic_success` is available only when both full bundles are byte-
+identical, claim mismatches are empty, every derived gate is true, and the
+decision is one of the two `retain_*_for_research` outcomes. This remains a
+NO-PROMOTION research-direction result.
+
+Every other structurally valid outcome uses `preserved_negative`. Byte-
+identical evidence with a failed gate therefore remains a preserved negative;
+it is not mislabeled deterministic success. A conclusive, byte-identical
+`stop_reconsider_packet_abstraction` also uses `preserved_negative` while
+retaining its meaningful candidate findings. Differing bundles may be sealed
+only when both validate independently, their exact mismatch inventory is
+complete, and fresh findings quarantine the result as
+`stop_inconclusive_or_implementation_failure`, B/C/D `inconclusive`, and
+`promotion=false`. Claim mismatch or a failed derived gate uses the same
+inconclusive STOP quarantine. Structurally malformed divergence is INVALID and
+cannot be preserved. The outer seal is an integrity and fresh local semantic-
+validation record, not a signature and not authentication of captured GitHub,
+Git, command, tool, or CI metadata.
