@@ -284,6 +284,17 @@ retains the complete pivot trace but quarantines derived bases/metrics and
 records `rank_estimation,ambiguity_band_overlap`. For an analyzed row, emit
 every free-column null basis vector and the full pivot/permutation trace.
 
+Independent validation uses a two-path QRCP audit without changing that
+threshold or ambiguity band. It first replays the producer's complete claimed
+permutation to derive `d0`, `tau_R`, and `tau_R/8`. It then requires a maximal
+(or roundoff-tied) claimed pivot whenever the independently measured remaining
+suffix norm exceeds `tau_R/8`; a nonzero suffix wholly below that registered
+resolution floor may have a different pivot order. An identically zero suffix
+may not be permuted. A separately factored greedy QRCP trace must agree with
+the claimed-path trace on rank above the lower and upper band limits and on
+ambiguity classification. Every claimed diagonal, acceptance bit, rank/nullity
+field, basis, and residual remains independently replayed and gated.
+
 Let `Q` be an orthonormal basis of the realized rigid-generator range and `Z`
 the complete accepted null basis. Require
 

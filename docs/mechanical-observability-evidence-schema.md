@@ -196,6 +196,16 @@ One `record_kind=summary` row is followed by the complete
 `record_kind=pivot` trace.  Summary fields are identical on every row for the
 same operator.
 
+The independent QRCP audit replays the complete claimed permutation before it
+derives the frozen threshold and ambiguity limits from the first diagonal. It
+enforces maximal/tied pivot selection while the independently measured suffix
+norm is above `ambiguity_lower`; below that already registered limit, pivot
+ordering is unresolved but the claimed path and every diagonal are still
+replayed. Structural-zero suffixes cannot be permuted. A separate greedy QRCP
+factorization must match the claimed path's rank-at-lower, rank-at-upper, and
+ambiguity classification. This is a cross-arithmetic trace-classification
+rule, not a new rank tolerance or a relaxation of basis/residual gates.
+
 The rank-status state machine is closed. `status=analyzed` requires
 `failure_stage=failure_reason=NA`. `status=ambiguous` requires
 `rank_estimation,ambiguity_band_overlap`, has `basis_complete=false`, retains
