@@ -6,6 +6,8 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -48,6 +50,70 @@ using projection::CenterParticle;
 }
 
 } // namespace
+
+MLS_TEST("projection exactness basis derivative controls and invalid inputs") {
+    const auto center = diagnostic::evaluate_quadratic_bspline_basis(
+        {}, {}, 1.0);
+    MLS_REQUIRE_EQ(center.weight, 0.421875);
+    MLS_REQUIRE_EQ(center.gradient_m_inv, Vec3d{});
+
+    const auto displaced = diagnostic::evaluate_quadratic_bspline_basis(
+        {}, {1.0, 0.0, 0.0}, 1.0);
+    const Vec3d expected_displaced_gradient{0.28125, 0.0, 0.0};
+    MLS_REQUIRE_EQ(displaced.weight, 0.0703125);
+    MLS_REQUIRE_EQ(displaced.gradient_m_inv, expected_displaced_gradient);
+
+    const auto outside = diagnostic::evaluate_quadratic_bspline_basis(
+        {}, {2.0, 0.0, 0.0}, 1.0);
+    MLS_REQUIRE_EQ(outside.weight, 0.0);
+    MLS_REQUIRE_EQ(outside.gradient_m_inv, Vec3d{});
+
+    MLS_REQUIRE_THROWS(
+        std::invalid_argument,
+        diagnostic::evaluate_quadratic_bspline_basis({}, {}, 0.0));
+    MLS_REQUIRE_THROWS(
+        std::invalid_argument,
+        diagnostic::evaluate_quadratic_bspline_basis(
+            {std::numeric_limits<double>::infinity(), 0.0, 0.0}, {}, 1.0));
+    MLS_REQUIRE_THROWS(
+        std::invalid_argument,
+        diagnostic::canonical_decimal({1.0, 0.0}, 0));
+}
+
+MLS_TEST("projection exactness diagnostic policies fail closed") {
+    const AffineVelocityField field{affine_matrix(), {0.888, -0.645, -0.592}};
+    const auto particles = affine_lattice(field);
+    const auto system = projection::build_projection_system(
+        particles, TransferConfig{1.0, {}, 0.01});
+    const auto witness = diagnostic::evaluate_analytic_affine_witness(system, field);
+
+    auto high_precision_policy = diagnostic::HighPrecisionSolvePolicy{};
+    high_precision_policy.maximum_nodes = 1U;
+    const auto bounded_high_precision = diagnostic::solve_affine_high_precision(
+        system, field, high_precision_policy);
+    MLS_REQUIRE_EQ(
+        bounded_high_precision.status,
+        diagnostic::HighPrecisionStatus::size_limit);
+
+    auto invalid_high_precision_policy = diagnostic::HighPrecisionSolvePolicy{};
+    invalid_high_precision_policy.maximum_nodes = 0U;
+    MLS_REQUIRE_THROWS(
+        std::invalid_argument,
+        diagnostic::solve_affine_high_precision(
+            system, field, invalid_high_precision_policy));
+
+    auto bounded_nullspace_policy = diagnostic::NullspacePolicy{};
+    bounded_nullspace_policy.maximum_nodes = 1U;
+    const auto bounded_nullspace = diagnostic::diagnose_gram_nullspace(
+        system, witness.analytic_grid_velocity_m_per_s, bounded_nullspace_policy);
+    MLS_REQUIRE_EQ(
+        bounded_nullspace.status,
+        diagnostic::NullspaceStatus::size_limit);
+
+    MLS_REQUIRE_THROWS(
+        std::invalid_argument,
+        diagnostic::diagnose_gram_nullspace(system, std::vector<Vec3d>{}));
+}
 
 MLS_TEST("projection exactness analytic witness bypasses every solver") {
     const AffineVelocityField field{affine_matrix(), {0.888, -0.645, -0.592}};
