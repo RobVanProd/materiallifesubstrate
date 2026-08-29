@@ -47,6 +47,24 @@ VALIDATOR_FINDINGS_PATH = (
 )
 VALIDATOR_LOG_PATH = "logs/full-bundle-validator.log"
 STOP_DECISION = "stop_inconclusive_or_implementation_failure"
+RETENTION_DECISIONS = frozenset(
+    {
+        "retain_central_relational_representation_for_research",
+        "retain_volume_enriched_relational_representation_for_research",
+    }
+)
+PRODUCER_GATE_KEYS = (
+    "checkpoint_round_trip_all_pass",
+    "diagnostics_read_only_all_exact",
+    "neighbor_lookup_all_agree",
+    "negative_control_reproduced",
+    "affine_objectivity_all_pass",
+    "finite_objectivity_all_pass",
+    "invariance_all_pass",
+    "decisive_rank_rows_all_unambiguous",
+    "raw_decision_rows_all_exported",
+    "independent_reference_all_pass",
+)
 
 INNER_FILES = (
     "configurations.csv",
@@ -168,21 +186,45 @@ def make_validator_findings(
             if summary["nondeterminism_detected"]:
                 claim_mismatches.append(f"{label}.nondeterminism_detected")
     claim_mismatches.sort()
-    negative = bool(mismatches or claim_mismatches)
     gates = {
-        "affine_objectivity_all_pass": True,
-        "checkpoint_round_trip_all_pass": True,
-        "decisive_rank_rows_all_unambiguous": True,
+        "affine_objectivity_all_pass": all(
+            summary["affine_objectivity_all_pass"] for summary in summaries
+        ),
+        "checkpoint_round_trip_all_pass": all(
+            summary["checkpoint_round_trip_all_pass"] for summary in summaries
+        ),
+        "decisive_rank_rows_all_unambiguous": all(
+            summary["decisive_rank_rows_all_unambiguous"]
+            for summary in summaries
+        ),
         "deterministic_repeatability": not mismatches,
-        "diagnostics_read_only_all_exact": True,
-        "finite_objectivity_all_pass": True,
-        "independent_reference_all_pass": True,
-        "invariance_all_pass": True,
-        "negative_control_reproduced": True,
-        "neighbor_lookup_all_agree": True,
+        "diagnostics_read_only_all_exact": all(
+            summary["diagnostics_read_only_all_exact"]
+            for summary in summaries
+        ),
+        "finite_objectivity_all_pass": all(
+            summary["finite_objectivity_all_pass"] for summary in summaries
+        ),
+        "independent_basis_agreement": True,
+        "independent_reference_all_pass": all(
+            summary["independent_reference_all_pass"] for summary in summaries
+        ),
+        "invariance_all_pass": all(
+            summary["invariance_all_pass"] for summary in summaries
+        ),
+        "negative_control_reproduced": all(
+            summary["negative_control_reproduced"] for summary in summaries
+        ),
+        "neighbor_lookup_all_agree": all(
+            summary["neighbor_lookup_all_agree"] for summary in summaries
+        ),
         "producer_claims_consistent": not claim_mismatches,
-        "raw_decision_rows_all_exported": True,
+        "raw_decision_rows_all_exported": all(
+            summary["raw_decision_rows_all_exported"] for summary in summaries
+        ),
     }
+    failed_gate = not all(gates.values())
+    negative = bool(mismatches or claim_mismatches or failed_gate)
     if negative:
         candidate_findings = {
             "A": "negative_control_reproduced",
@@ -192,13 +234,16 @@ def make_validator_findings(
         }
         decision = STOP_DECISION
     else:
-        candidate_findings = {
-            "A": "negative_control_reproduced",
-            "B": "no_resolved_eligible_nonrigid_mode",
-            "C": "retain_central_relational_representation_for_research",
-            "D": "not_triggered",
-        }
-        decision = "retain_central_relational_representation_for_research"
+        candidate_findings = dict(summaries[0]["candidate_findings"])
+        decision = summaries[0]["decision"]
+        if any(
+            summary["candidate_findings"] != candidate_findings
+            or summary["decision"] != decision
+            for summary in summaries[1:]
+        ):
+            raise AssertionError(
+                "byte-identical synthetic summaries disagree on findings"
+            )
     manifests = [
         json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
         for bundle in (first, second)
@@ -242,16 +287,19 @@ def validator_stdout(findings_bytes: bytes, source_sha: str) -> bytes:
 
 def validator_binding(findings_bytes: bytes, log_bytes: bytes) -> dict[str, Any]:
     findings = json.loads(findings_bytes.decode("utf-8"))
-    negative = bool(
-        findings["comparison_status"] == "nondeterministic"
-        or findings["claim_mismatches"]
+    deterministic_success = bool(
+        findings["comparison_status"] == "byte_identical"
+        and not findings["claim_mismatches"]
+        and all(findings["derived_gates"].values())
+        and findings["decision"] in RETENTION_DECISIONS
     )
     return {
         "binding_kind": "fresh_pinned_validator_replay",
         "comparison_status": findings["comparison_status"],
         "decision": findings["decision"],
         "evidence_route": (
-            "preserved_negative" if negative else "deterministic_success"
+            "deterministic_success"
+            if deterministic_success else "preserved_negative"
         ),
         "findings_path": VALIDATOR_FINDINGS_PATH,
         "findings_sha256": sha256_bytes(findings_bytes),
@@ -310,10 +358,15 @@ def make_bundle(bundle: Path) -> None:
             f"synthetic mechanical observability artifact {index}: {name}\n",
             encoding="utf-8",
         )
-    write_json(
-        bundle / "summary.json",
-        {
+    summary: dict[str, Any] = {
             "branch": BRANCH,
+            "candidate_findings": {
+                "A": "negative_control_reproduced",
+                "B": "no_resolved_eligible_nonrigid_mode",
+                "C": "retain_central_relational_representation_for_research",
+                "D": "not_triggered",
+            },
+            "decision": "retain_central_relational_representation_for_research",
             "dirty": False,
             "mode": "full",
             "nondeterminism_detected": False,
@@ -323,8 +376,9 @@ def make_bundle(bundle: Path) -> None:
             "schema": SUMMARY_SCHEMA,
             "seed": 260828,
             "source_sha": SOURCE_SHA,
-        },
-    )
+    }
+    summary.update({key: True for key in PRODUCER_GATE_KEYS})
+    write_json(bundle / "summary.json", summary)
     refresh_inner(bundle)
 
 
@@ -828,7 +882,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 return {
                     "comparison_status": "byte_identical",
                     "decision": STOP_DECISION,
-                    "evidence_route": "deterministic_success",
+                    "evidence_route": "preserved_negative",
                     "findings": {},
                     "findings_sha256": fake_findings_sha256,
                     "promotion": False,
@@ -926,6 +980,134 @@ def main(arguments: Sequence[str] | None = None) -> int:
         if copied_ci["conclusion"] != "success":
             raise AssertionError(
                 "create altered the captured independent CI success status"
+            )
+
+        # Deterministic replay is not a positive scientific result by itself.
+        # Two byte-identical, producer-consistent bundles with a failed
+        # implementation/reference gate must retain deterministic-repeatability
+        # evidence while being quarantined as preserved negative evidence.
+        failed_gate_a = work / "failed-gate-source-a"
+        failed_gate_b = work / "failed-gate-source-b"
+        failed_gate_provenance = work / "failed-gate-provenance"
+        shutil.copytree(source_a, failed_gate_a)
+        failed_gate_summary = json.loads(
+            (failed_gate_a / "summary.json").read_text(encoding="utf-8")
+        )
+        failed_gate_summary["independent_reference_all_pass"] = False
+        failed_gate_summary["candidate_findings"] = {
+            "A": "negative_control_reproduced",
+            "B": "inconclusive",
+            "C": "inconclusive",
+            "D": "inconclusive",
+        }
+        failed_gate_summary["decision"] = STOP_DECISION
+        write_json(failed_gate_a / "summary.json", failed_gate_summary)
+        refresh_inner(failed_gate_a)
+        shutil.copytree(failed_gate_a, failed_gate_b)
+        make_provenance(
+            failed_gate_provenance,
+            failed_gate_a,
+            failed_gate_b,
+            module.PINNED_VALIDATOR_SHA256,
+        )
+        failed_gate_seal = work / "sealed-byte-identical-failed-gate"
+        require_create_valid(
+            tool,
+            failed_gate_a,
+            failed_gate_b,
+            failed_gate_provenance,
+            failed_gate_seal,
+        )
+        require_verify_valid(tool, failed_gate_seal)
+        failed_gate_manifest = json.loads(
+            (failed_gate_seal / OUTER_MANIFEST).read_text(encoding="utf-8")
+        )
+        failed_gate_findings = json.loads(
+            (failed_gate_seal / VALIDATOR_FINDINGS_PATH).read_text(
+                encoding="utf-8"
+            )
+        )
+        if (
+            failed_gate_manifest["validator_findings"]["evidence_route"]
+            != "preserved_negative"
+            or failed_gate_findings["comparison_status"] != "byte_identical"
+            or failed_gate_findings["mismatches"]
+            or failed_gate_findings["claim_mismatches"]
+            or failed_gate_findings["derived_gates"][
+                "deterministic_repeatability"
+            ] is not True
+            or failed_gate_findings["derived_gates"][
+                "producer_claims_consistent"
+            ] is not True
+            or failed_gate_findings["derived_gates"][
+                "independent_reference_all_pass"
+            ] is not False
+            or failed_gate_findings["decision"] != STOP_DECISION
+            or failed_gate_findings["promotion"] is not False
+            or any(
+                failed_gate_findings["candidate_findings"][candidate]
+                != "inconclusive"
+                for candidate in ("B", "C", "D")
+            )
+        ):
+            raise AssertionError(
+                "byte-identical failed gate was not preserved and quarantined"
+            )
+
+        # A conclusive scientific STOP is also negative evidence, but unlike
+        # an implementation failure it retains the resolved B/C/D findings.
+        reconsider_a = work / "reconsider-source-a"
+        reconsider_b = work / "reconsider-source-b"
+        reconsider_provenance = work / "reconsider-provenance"
+        shutil.copytree(source_a, reconsider_a)
+        reconsider_summary = json.loads(
+            (reconsider_a / "summary.json").read_text(encoding="utf-8")
+        )
+        reconsider_summary["candidate_findings"] = {
+            "A": "negative_control_reproduced",
+            "B": "reject_averaged_single_gradient_packet_kinematics",
+            "C": "generic_nonrigid_mode_triggers_d",
+            "D": "stop_reconsider_packet_abstraction",
+        }
+        reconsider_summary["decision"] = "stop_reconsider_packet_abstraction"
+        write_json(reconsider_a / "summary.json", reconsider_summary)
+        refresh_inner(reconsider_a)
+        shutil.copytree(reconsider_a, reconsider_b)
+        make_provenance(
+            reconsider_provenance,
+            reconsider_a,
+            reconsider_b,
+            module.PINNED_VALIDATOR_SHA256,
+        )
+        reconsider_seal = work / "sealed-conclusive-reconsider-stop"
+        require_create_valid(
+            tool,
+            reconsider_a,
+            reconsider_b,
+            reconsider_provenance,
+            reconsider_seal,
+        )
+        require_verify_valid(tool, reconsider_seal)
+        reconsider_manifest = json.loads(
+            (reconsider_seal / OUTER_MANIFEST).read_text(encoding="utf-8")
+        )
+        reconsider_findings = json.loads(
+            (reconsider_seal / VALIDATOR_FINDINGS_PATH).read_text(
+                encoding="utf-8"
+            )
+        )
+        if (
+            reconsider_manifest["validator_findings"]["evidence_route"]
+            != "preserved_negative"
+            or reconsider_findings["comparison_status"] != "byte_identical"
+            or not all(reconsider_findings["derived_gates"].values())
+            or reconsider_findings["decision"]
+            != "stop_reconsider_packet_abstraction"
+            or reconsider_findings["candidate_findings"]["D"]
+            != "stop_reconsider_packet_abstraction"
+        ):
+            raise AssertionError(
+                "conclusive packet-abstraction STOP lost its negative route"
             )
 
         # The only accepted differing-run route is explicit preserved negative
@@ -1848,6 +2030,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     print(
         "mechanical observability outer seal mutation regression PASS "
         "(immutable-input copy + deterministic create + positive verify + "
+        "byte-identical failed-gate quarantine + conclusive STOP route + "
         f"{mutation_count} verification mutations; real malformed bundle rejected; "
         "2 A->B->A races contained by immutable snapshot/single-read manifest; "
         "pinned bytes isolated from source-path and Python environment injection; "

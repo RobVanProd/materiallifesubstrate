@@ -203,6 +203,7 @@ DERIVED_GATE_KEYS = frozenset(
         "deterministic_repeatability",
         "diagnostics_read_only_all_exact",
         "finite_objectivity_all_pass",
+        "independent_basis_agreement",
         "independent_reference_all_pass",
         "invariance_all_pass",
         "negative_control_reproduced",
@@ -228,11 +229,25 @@ PRODUCER_CLAIM_KEYS = frozenset(
         "decision",
     }
 )
+VALID_CLAIM_MISMATCH_KEYS = PRODUCER_CLAIM_KEYS | {
+    "independent_basis_agreement"
+}
 VALID_COMPARISON_STATUSES = frozenset(
     {"single", "byte_identical", "nondeterministic"}
 )
 STOP_DECISION = "stop_inconclusive_or_implementation_failure"
-PINNED_VALIDATOR_SHA256 = "40dcbb6a5ee3bf96a22fcbc7f8068dcf36fdddeaae32676c70a3d15c110ca625"
+RECONSIDER_DECISION = "stop_reconsider_packet_abstraction"
+RETENTION_DECISIONS = frozenset(
+    {
+        "retain_central_relational_representation_for_research",
+        "retain_volume_enriched_relational_representation_for_research",
+    }
+)
+VALID_DECISIONS = RETENTION_DECISIONS | {
+    STOP_DECISION,
+    RECONSIDER_DECISION,
+}
+PINNED_VALIDATOR_SHA256 = "ebf2690072e3c56ff0a8636ebf1c14c3dda76ef0417a1b5535d95329052fcd50"
 OFFLINE_CLAIM_SCOPE = "integrity_and_independent_local_semantic_validation_only"
 UNAUTHENTICATED_EXTERNAL = "not_authenticated_by_offline_seal"
 
@@ -825,7 +840,9 @@ def _validate_claim_mismatches(value: Any) -> list[str]:
         valid = item == "comparison.nondeterminism_detected"
         if not valid:
             match = re.fullmatch(r"(first|second)\.([a-z_]+)", item)
-            valid = bool(match and match.group(2) in PRODUCER_CLAIM_KEYS)
+            valid = bool(
+                match and match.group(2) in VALID_CLAIM_MISMATCH_KEYS
+            )
         require(valid, f"unknown validator claim mismatch: {item!r}")
         claims.append(item)
     require(
@@ -946,6 +963,8 @@ def validate_validator_findings(
     decision = _require_nonempty_string(
         findings["decision"], "validator decision"
     )
+    require(decision in VALID_DECISIONS,
+            "validator decision is outside the frozen enum")
     require(findings["promotion"] is False,
             "validator findings attempt promotion")
     result_hash = findings["result_sha256_before_hash_field"]
@@ -970,13 +989,18 @@ def validate_validator_findings(
         not (not expected_mismatches and producer_claims_divergence),
         "byte-identical bundles claim divergent execution",
     )
-    negative_route = bool(expected_mismatches or claim_mismatches)
-    route = (
-        "preserved_negative" if negative_route else "deterministic_success"
+    all_derived_gates_pass = all(gates.values())
+    forced_inconclusive = bool(
+        expected_mismatches
+        or claim_mismatches
+        or not all_derived_gates_pass
     )
-    if negative_route:
-        require(decision == STOP_DECISION,
-                "negative evidence route does not force STOP")
+    if forced_inconclusive:
+        require(
+            decision == STOP_DECISION,
+            "mismatch or failed derived gate does not force inconclusive STOP",
+        )
+    if decision == STOP_DECISION:
         require(
             candidate_findings["A"]
             == (
@@ -988,9 +1012,24 @@ def validate_validator_findings(
                 candidate_findings[candidate] == "inconclusive"
                 for candidate in ("B", "C", "D")
             ),
-            "negative evidence route findings are not quarantined",
+            "inconclusive evidence route findings are not quarantined",
+        )
+    elif decision == RECONSIDER_DECISION:
+        require(
+            not expected_mismatches
+            and not claim_mismatches
+            and all_derived_gates_pass,
+            "conclusive packet-abstraction STOP has unresolved evidence gates",
         )
     else:
+        require(decision in RETENTION_DECISIONS,
+                "deterministic retained direction is outside the frozen enum")
+        require(
+            not expected_mismatches
+            and not claim_mismatches
+            and all_derived_gates_pass,
+            "retained direction has unresolved evidence gates",
+        )
         require(
             all(
                 identity["nondeterminism_detected"] is False
@@ -998,6 +1037,11 @@ def validate_validator_findings(
             ),
             "deterministic evidence route has a nondeterminism claim",
         )
+    route = (
+        "deterministic_success"
+        if decision in RETENTION_DECISIONS
+        else "preserved_negative"
+    )
 
     return {
         "comparison_status": expected_status,
@@ -1318,7 +1362,9 @@ def _validate_validator_binding(value: Any, context: str) -> dict[str, Any]:
             f"{context} findings path mismatch")
     require(value["validator_log_path"] == VALIDATOR_LOG_PATH,
             f"{context} validator log path mismatch")
-    _require_nonempty_string(value["decision"], f"{context} decision")
+    decision = _require_nonempty_string(value["decision"], f"{context} decision")
+    require(decision in VALID_DECISIONS,
+            f"{context} decision is outside the frozen enum")
     require(value["promotion"] is False, f"{context} attempts promotion")
     for key in (
         "findings_sha256",
