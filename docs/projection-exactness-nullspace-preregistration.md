@@ -234,8 +234,9 @@ determine the solver/nullspace decision. Exporting duplicate full level-2
 assemblies for the other 62 metric-only systems would add roughly a gigabyte
 per repeat without strengthening the decisive independent checks.
 
-Every system row records `assembly_exported` and a canonical assembly-payload
-SHA-256. An unexported system must have no stray raw assembly rows. A selected
+Every system row records `assembly_exported`; exported rows carry a canonical
+assembly-payload SHA-256, while unexported rows carry explicit `NA` and must
+have no stray raw assembly rows. A selected
 high-precision or nullspace system without a complete assembly export fails.
 This evidence-storage boundary does not change the 76-system numerical sweep,
 its metrics, or any gate.
