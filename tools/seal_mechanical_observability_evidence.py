@@ -41,7 +41,7 @@ CI_SCHEMA = (
     "mls.mechanical-observability.captured-external-ci-metadata.v1"
 )
 INNER_SCHEMA = "mls.mechanical-observability.manifest.v1"
-SUMMARY_SCHEMA = "mls.mechanical-observability.summary.v1"
+SUMMARY_SCHEMA = "mls.mechanical-observability.summary.v2"
 BRANCH = "mechanical-observability-lab"
 ACCEPTED_PARENT_SHA = "2e175396ff30faea8a4d96d5a0336ab9ba042f12"
 PUBLIC_REPOSITORY = "https://github.com/RobVanProd/materiallifesubstrate"
@@ -247,7 +247,7 @@ VALID_DECISIONS = RETENTION_DECISIONS | {
     STOP_DECISION,
     RECONSIDER_DECISION,
 }
-PINNED_VALIDATOR_SHA256 = "ebf2690072e3c56ff0a8636ebf1c14c3dda76ef0417a1b5535d95329052fcd50"
+PINNED_VALIDATOR_SHA256 = "5f590d68b20f4c6797989bf9cac3bf580f3876c1eb8867131981e20f6110ca14"
 OFFLINE_CLAIM_SCOPE = "integrity_and_independent_local_semantic_validation_only"
 UNAUTHENTICATED_EXTERNAL = "not_authenticated_by_offline_seal"
 
@@ -777,6 +777,14 @@ def validate_inner_bundle(
         summary.get("mode") == "full"
         and summary.get("producer") == "cpp_mechanical_observability_lab",
         f"{context} is not final C++ full evidence",
+    )
+    require(
+        summary.get("provisional") is False,
+        f"{context} is provisional and cannot be final outer-seal evidence",
+    )
+    require(
+        summary.get("sweep_complete") is True,
+        f"{context} does not contain a complete registered sweep",
     )
     require(summary.get("dirty") is False, f"{context} was produced from a dirty source tree")
     require(

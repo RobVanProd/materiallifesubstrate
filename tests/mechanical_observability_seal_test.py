@@ -32,7 +32,7 @@ CI_SCHEMA = (
     "mls.mechanical-observability.captured-external-ci-metadata.v1"
 )
 INNER_SCHEMA = "mls.mechanical-observability.manifest.v1"
-SUMMARY_SCHEMA = "mls.mechanical-observability.summary.v1"
+SUMMARY_SCHEMA = "mls.mechanical-observability.summary.v2"
 BRANCH = "mechanical-observability-lab"
 PARENT_SHA = "2e175396ff30faea8a4d96d5a0336ab9ba042f12"
 REPOSITORY = "https://github.com/RobVanProd/materiallifesubstrate"
@@ -259,7 +259,7 @@ def make_validator_findings(
         "derived_gates": gates,
         "first_manifest_pre_hash": manifests[0]["pre_hash_sha256"],
         "mismatches": mismatches,
-        "mode": "full",
+        "mode": summaries[0]["mode"],
         "producer_claims_sha256": sha256_bytes(
             canonical_json_bytes(summaries, pretty=False)
         ),
@@ -372,10 +372,12 @@ def make_bundle(bundle: Path) -> None:
             "nondeterminism_detected": False,
             "parent_sha": PARENT_SHA,
             "producer": "cpp_mechanical_observability_lab",
+            "provisional": False,
             "promotion": False,
             "schema": SUMMARY_SCHEMA,
             "seed": 260828,
             "source_sha": SOURCE_SHA,
+            "sweep_complete": True,
     }
     summary.update({key: True for key in PRODUCER_GATE_KEYS})
     write_json(bundle / "summary.json", summary)
@@ -980,6 +982,52 @@ def main(arguments: Sequence[str] | None = None) -> int:
         if copied_ci["conclusion"] != "success":
             raise AssertionError(
                 "create altered the captured independent CI success status"
+            )
+
+        # Summary v2 makes finality explicit.  Legacy summaries, failure
+        # fixtures, provisional runs, and incomplete sweeps cannot be relabeled
+        # as final outer-seal evidence even when paired byte-for-byte.
+        nonfinal_cases = (
+            (
+                "legacy-summary-v1",
+                {"schema": "mls.mechanical-observability.summary.v1"},
+            ),
+            (
+                "failure-fixture",
+                {
+                    "mode": "failure_fixture",
+                    "provisional": True,
+                    "sweep_complete": False,
+                },
+            ),
+            ("provisional-full", {"provisional": True}),
+            ("incomplete-full", {"sweep_complete": False}),
+        )
+        for label, changes in nonfinal_cases:
+            nonfinal_a = work / f"{label}-source-a"
+            nonfinal_b = work / f"{label}-source-b"
+            nonfinal_provenance = work / f"{label}-provenance"
+            shutil.copytree(source_a, nonfinal_a)
+            nonfinal_summary = json.loads(
+                (nonfinal_a / "summary.json").read_text(encoding="utf-8")
+            )
+            nonfinal_summary.update(changes)
+            write_json(nonfinal_a / "summary.json", nonfinal_summary)
+            refresh_inner(nonfinal_a)
+            shutil.copytree(nonfinal_a, nonfinal_b)
+            make_provenance(
+                nonfinal_provenance,
+                nonfinal_a,
+                nonfinal_b,
+                module.PINNED_VALIDATOR_SHA256,
+            )
+            require_create_invalid(
+                tool,
+                nonfinal_a,
+                nonfinal_b,
+                nonfinal_provenance,
+                work / f"must-not-seal-{label}",
+                label,
             )
 
         # Deterministic replay is not a positive scientific result by itself.
@@ -2030,6 +2078,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     print(
         "mechanical observability outer seal mutation regression PASS "
         "(immutable-input copy + deterministic create + positive verify + "
+        "summary-v2 schema/finality rejection + "
         "byte-identical failed-gate quarantine + conclusive STOP route + "
         f"{mutation_count} verification mutations; real malformed bundle rejected; "
         "2 A->B->A races contained by immutable snapshot/single-read manifest; "
