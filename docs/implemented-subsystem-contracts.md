@@ -841,7 +841,12 @@ identity is not assumed for PIC or finite FMPM.
   interaction;
 - direct `V'=Sv` is the MLS experimental reconstruction, not Love–Sulsky's
   incremental Eq. (32);
-- checkpoint FNV is accidental-corruption detection, not authentication; and
+- checkpoint FNV is accidental-corruption detection, not authentication;
+- the Python evidence validator independently checks schema and cross-table
+  consistency but does not independently recompute floating trajectories;
+- the outer evidence seal detects mutation, omission, unexpected files, and
+  disagreement between two full runs, but is not a cryptographic signature;
+  and
 - passing the unit suite establishes software contracts, not physical validity
   or continuum convergence.
 
@@ -862,6 +867,8 @@ identity is not assumed for PIC or finite FMPM.
 - `projection checkpoint is canonical corruptible and excludes solver state`
 - `projection checkpoint restart reproduces continued center evolution exactly`
 - independent exact-rational full/FMPM oracle and its canonical digest
+- projection full-family schema audit and bundle-validator mutation regression
+- outer evidence-seal deterministic-create and mutation regression
 
 The final co-refinement, phase/orientation, particles-per-cell, compiler, and
 independent evidence bundle remains necessary before any research-candidate

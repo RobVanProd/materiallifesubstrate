@@ -273,3 +273,12 @@ A unit test establishes only its stated software property. It does not make
 an observed behavior physically valid. A failed full solve cannot be hidden
 by a visually plausible FMPM result. No result from this lab authorizes
 constitutive mechanics.
+
+The independent Python bundle validator reconstructs the registered family
+matrix and checks cross-table decisions and manifests. It deliberately shares
+no producer implementation, but it is not a second floating-point mechanics
+implementation and does not recompute trajectories from checkpoints. The
+outer evidence seal therefore also requires two byte-identical full runs,
+separate exact-oracle evidence, complete local command logs, source provenance,
+and public CI job metadata. The seal is a tamper-evident hash record, not a
+cryptographic signature or proof of physical validity.

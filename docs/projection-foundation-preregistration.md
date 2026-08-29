@@ -272,11 +272,21 @@ Every count is independently reconstructed by the Python
 validator. Smoke output is
 provisional and cannot satisfy full counts.
 
-The final bundle includes raw CSV files, complete per-metric decisions,
-solver/rank failure rows, exact-oracle result, checkpoint/replay hashes,
-compiler/tool versions, seed/config manifest, source/branch/dirty state,
-command log, stdout/stderr, file hashes, and a bundle manifest whose own hash
-is excluded from its pre-hash payload.
+The final evidence seal contains two independently executed, byte-identical
+full bundles. Each inner bundle includes raw CSV files, complete per-metric
+decisions, solver/rank failure rows, checkpoint/replay hashes, and a manifest
+whose own hash is excluded from its pre-hash payload. The outer seal also
+contains exact-oracle, build, test, Lean, source-scan, provenance, comparison,
+and validator logs; exact tokenized commands and tool versions; and the public
+CI run/job record. Its manifest hashes every regular file below the seal root
+except itself and rejects missing, extra, linked, case-colliding, or mutated
+paths.
+
+The Python bundle validator is an independently implemented schema and
+cross-table consistency checker, not an independent floating-point trajectory
+solver. It does not recompute numerical trajectories from checkpoints. The
+exact-rational oracle is separate, and two-run byte identity tests deterministic
+repeatability rather than numerical truth.
 
 ## 12. Decision logic
 
