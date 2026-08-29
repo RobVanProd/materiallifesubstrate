@@ -129,13 +129,13 @@ void set_scalar_component(Vec3d& value, std::size_t component, double scalar) no
 
 [[nodiscard]] std::vector<double> apply_scalar_mass(
     const ProjectionSystem& system, std::span<const double> values) {
-    if (values.size() != system.active_nodes.size()) {
+    if (values.size() != system.active_nodes().size()) {
         throw std::invalid_argument("consistent mass vector has the wrong dimension");
     }
     std::vector<double> result(values.size(), 0.0);
-    for (std::size_t row = 0; row < system.consistent_mass_rows.size(); ++row) {
+    for (std::size_t row = 0; row < system.consistent_mass_rows().size(); ++row) {
         long double sum = 0.0L;
-        for (const auto& [column, coefficient] : system.consistent_mass_rows[row]) {
+        for (const auto& [column, coefficient] : system.consistent_mass_rows()[row]) {
             sum += static_cast<long double>(coefficient) *
                 static_cast<long double>(values[column]);
         }
@@ -198,19 +198,32 @@ struct SpectralDiagnostic final {
     double largest{0.0};
     double condition{std::numeric_limits<double>::infinity()};
     bool estimated{false};
+    bool resolved{true};
     std::string method{};
 };
 
+struct JacobiEigenResult final {
+    std::vector<double> eigenvalues{};
+    bool converged{false};
+    double final_relative_off_diagonal{std::numeric_limits<double>::infinity()};
+};
+
+[[nodiscard]] JacobiEigenResult jacobi_eigenvalues(
+    std::vector<double> matrix, std::size_t maximum_sweeps);
+
 [[nodiscard]] SpectralDiagnostic dense_cholesky_diagnostic(
-    const ProjectionSystem& system, bool jacobi_scaled, double relative_pivot_min) {
-    const auto count = system.active_nodes.size();
+    const ProjectionSystem& system,
+    bool jacobi_scaled,
+    double relative_pivot_min,
+    std::size_t jacobi_maximum_sweeps) {
+    const auto count = system.active_nodes().size();
     std::vector<double> matrix(count * count, 0.0);
     for (std::size_t row = 0; row < count; ++row) {
-        for (const auto& [column, coefficient] : system.consistent_mass_rows[row]) {
+        for (const auto& [column, coefficient] : system.consistent_mass_rows()[row]) {
             auto value = coefficient;
             if (jacobi_scaled) {
                 value /= std::sqrt(
-                    system.lumped_mass_kg[row] * system.lumped_mass_kg[column]);
+                    system.lumped_mass_kg()[row] * system.lumped_mass_kg()[column]);
             }
             matrix[row * count + column] = value;
         }
@@ -222,46 +235,71 @@ struct SpectralDiagnostic final {
         }
         return result;
     }();
-    SpectralDiagnostic result{};
-    result.method = jacobi_scaled ? "dense Cholesky pivots of D^-1/2 M D^-1/2"
-                                  : "dense Cholesky pivots of M";
-    result.smallest = std::numeric_limits<double>::infinity();
+    auto factor = matrix;
+    std::size_t pivot_rank = 0;
     for (std::size_t row = 0; row < count; ++row) {
         for (std::size_t column = 0; column <= row; ++column) {
-            long double value = matrix[row * count + column];
+            long double value = factor[row * count + column];
             for (std::size_t inner = 0; inner < column; ++inner) {
-                value -= static_cast<long double>(matrix[row * count + inner]) *
-                    static_cast<long double>(matrix[column * count + inner]);
+                value -= static_cast<long double>(factor[row * count + inner]) *
+                    static_cast<long double>(factor[column * count + inner]);
             }
             if (row == column) {
                 const auto pivot = static_cast<double>(value);
-                result.smallest = std::min(result.smallest, pivot);
-                result.largest = std::max(result.largest, pivot);
                 if (!std::isfinite(pivot) || !(pivot > relative_pivot_min * diagonal_scale)) {
-                    result.rank = row;
-                    result.condition = std::numeric_limits<double>::infinity();
-                    return result;
+                    break;
                 }
-                matrix[row * count + column] = std::sqrt(pivot);
-                result.rank = row + 1U;
+                factor[row * count + column] = std::sqrt(pivot);
+                pivot_rank = row + 1U;
             } else {
-                matrix[row * count + column] =
-                    static_cast<double>(value) / matrix[column * count + column];
+                factor[row * count + column] =
+                    static_cast<double>(value) / factor[column * count + column];
             }
         }
+        if (pivot_rank != row + 1U) {
+            break;
+        }
     }
-    result.condition = result.largest / result.smallest;
+    const auto eigen_result = jacobi_eigenvalues(
+        std::move(matrix), jacobi_maximum_sweeps);
+    SpectralDiagnostic result{};
+    result.method = jacobi_scaled
+        ? "dense Cholesky rank pivots plus symmetric Jacobi spectrum of D^-1/2 M D^-1/2"
+        : "dense Cholesky rank pivots plus symmetric Jacobi spectrum of M";
+    result.resolved = eigen_result.converged;
+    if (!result.resolved) {
+        result.rank = 0;
+        result.smallest = std::numeric_limits<double>::quiet_NaN();
+        result.largest = std::numeric_limits<double>::quiet_NaN();
+        result.condition = std::numeric_limits<double>::infinity();
+        result.method += "; Jacobi off-diagonal convergence unresolved";
+        return result;
+    }
+    result.smallest = eigen_result.eigenvalues.front();
+    result.largest = eigen_result.eigenvalues.back();
+    const auto spectral_threshold = relative_pivot_min *
+        std::max(std::abs(result.largest), std::numeric_limits<double>::min());
+    const auto spectral_rank = static_cast<std::size_t>(std::ranges::count_if(
+        eigen_result.eigenvalues, [spectral_threshold](double value) {
+            return std::isfinite(value) && value > spectral_threshold;
+        }));
+    result.rank = std::min(pivot_rank, spectral_rank);
+    result.condition = result.smallest > 0.0
+        ? result.largest / result.smallest
+        : std::numeric_limits<double>::infinity();
+    result.estimated = false;
     return result;
 }
 
-[[nodiscard]] std::vector<double> jacobi_eigenvalues(std::vector<double> matrix) {
+[[nodiscard]] JacobiEigenResult jacobi_eigenvalues(
+    std::vector<double> matrix, std::size_t maximum_sweeps) {
     const auto count = static_cast<std::size_t>(
         std::sqrt(static_cast<double>(matrix.size())));
     if (count * count != matrix.size()) {
         throw std::logic_error("Jacobi diagnostic matrix is not square");
     }
     const auto tolerance = 64.0 * std::numeric_limits<double>::epsilon();
-    for (std::size_t sweep = 0; sweep < 64U; ++sweep) {
+    for (std::size_t sweep = 0; sweep < maximum_sweeps; ++sweep) {
         double maximum_off_diagonal = 0.0;
         double maximum_diagonal = 0.0;
         for (std::size_t row = 0; row < count; ++row) {
@@ -272,13 +310,15 @@ struct SpectralDiagnostic final {
                     maximum_off_diagonal, std::abs(matrix[row * count + column]));
             }
         }
-        if (maximum_off_diagonal <= tolerance * std::max(1.0, maximum_diagonal)) {
+        const auto matrix_scale =
+            std::max(maximum_diagonal, std::numeric_limits<double>::min());
+        if (maximum_off_diagonal <= tolerance * matrix_scale) {
             break;
         }
         for (std::size_t row = 0; row < count; ++row) {
             for (std::size_t column = row + 1U; column < count; ++column) {
                 const auto off = matrix[row * count + column];
-                if (std::abs(off) <= tolerance * std::max(1.0, maximum_diagonal)) {
+                if (std::abs(off) <= tolerance * matrix_scale) {
                     continue;
                 }
                 const auto diagonal_row = matrix[row * count + row];
@@ -309,11 +349,26 @@ struct SpectralDiagnostic final {
             }
         }
     }
-    std::vector<double> result(count, 0.0);
+    JacobiEigenResult result{};
+    result.eigenvalues.resize(count, 0.0);
     for (std::size_t index = 0; index < count; ++index) {
-        result[index] = matrix[index * count + index];
+        result.eigenvalues[index] = matrix[index * count + index];
     }
-    std::ranges::sort(result);
+    double maximum_off_diagonal = 0.0;
+    double maximum_diagonal = 0.0;
+    for (std::size_t row = 0; row < count; ++row) {
+        maximum_diagonal = std::max(
+            maximum_diagonal, std::abs(matrix[row * count + row]));
+        for (std::size_t column = row + 1U; column < count; ++column) {
+            maximum_off_diagonal = std::max(
+                maximum_off_diagonal, std::abs(matrix[row * count + column]));
+        }
+    }
+    result.final_relative_off_diagonal = maximum_off_diagonal /
+        std::max(maximum_diagonal, std::numeric_limits<double>::min());
+    result.converged =
+        result.final_relative_off_diagonal <= 64.0 * std::numeric_limits<double>::epsilon();
+    std::ranges::sort(result.eigenvalues);
     return result;
 }
 
@@ -382,11 +437,16 @@ template <typename Apply>
             tridiagonal[(index + 1U) * count + index] = beta[index];
         }
     }
-    const auto eigenvalues = jacobi_eigenvalues(std::move(tridiagonal));
+    const auto eigen_result = jacobi_eigenvalues(std::move(tridiagonal), 128U);
     SpectralDiagnostic result{};
+    result.resolved = eigen_result.converged;
     result.rank = dimension;
-    result.smallest = eigenvalues.front();
-    result.largest = eigenvalues.back();
+    result.smallest = result.resolved
+        ? eigen_result.eigenvalues.front()
+        : std::numeric_limits<double>::quiet_NaN();
+    result.largest = result.resolved
+        ? eigen_result.eigenvalues.back()
+        : std::numeric_limits<double>::quiet_NaN();
     result.condition = result.smallest > 0.0
         ? result.largest / result.smallest
         : std::numeric_limits<double>::infinity();
@@ -425,7 +485,7 @@ struct PcgResult final {
     }
     std::vector<double> preconditioned(count, 0.0);
     for (std::size_t index = 0; index < count; ++index) {
-        preconditioned[index] = residual[index] / system.lumped_mass_kg[index];
+        preconditioned[index] = residual[index] / system.lumped_mass_kg()[index];
     }
     auto direction = preconditioned;
     auto residual_dot_preconditioned = scalar_dot(residual, preconditioned);
@@ -464,7 +524,7 @@ struct PcgResult final {
             return result;
         }
         for (std::size_t index = 0; index < count; ++index) {
-            preconditioned[index] = residual[index] / system.lumped_mass_kg[index];
+            preconditioned[index] = residual[index] / system.lumped_mass_kg()[index];
         }
         const auto next_dot = scalar_dot(residual, preconditioned);
         if (!(next_dot > 0.0) || !std::isfinite(next_dot)) {
@@ -482,10 +542,10 @@ struct PcgResult final {
 }
 
 [[nodiscard]] std::vector<Vec3d> lumped_velocity(const ProjectionSystem& system) {
-    std::vector<Vec3d> result(system.active_nodes.size());
+    std::vector<Vec3d> result(system.active_nodes().size());
     for (std::size_t index = 0; index < result.size(); ++index) {
-        result[index] = system.consistent_rhs_kg_m_per_s[index] /
-            system.lumped_mass_kg[index];
+        result[index] = system.consistent_rhs_kg_m_per_s()[index] /
+            system.lumped_mass_kg()[index];
         if (!finite(result[index])) {
             throw std::overflow_error("lumped projection produced a nonfinite velocity");
         }
@@ -509,7 +569,7 @@ struct PcgResult final {
     const ProjectionSystem& system, std::uint32_t order,
     double& residual_identity_normalized) {
     auto increment = lumped_velocity(system);
-    std::vector<Vec3d> result(system.active_nodes.size());
+    std::vector<Vec3d> result(system.active_nodes().size());
     for (std::uint32_t level = 1; level <= order; ++level) {
         for (std::size_t index = 0; index < result.size(); ++index) {
             result[index] += increment[index];
@@ -519,7 +579,7 @@ struct PcgResult final {
             std::vector<Vec3d> next(increment.size());
             for (std::size_t index = 0; index < next.size(); ++index) {
                 next[index] = increment[index] -
-                    mass_increment[index] / system.lumped_mass_kg[index];
+                    mass_increment[index] / system.lumped_mass_kg()[index];
             }
             increment = std::move(next);
         }
@@ -528,13 +588,35 @@ struct PcgResult final {
     std::vector<Vec3d> residual(result.size());
     std::vector<Vec3d> identity_difference(result.size());
     for (std::size_t index = 0; index < result.size(); ++index) {
-        residual[index] = system.consistent_rhs_kg_m_per_s[index] - mass_result[index];
+        residual[index] = system.consistent_rhs_kg_m_per_s()[index] - mass_result[index];
         identity_difference[index] = residual[index] -
-            system.lumped_mass_kg[index] * increment[index];
+            system.lumped_mass_kg()[index] * increment[index];
     }
     residual_identity_normalized = normalized_grid_norm(
-        identity_difference, system.consistent_rhs_kg_m_per_s);
+        identity_difference, system.consistent_rhs_kg_m_per_s());
     return result;
+}
+
+void record_consistent_system_residual(
+    const ProjectionSystem& system,
+    std::span<const Vec3d> grid_velocity,
+    ProjectionDiagnostics& diagnostics) {
+    const auto applied = apply_consistent_mass(system, grid_velocity);
+    for (std::size_t component = 0; component < 3U; ++component) {
+        std::vector<double> residual(applied.size(), 0.0);
+        std::vector<double> rhs(applied.size(), 0.0);
+        for (std::size_t index = 0; index < applied.size(); ++index) {
+            residual[index] = scalar_component(
+                applied[index] - system.consistent_rhs_kg_m_per_s()[index], component);
+            rhs[index] = scalar_component(
+                system.consistent_rhs_kg_m_per_s()[index], component);
+        }
+        diagnostics.solve_residual_applicable[component] = true;
+        diagnostics.absolute_solve_residual[component] = vector_norm(residual);
+        diagnostics.normalized_solve_residual[component] =
+            diagnostics.absolute_solve_residual[component] /
+            std::max(1.0, vector_norm(rhs));
+    }
 }
 
 [[nodiscard]] std::uint32_t fmpm_order(ProjectionCandidate candidate) {
@@ -667,6 +749,8 @@ std::string_view status_name(ProjectionStatus status) noexcept {
         return "iteration_limit";
     case ProjectionStatus::residual_failed:
         return "residual_failed";
+    case ProjectionStatus::numerical_overflow:
+        return "numerical_overflow";
     }
     return "unknown";
 }
@@ -676,15 +760,15 @@ ProjectionSystem build_projection_system(
     const TransferConfig& config) {
     validate_config(config);
     ProjectionSystem result{};
-    result.config = config;
-    result.particles = canonical_centers(particles);
-    result.assembly_diagnostics.particle_count = result.particles.size();
-    result.assembly_diagnostics.exact_mass_quanta_before = exact_mass(result.particles);
-    result.assembly_diagnostics.exact_mass_quanta_after =
-        result.assembly_diagnostics.exact_mass_quanta_before;
-    if (result.particles.empty()) {
-        result.assembly_diagnostics.numerical_rank_method = "empty";
-        result.assembly_diagnostics.termination_reason = "empty center state";
+    result.config_ = config;
+    result.particles_ = canonical_centers(particles);
+    result.assembly_diagnostics_.particle_count = result.particles_.size();
+    result.assembly_diagnostics_.exact_mass_quanta_before = exact_mass(result.particles_);
+    result.assembly_diagnostics_.exact_mass_quanta_after =
+        result.assembly_diagnostics_.exact_mass_quanta_before;
+    if (result.particles_.empty()) {
+        result.assembly_diagnostics_.numerical_rank_method = "empty";
+        result.assembly_diagnostics_.termination_reason = "empty center state";
         return result;
     }
 
@@ -694,9 +778,9 @@ ProjectionSystem build_projection_system(
         Vec3d node_position_m{};
     };
     std::vector<std::vector<LocalEntry>> local_stencils;
-    local_stencils.reserve(result.particles.size());
+    local_stencils.reserve(result.particles_.size());
     std::map<GridIndex, Vec3d> ordered_nodes;
-    for (const auto& particle : result.particles) {
+    for (const auto& particle : result.particles_) {
         std::vector<LocalEntry> local;
         for (const auto& sample : quadratic_bspline_samples(particle.position_m, config)) {
             if (!std::isfinite(sample.weight) || sample.weight < 0.0) {
@@ -715,31 +799,31 @@ ProjectionSystem build_projection_system(
         if (local.empty()) {
             throw std::runtime_error("projection center has empty basis support");
         }
-        result.assembly_diagnostics.shape_entry_count += local.size();
+        result.assembly_diagnostics_.shape_entry_count += local.size();
         local_stencils.push_back(std::move(local));
     }
     std::map<GridIndex, std::size_t> node_lookup;
     for (const auto& [index, position] : ordered_nodes) {
-        node_lookup.emplace(index, result.active_nodes.size());
-        result.active_nodes.push_back(index);
-        result.active_node_positions_m.push_back(position);
+        node_lookup.emplace(index, result.active_nodes_.size());
+        result.active_nodes_.push_back(index);
+        result.active_node_positions_m_.push_back(position);
     }
-    const auto node_count = result.active_nodes.size();
-    result.assembly_diagnostics.active_node_count = node_count;
-    result.assembly_diagnostics.structural_rank_upper_bound =
-        std::min(result.particles.size(), node_count);
-    result.assembly_diagnostics.node_order_digest = node_digest(result.active_nodes);
-    result.lumped_mass_kg.assign(node_count, 0.0);
-    result.consistent_mass_rows.resize(node_count);
-    result.consistent_rhs_kg_m_per_s.assign(node_count, {});
-    result.particle_stencils.reserve(result.particles.size());
-    result.particle_mass_kg.reserve(result.particles.size());
+    const auto node_count = result.active_nodes_.size();
+    result.assembly_diagnostics_.active_node_count = node_count;
+    result.assembly_diagnostics_.structural_rank_upper_bound =
+        std::min(result.particles_.size(), node_count);
+    result.assembly_diagnostics_.node_order_digest = node_digest(result.active_nodes_);
+    result.lumped_mass_kg_.assign(node_count, 0.0);
+    result.consistent_mass_rows_.resize(node_count);
+    result.consistent_rhs_kg_m_per_s_.assign(node_count, {});
+    result.particle_stencils_.reserve(result.particles_.size());
+    result.particle_mass_kg_.reserve(result.particles_.size());
 
     for (std::size_t particle_index = 0;
-         particle_index < result.particles.size(); ++particle_index) {
-        const auto& particle = result.particles[particle_index];
+         particle_index < result.particles_.size(); ++particle_index) {
+        const auto& particle = result.particles_[particle_index];
         const auto mass = particle_mass_kg(particle, config);
-        result.particle_mass_kg.push_back(mass);
+        result.particle_mass_kg_.push_back(mass);
         std::vector<ProjectionStencilEntry> stencil;
         stencil.reserve(local_stencils[particle_index].size());
         long double partition_sum = 0.0L;
@@ -754,18 +838,18 @@ ProjectionSystem build_projection_system(
             partition_sum += local.weight;
             reproduced += local.weight * local.node_position_m;
             const auto weighted_mass = mass * local.weight;
-            result.lumped_mass_kg[node] += weighted_mass;
-            result.consistent_rhs_kg_m_per_s[node] +=
+            result.lumped_mass_kg_[node] += weighted_mass;
+            result.consistent_rhs_kg_m_per_s_[node] +=
                 weighted_mass * particle.velocity_m_per_s;
         }
-        result.assembly_diagnostics.partition_unity_max_residual = std::max(
-            result.assembly_diagnostics.partition_unity_max_residual,
+        result.assembly_diagnostics_.partition_unity_max_residual = std::max(
+            result.assembly_diagnostics_.partition_unity_max_residual,
             std::abs(static_cast<double>(partition_sum - 1.0L)));
-        result.assembly_diagnostics.linear_reproduction_max_residual_m = std::max(
-            result.assembly_diagnostics.linear_reproduction_max_residual_m,
+        result.assembly_diagnostics_.linear_reproduction_max_residual_m = std::max(
+            result.assembly_diagnostics_.linear_reproduction_max_residual_m,
             norm(reproduced - particle.position_m));
         for (const auto& row_entry : stencil) {
-            auto& row = result.consistent_mass_rows[row_entry.node_index];
+            auto& row = result.consistent_mass_rows_[row_entry.node_index];
             for (const auto& column_entry : stencil) {
                 auto& coefficient = row[column_entry.node_index];
                 coefficient += mass * row_entry.weight * column_entry.weight;
@@ -774,7 +858,7 @@ ProjectionSystem build_projection_system(
                 }
             }
         }
-        result.particle_stencils.push_back(std::move(stencil));
+        result.particle_stencils_.push_back(std::move(stencil));
     }
 
     long double grid_mass = 0.0L;
@@ -783,20 +867,20 @@ ProjectionSystem build_projection_system(
     double maximum_symmetry_difference = 0.0;
     double maximum_row_sum_difference = 0.0;
     for (std::size_t row = 0; row < node_count; ++row) {
-        if (!(result.lumped_mass_kg[row] > 0.0) ||
-            !std::isfinite(result.lumped_mass_kg[row])) {
+        if (!(result.lumped_mass_kg_[row] > 0.0) ||
+            !std::isfinite(result.lumped_mass_kg_[row])) {
             throw std::runtime_error("projection active node has invalid lumped mass");
         }
-        grid_mass += result.lumped_mass_kg[row];
+        grid_mass += result.lumped_mass_kg_[row];
         long double row_sum = 0.0L;
-        for (const auto& [column, coefficient] : result.consistent_mass_rows[row]) {
+        for (const auto& [column, coefficient] : result.consistent_mass_rows_[row]) {
             if (coefficient != 0.0) {
-                ++result.assembly_diagnostics.matrix_nonzero_count;
+                ++result.assembly_diagnostics_.matrix_nonzero_count;
             }
             maximum_matrix_entry = std::max(maximum_matrix_entry, std::abs(coefficient));
             row_sum += coefficient;
-            const auto opposite = result.consistent_mass_rows[column].find(row);
-            if (opposite == result.consistent_mass_rows[column].end()) {
+            const auto opposite = result.consistent_mass_rows_[column].find(row);
+            if (opposite == result.consistent_mass_rows_[column].end()) {
                 maximum_symmetry_difference = std::numeric_limits<double>::infinity();
             } else {
                 maximum_symmetry_difference = std::max(
@@ -806,32 +890,32 @@ ProjectionSystem build_projection_system(
         }
         maximum_row_sum_difference = std::max(
             maximum_row_sum_difference,
-            std::abs(static_cast<double>(row_sum) - result.lumped_mass_kg[row]));
+            std::abs(static_cast<double>(row_sum) - result.lumped_mass_kg_[row]));
     }
-    for (const auto mass : result.particle_mass_kg) {
+    for (const auto mass : result.particle_mass_kg_) {
         particle_mass += mass;
     }
-    result.assembly_diagnostics.matrix_symmetry_relative_residual =
+    result.assembly_diagnostics_.matrix_symmetry_relative_residual =
         maximum_symmetry_difference / std::max(1.0, maximum_matrix_entry);
-    result.assembly_diagnostics.row_sum_relative_residual =
+    result.assembly_diagnostics_.row_sum_relative_residual =
         maximum_row_sum_difference /
-        std::max(1.0, *std::ranges::max_element(result.lumped_mass_kg));
-    result.assembly_diagnostics.grid_mass_relative_error = symmetric_relative(
+        std::max(1.0, *std::ranges::max_element(result.lumped_mass_kg_));
+    result.assembly_diagnostics_.grid_mass_relative_error = symmetric_relative(
         static_cast<double>(grid_mass), static_cast<double>(particle_mass));
-    result.assembly_diagnostics.termination_reason = "assembled";
+    result.assembly_diagnostics_.termination_reason = "assembled";
     return result;
 }
 
 std::vector<Vec3d> apply_consistent_mass(
     const ProjectionSystem& system,
     std::span<const Vec3d> grid_values) {
-    if (grid_values.size() != system.active_nodes.size()) {
+    if (grid_values.size() != system.active_nodes().size()) {
         throw std::invalid_argument("consistent mass vector has the wrong dimension");
     }
     std::vector<Vec3d> result(grid_values.size());
-    for (std::size_t row = 0; row < system.consistent_mass_rows.size(); ++row) {
+    for (std::size_t row = 0; row < system.consistent_mass_rows().size(); ++row) {
         Vec3d value{};
-        for (const auto& [column, coefficient] : system.consistent_mass_rows[row]) {
+        for (const auto& [column, coefficient] : system.consistent_mass_rows()[row]) {
             value += coefficient * grid_values[column];
         }
         if (!finite(value)) {
@@ -845,13 +929,13 @@ std::vector<Vec3d> apply_consistent_mass(
 std::vector<CenterParticle> reconstruct_centers(
     const ProjectionSystem& system,
     std::span<const Vec3d> grid_velocity_m_per_s) {
-    if (grid_velocity_m_per_s.size() != system.active_nodes.size()) {
+    if (grid_velocity_m_per_s.size() != system.active_nodes().size()) {
         throw std::invalid_argument("grid reconstruction vector has the wrong dimension");
     }
-    std::vector<CenterParticle> result = system.particles;
+    std::vector<CenterParticle> result = system.particles();
     for (std::size_t particle = 0; particle < result.size(); ++particle) {
         Vec3d velocity{};
-        for (const auto& entry : system.particle_stencils[particle]) {
+        for (const auto& entry : system.particle_stencils()[particle]) {
             if (!finite(grid_velocity_m_per_s[entry.node_index])) {
                 throw std::invalid_argument("grid reconstruction input must be finite");
             }
@@ -874,6 +958,7 @@ ProjectionResult project_centers(
         !(policy.preconditioned_condition_max > 0.0) ||
         !(policy.normalized_residual_max > 0.0) ||
         policy.lanczos_max_steps == 0U ||
+        policy.dense_jacobi_max_sweeps == 0U ||
         !std::isfinite(policy.dense_relative_pivot_min) ||
         !std::isfinite(policy.raw_condition_max) ||
         !std::isfinite(policy.preconditioned_condition_max) ||
@@ -882,14 +967,17 @@ ProjectionResult project_centers(
     }
     ProjectionResult result{};
     result.candidate = candidate;
-    result.diagnostics = system.assembly_diagnostics;
-    result.particles = system.particles;
-    result.center_kinetic_before_j = center_kinetic(system.particles, system.config);
-    if (system.particles.empty()) {
+    result.diagnostics = system.assembly_diagnostics();
+    result.particles = system.particles();
+    if (system.particles().empty()) {
         result.status = ProjectionStatus::empty;
         result.diagnostics.termination_reason = "empty center state";
         return result;
     }
+
+    try {
+    result.center_kinetic_before_j = center_kinetic(system.particles(), system.config());
+    result.center_kinetic_before_applicable = true;
 
     if (candidate == ProjectionCandidate::lumped_pic) {
         result.grid_velocity_m_per_s = lumped_velocity(system);
@@ -898,15 +986,18 @@ ProjectionResult project_centers(
     } else if (candidate != ProjectionCandidate::full_consistent) {
         result.grid_velocity_m_per_s = fmpm_velocity(
             system, fmpm_order(candidate), result.fmpm_residual_identity_normalized);
+        result.fmpm_residual_identity_applicable = true;
         result.status = ProjectionStatus::solved;
         result.diagnostics.termination_reason = "revised 2026 FMPM recurrence";
     } else {
-        const auto node_count = system.active_nodes.size();
+        const auto node_count = system.active_nodes().size();
         if (result.diagnostics.structural_rank_upper_bound < node_count) {
             result.status = ProjectionStatus::structurally_rank_deficient;
             result.diagnostics.numerical_rank_estimate =
                 result.diagnostics.structural_rank_upper_bound;
             result.diagnostics.numerical_rank_method = "rank(M)<=min(P,n)";
+            result.diagnostics.rank_certified = true;
+            result.diagnostics.numerical_rank_is_estimated = false;
             result.diagnostics.termination_reason =
                 "active nodes exceed the particle rank upper bound";
             return result;
@@ -916,9 +1007,15 @@ ProjectionResult project_centers(
         SpectralDiagnostic preconditioned{};
         if (node_count <= policy.dense_diagnostic_max_nodes) {
             raw = dense_cholesky_diagnostic(
-                system, false, policy.dense_relative_pivot_min);
+                system,
+                false,
+                policy.dense_relative_pivot_min,
+                policy.dense_jacobi_max_sweeps);
             preconditioned = dense_cholesky_diagnostic(
-                system, true, policy.dense_relative_pivot_min);
+                system,
+                true,
+                policy.dense_relative_pivot_min,
+                policy.dense_jacobi_max_sweeps);
         } else {
             raw = lanczos_diagnostic(
                 node_count,
@@ -934,35 +1031,49 @@ ProjectionResult project_centers(
                     std::vector<double> scaled(values.size());
                     for (std::size_t index = 0; index < values.size(); ++index) {
                         scaled[index] = values[index] /
-                            std::sqrt(system.lumped_mass_kg[index]);
+                            std::sqrt(system.lumped_mass_kg()[index]);
                     }
                     auto applied = apply_scalar_mass(system, scaled);
                     for (std::size_t index = 0; index < values.size(); ++index) {
-                        applied[index] /= std::sqrt(system.lumped_mass_kg[index]);
+                        applied[index] /= std::sqrt(system.lumped_mass_kg()[index]);
                     }
                     return applied;
                 },
                 "deterministic Lanczos Ritz estimate of D^-1/2 M D^-1/2");
         }
-        result.diagnostics.numerical_rank_estimate =
-            std::min(raw.rank, preconditioned.rank);
+        const auto rank_is_estimated = raw.estimated || preconditioned.estimated;
+        result.diagnostics.numerical_rank_estimate = rank_is_estimated
+            ? 0U
+            : std::min(raw.rank, preconditioned.rank);
         result.diagnostics.numerical_rank_method = raw.method + "; " + preconditioned.method;
-        result.diagnostics.numerical_rank_is_estimated = raw.estimated || preconditioned.estimated;
+        result.diagnostics.numerical_rank_is_estimated = rank_is_estimated;
+        result.diagnostics.rank_certified = !rank_is_estimated;
+        result.diagnostics.condition_estimated = true;
         result.diagnostics.smallest_spectral_or_pivot_value = raw.smallest;
         result.diagnostics.largest_spectral_or_pivot_value = raw.largest;
         result.diagnostics.raw_condition_estimate = raw.condition;
         result.diagnostics.preconditioned_condition_estimate = preconditioned.condition;
-        if (raw.rank < node_count || preconditioned.rank < node_count ||
-            !(raw.smallest > 0.0) || !(preconditioned.smallest > 0.0)) {
+        if (!raw.resolved || !preconditioned.resolved) {
+            result.status = ProjectionStatus::breakdown;
+            result.diagnostics.termination_reason =
+                "symmetric eigen/condition diagnostic did not converge; rank and condition unresolved";
+            return result;
+        }
+        if (!rank_is_estimated &&
+            (raw.rank < node_count || preconditioned.rank < node_count ||
+             !(raw.smallest > 0.0) || !(preconditioned.smallest > 0.0))) {
             result.status = ProjectionStatus::numerically_rank_deficient;
             result.diagnostics.termination_reason = "rank diagnostic failed";
             return result;
         }
-        if (!std::isfinite(raw.condition) || !std::isfinite(preconditioned.condition) ||
+        if (!(raw.smallest > 0.0) || !(preconditioned.smallest > 0.0) ||
+            !std::isfinite(raw.condition) || !std::isfinite(preconditioned.condition) ||
             raw.condition > policy.raw_condition_max ||
             preconditioned.condition > policy.preconditioned_condition_max) {
             result.status = ProjectionStatus::ill_conditioned;
-            result.diagnostics.termination_reason = "condition threshold exceeded";
+            result.diagnostics.termination_reason = rank_is_estimated
+                ? "estimated Ritz condition evidence failed or exceeded threshold; rank unknown"
+                : "condition threshold exceeded";
             return result;
         }
 
@@ -974,11 +1085,12 @@ ProjectionResult project_centers(
             std::vector<double> rhs(node_count, 0.0);
             for (std::size_t index = 0; index < node_count; ++index) {
                 rhs[index] = scalar_component(
-                    system.consistent_rhs_kg_m_per_s[index], component);
+                    system.consistent_rhs_kg_m_per_s()[index], component);
             }
             const auto solved = solve_pcg(
                 system, rhs, iteration_limit, policy.normalized_residual_max);
             result.diagnostics.component_iterations[component] = solved.iterations;
+            result.diagnostics.solve_residual_applicable[component] = true;
             result.diagnostics.absolute_solve_residual[component] = solved.absolute_residual;
             result.diagnostics.normalized_solve_residual[component] =
                 solved.normalized_residual;
@@ -996,22 +1108,15 @@ ProjectionResult project_centers(
                     result.grid_velocity_m_per_s[index], component, solved.solution[index]);
             }
         }
-        const auto applied = apply_consistent_mass(system, result.grid_velocity_m_per_s);
-        for (std::size_t component = 0; component < 3U; ++component) {
-            std::vector<double> residual(node_count, 0.0);
-            std::vector<double> rhs(node_count, 0.0);
-            for (std::size_t index = 0; index < node_count; ++index) {
-                residual[index] = scalar_component(
-                    applied[index] - system.consistent_rhs_kg_m_per_s[index], component);
-                rhs[index] = scalar_component(
-                    system.consistent_rhs_kg_m_per_s[index], component);
-            }
-            result.diagnostics.absolute_solve_residual[component] = vector_norm(residual);
-            result.diagnostics.normalized_solve_residual[component] =
-                result.diagnostics.absolute_solve_residual[component] /
-                std::max(1.0, vector_norm(rhs));
-            if (!(result.diagnostics.normalized_solve_residual[component] <=
-                  policy.normalized_residual_max)) {
+        result.status = ProjectionStatus::solved;
+        result.diagnostics.termination_reason = "unregularized PCG solved";
+    }
+
+    record_consistent_system_residual(
+        system, result.grid_velocity_m_per_s, result.diagnostics);
+    if (candidate == ProjectionCandidate::full_consistent) {
+        for (const auto residual : result.diagnostics.normalized_solve_residual) {
+            if (!(residual <= policy.normalized_residual_max)) {
                 result.status = ProjectionStatus::residual_failed;
                 result.grid_velocity_m_per_s.clear();
                 result.diagnostics.termination_reason =
@@ -1019,23 +1124,55 @@ ProjectionResult project_centers(
                 return result;
             }
         }
-        result.status = ProjectionStatus::solved;
-        result.diagnostics.termination_reason = "unregularized PCG solved";
     }
-
     result.particles = reconstruct_centers(system, result.grid_velocity_m_per_s);
     result.diagnostics.exact_mass_quanta_after = exact_mass(result.particles);
-    result.center_kinetic_after_j = center_kinetic(result.particles, system.config);
-    const auto mass_velocity = apply_consistent_mass(system, result.grid_velocity_m_per_s);
+    result.center_kinetic_after_j = center_kinetic(result.particles, system.config());
+    result.center_kinetic_after_applicable = true;
     long double grid_energy = 0.0L;
     for (std::size_t index = 0; index < result.grid_velocity_m_per_s.size(); ++index) {
         grid_energy += 0.5L * static_cast<long double>(
-            dot(result.grid_velocity_m_per_s[index], mass_velocity[index]));
+            dot(result.grid_velocity_m_per_s[index],
+                system.consistent_rhs_kg_m_per_s()[index]));
     }
     result.consistent_grid_quadratic_energy_j = static_cast<double>(grid_energy);
+    if (!std::isfinite(result.consistent_grid_quadratic_energy_j)) {
+        throw std::overflow_error("consistent grid energy diagnostic overflow");
+    }
+    result.consistent_grid_quadratic_energy_applicable = true;
     result.numerical_projection_energy_residual_j =
         result.center_kinetic_after_j - result.center_kinetic_before_j;
+    if (!std::isfinite(result.numerical_projection_energy_residual_j)) {
+        throw std::overflow_error("projection energy residual overflow");
+    }
+    result.numerical_projection_energy_residual_applicable = true;
     return result;
+    } catch (const std::overflow_error& error) {
+        result.status = ProjectionStatus::numerical_overflow;
+        result.particles = system.particles();
+        result.grid_velocity_m_per_s.clear();
+        result.diagnostics.exact_mass_quanta_after =
+            result.diagnostics.exact_mass_quanta_before;
+        result.diagnostics.solve_residual_applicable = {};
+        result.diagnostics.absolute_solve_residual.fill(
+            std::numeric_limits<double>::quiet_NaN());
+        result.diagnostics.normalized_solve_residual.fill(
+            std::numeric_limits<double>::quiet_NaN());
+        result.diagnostics.termination_reason =
+            std::string("numerical overflow: ") + error.what();
+        result.center_kinetic_before_applicable = false;
+        result.center_kinetic_after_applicable = false;
+        result.consistent_grid_quadratic_energy_applicable = false;
+        result.consistent_grid_quadratic_energy_j =
+            std::numeric_limits<double>::quiet_NaN();
+        result.numerical_projection_energy_residual_applicable = false;
+        result.numerical_projection_energy_residual_j =
+            std::numeric_limits<double>::quiet_NaN();
+        result.fmpm_residual_identity_applicable = false;
+        result.fmpm_residual_identity_normalized =
+            std::numeric_limits<double>::quiet_NaN();
+        return result;
+    }
 }
 
 ProjectionResult project_centers(
@@ -1043,7 +1180,30 @@ ProjectionResult project_centers(
     const TransferConfig& config,
     ProjectionCandidate candidate,
     const ProjectionSolvePolicy& policy) {
-    return project_centers(build_projection_system(particles, config), candidate, policy);
+    validate_config(config);
+    // Validate exact input contracts before classifying any later binary64
+    // failure as a numerical-overflow result.
+    const auto canonical = canonical_centers(particles);
+    const auto total_mass = exact_mass(canonical);
+    try {
+        auto result = project_centers(
+            build_projection_system(canonical, config), candidate, policy);
+        if (!successful(result.status)) {
+            result.particles.assign(particles.begin(), particles.end());
+        }
+        return result;
+    } catch (const std::overflow_error& error) {
+        ProjectionResult result{};
+        result.candidate = candidate;
+        result.status = ProjectionStatus::numerical_overflow;
+        result.particles.assign(particles.begin(), particles.end());
+        result.diagnostics.particle_count = particles.size();
+        result.diagnostics.exact_mass_quanta_before = total_mass;
+        result.diagnostics.exact_mass_quanta_after = total_mass;
+        result.diagnostics.termination_reason =
+            std::string("numerical overflow while assembling projection: ") + error.what();
+        return result;
+    }
 }
 
 ProjectionStep trapezoid_projection_step(
@@ -1068,25 +1228,37 @@ ProjectionStep trapezoid_projection_step(
     }
     ProjectionStep result{};
     result.state = state;
-    result.state.particles = canonical_centers(state.particles);
-    const auto system = build_projection_system(result.state.particles, state.config);
-    result.projection = project_centers(system, candidate, policy);
+    result.projection = project_centers(
+        state.particles, state.config, candidate, policy);
     if (!successful(result.projection.status)) {
         return result;
     }
+    const auto canonical_before = canonical_centers(state.particles);
     if (timestep_quanta >
         std::numeric_limits<std::uint64_t>::max() - state.elapsed_time_quanta) {
-        throw std::overflow_error("exact projection clock overflow");
+        result.projection.status = ProjectionStatus::numerical_overflow;
+        result.projection.particles.assign(state.particles.begin(), state.particles.end());
+        result.projection.grid_velocity_m_per_s.clear();
+        result.projection.diagnostics.termination_reason =
+            "numerical overflow: exact projection clock overflow";
+        return result;
     }
+    result.state.particles = result.projection.particles;
     for (std::size_t index = 0; index < result.state.particles.size(); ++index) {
         const auto displacement = 0.5 * timestep_s *
-            (result.state.particles[index].velocity_m_per_s +
+            (canonical_before[index].velocity_m_per_s +
              result.projection.particles[index].velocity_m_per_s);
         result.state.particles[index].position_m += displacement;
         result.state.particles[index].velocity_m_per_s =
             result.projection.particles[index].velocity_m_per_s;
         if (!finite(result.state.particles[index].position_m)) {
-            throw std::overflow_error("projection trapezoid position overflow");
+            result.state = state;
+            result.projection.status = ProjectionStatus::numerical_overflow;
+            result.projection.particles.assign(state.particles.begin(), state.particles.end());
+            result.projection.grid_velocity_m_per_s.clear();
+            result.projection.diagnostics.termination_reason =
+                "numerical overflow: projection trapezoid position overflow";
+            return result;
         }
     }
     result.state.elapsed_time_quanta += timestep_quanta;

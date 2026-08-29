@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -47,6 +48,7 @@ enum class ProjectionStatus : std::uint8_t {
     breakdown,
     iteration_limit,
     residual_failed,
+    numerical_overflow,
 };
 
 [[nodiscard]] std::string_view status_name(ProjectionStatus status) noexcept;
@@ -57,6 +59,7 @@ struct ProjectionSolvePolicy final {
     double preconditioned_condition_max{1.0e8};
     double normalized_residual_max{5.0e-12};
     std::size_t dense_diagnostic_max_nodes{128};
+    std::size_t dense_jacobi_max_sweeps{128};
     std::size_t lanczos_max_steps{64};
     // Zero selects min(4*n, 10000), the frozen laboratory policy.
     std::size_t iteration_limit_override{0};
@@ -74,6 +77,14 @@ struct ProjectionDiagnostics final {
     std::size_t numerical_rank_estimate{0};
     std::string numerical_rank_method{};
     bool numerical_rank_is_estimated{false};
+    // True for a structural rank-bound finding or when the configured dense
+    // diagnostic examined the complete matrix under the frozen floating
+    // threshold. The latter is not a mathematical proof; a truncated
+    // Lanczos/Ritz run always leaves rank unknown.
+    bool rank_certified{false};
+    // Floating spectral condition values are estimates, never proofs. False
+    // also denotes a pre-solve row for which no condition diagnostic exists.
+    bool condition_estimated{false};
     double smallest_spectral_or_pivot_value{0.0};
     double largest_spectral_or_pivot_value{0.0};
     double raw_condition_estimate{0.0};
@@ -83,8 +94,15 @@ struct ProjectionDiagnostics final {
     double partition_unity_max_residual{0.0};
     double linear_reproduction_max_residual_m{0.0};
     double grid_mass_relative_error{0.0};
-    std::array<double, 3> absolute_solve_residual{};
-    std::array<double, 3> normalized_solve_residual{};
+    std::array<bool, 3> solve_residual_applicable{};
+    std::array<double, 3> absolute_solve_residual{
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN()};
+    std::array<double, 3> normalized_solve_residual{
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN()};
     std::array<std::size_t, 3> component_iterations{};
     std::string termination_reason{};
 };
@@ -99,17 +117,55 @@ struct ProjectionStencilEntry final {
 
 // Deterministically rebuilt transient workspace. It is deliberately exposed
 // for independent numerical inspection, but never checkpointed.
-struct ProjectionSystem final {
-    TransferConfig config{};
-    std::vector<CenterParticle> particles{};
-    std::vector<GridIndex> active_nodes{};
-    std::vector<Vec3d> active_node_positions_m{};
-    std::vector<std::vector<ProjectionStencilEntry>> particle_stencils{};
-    std::vector<double> particle_mass_kg{};
-    std::vector<double> lumped_mass_kg{};
-    std::vector<std::map<std::size_t, double>> consistent_mass_rows{};
-    std::vector<Vec3d> consistent_rhs_kg_m_per_s{};
-    ProjectionDiagnostics assembly_diagnostics{};
+class ProjectionSystem final {
+public:
+    [[nodiscard]] const TransferConfig& config() const noexcept { return config_; }
+    [[nodiscard]] const std::vector<CenterParticle>& particles() const noexcept {
+        return particles_;
+    }
+    [[nodiscard]] const std::vector<GridIndex>& active_nodes() const noexcept {
+        return active_nodes_;
+    }
+    [[nodiscard]] const std::vector<Vec3d>& active_node_positions_m() const noexcept {
+        return active_node_positions_m_;
+    }
+    [[nodiscard]] const std::vector<std::vector<ProjectionStencilEntry>>&
+    particle_stencils() const noexcept {
+        return particle_stencils_;
+    }
+    [[nodiscard]] const std::vector<double>& particle_mass_kg() const noexcept {
+        return particle_mass_kg_;
+    }
+    [[nodiscard]] const std::vector<double>& lumped_mass_kg() const noexcept {
+        return lumped_mass_kg_;
+    }
+    [[nodiscard]] const std::vector<std::map<std::size_t, double>>&
+    consistent_mass_rows() const noexcept {
+        return consistent_mass_rows_;
+    }
+    [[nodiscard]] const std::vector<Vec3d>& consistent_rhs_kg_m_per_s() const noexcept {
+        return consistent_rhs_kg_m_per_s_;
+    }
+    [[nodiscard]] const ProjectionDiagnostics& assembly_diagnostics() const noexcept {
+        return assembly_diagnostics_;
+    }
+
+private:
+    ProjectionSystem() = default;
+
+    TransferConfig config_{};
+    std::vector<CenterParticle> particles_{};
+    std::vector<GridIndex> active_nodes_{};
+    std::vector<Vec3d> active_node_positions_m_{};
+    std::vector<std::vector<ProjectionStencilEntry>> particle_stencils_{};
+    std::vector<double> particle_mass_kg_{};
+    std::vector<double> lumped_mass_kg_{};
+    std::vector<std::map<std::size_t, double>> consistent_mass_rows_{};
+    std::vector<Vec3d> consistent_rhs_kg_m_per_s_{};
+    ProjectionDiagnostics assembly_diagnostics_{};
+
+    friend ProjectionSystem build_projection_system(
+        std::span<const CenterParticle>, const TransferConfig&);
 };
 
 [[nodiscard]] ProjectionSystem build_projection_system(
@@ -134,9 +190,17 @@ struct ProjectionResult final {
     // channels and no transition converts them into physical energy.
     double center_kinetic_before_j{0.0};
     double center_kinetic_after_j{0.0};
-    double consistent_grid_quadratic_energy_j{0.0};
-    double numerical_projection_energy_residual_j{0.0};
-    double fmpm_residual_identity_normalized{0.0};
+    bool center_kinetic_before_applicable{false};
+    bool center_kinetic_after_applicable{false};
+    bool consistent_grid_quadratic_energy_applicable{false};
+    double consistent_grid_quadratic_energy_j{
+        std::numeric_limits<double>::quiet_NaN()};
+    bool numerical_projection_energy_residual_applicable{false};
+    double numerical_projection_energy_residual_j{
+        std::numeric_limits<double>::quiet_NaN()};
+    bool fmpm_residual_identity_applicable{false};
+    double fmpm_residual_identity_normalized{
+        std::numeric_limits<double>::quiet_NaN()};
 };
 
 [[nodiscard]] ProjectionResult project_centers(

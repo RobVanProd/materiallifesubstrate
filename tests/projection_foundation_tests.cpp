@@ -12,6 +12,8 @@
 #include <iostream>
 #include <span>
 #include <stdexcept>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -42,6 +44,13 @@ static_assert(std::same_as<decltype(CenterParticle::id), std::uint64_t>);
 static_assert(std::same_as<decltype(CenterParticle::mass_quanta), std::int64_t>);
 static_assert(std::same_as<decltype(CenterParticle::position_m), Vec3d>);
 static_assert(std::same_as<decltype(CenterParticle::velocity_m_per_s), Vec3d>);
+static_assert(!std::default_initializable<projection::ProjectionSystem>);
+static_assert(std::same_as<
+    decltype(std::declval<const projection::ProjectionSystem&>().active_nodes()),
+    const std::vector<mls::experimental::GridIndex>&>);
+static_assert(std::same_as<
+    decltype(std::declval<const projection::ProjectionSystem&>().consistent_mass_rows()),
+    const std::vector<std::map<std::size_t, double>>&>);
 
 [[nodiscard]] bool close(double actual, double expected, double tolerance = 2.0e-11) {
     return std::abs(actual - expected) <=
@@ -117,10 +126,10 @@ static_assert(std::same_as<decltype(CenterParticle::velocity_m_per_s), Vec3d>);
 
 [[nodiscard]] std::vector<Vec3d> dense_solve(
     const projection::ProjectionSystem& system) {
-    const auto count = system.active_nodes.size();
+    const auto count = system.active_nodes().size();
     std::vector<double> matrix(count * count, 0.0);
     for (std::size_t row = 0; row < count; ++row) {
-        for (const auto& [column, coefficient] : system.consistent_mass_rows[row]) {
+        for (const auto& [column, coefficient] : system.consistent_mass_rows()[row]) {
             matrix[row * count + column] = coefficient;
         }
     }
@@ -129,9 +138,9 @@ static_assert(std::same_as<decltype(CenterParticle::velocity_m_per_s), Vec3d>);
         component.resize(count);
     }
     for (std::size_t index = 0; index < count; ++index) {
-        rhs[0][index] = system.consistent_rhs_kg_m_per_s[index].x;
-        rhs[1][index] = system.consistent_rhs_kg_m_per_s[index].y;
-        rhs[2][index] = system.consistent_rhs_kg_m_per_s[index].z;
+        rhs[0][index] = system.consistent_rhs_kg_m_per_s()[index].x;
+        rhs[1][index] = system.consistent_rhs_kg_m_per_s()[index].y;
+        rhs[2][index] = system.consistent_rhs_kg_m_per_s()[index].z;
     }
     for (std::size_t pivot = 0; pivot < count; ++pivot) {
         auto selected = pivot;
@@ -185,6 +194,60 @@ static_assert(std::same_as<decltype(CenterParticle::velocity_m_per_s), Vec3d>);
         }
     }
     return result;
+}
+
+[[nodiscard]] double raw_cholesky_pivot_spread(
+    const projection::ProjectionSystem& system) {
+    const auto count = system.active_nodes().size();
+    std::vector<double> factor(count * count, 0.0);
+    for (std::size_t row = 0; row < count; ++row) {
+        for (const auto& [column, coefficient] : system.consistent_mass_rows()[row]) {
+            factor[row * count + column] = coefficient;
+        }
+    }
+    auto smallest = std::numeric_limits<double>::infinity();
+    auto largest = 0.0;
+    for (std::size_t row = 0; row < count; ++row) {
+        for (std::size_t column = 0; column <= row; ++column) {
+            long double value = factor[row * count + column];
+            for (std::size_t inner = 0; inner < column; ++inner) {
+                value -= static_cast<long double>(factor[row * count + inner]) *
+                    static_cast<long double>(factor[column * count + inner]);
+            }
+            if (row == column) {
+                const auto pivot = static_cast<double>(value);
+                MLS_REQUIRE(pivot > 0.0);
+                smallest = std::min(smallest, pivot);
+                largest = std::max(largest, pivot);
+                factor[row * count + column] = std::sqrt(pivot);
+            } else {
+                factor[row * count + column] =
+                    static_cast<double>(value) / factor[column * count + column];
+            }
+        }
+    }
+    return largest / smallest;
+}
+
+[[nodiscard]] std::array<double, 3> independently_computed_residuals(
+    const projection::ProjectionSystem& system,
+    std::span<const Vec3d> grid_velocity) {
+    std::array<long double, 3> squared{};
+    for (std::size_t row = 0; row < system.active_nodes().size(); ++row) {
+        Vec3d applied{};
+        for (const auto& [column, coefficient] : system.consistent_mass_rows()[row]) {
+            applied += coefficient * grid_velocity[column];
+        }
+        const auto residual = applied - system.consistent_rhs_kg_m_per_s()[row];
+        squared[0] += static_cast<long double>(residual.x) * residual.x;
+        squared[1] += static_cast<long double>(residual.y) * residual.y;
+        squared[2] += static_cast<long double>(residual.z) * residual.z;
+    }
+    return {
+        std::sqrt(static_cast<double>(squared[0])),
+        std::sqrt(static_cast<double>(squared[1])),
+        std::sqrt(static_cast<double>(squared[2])),
+    };
 }
 
 [[nodiscard]] std::uint64_t fnv1a(std::span<const std::uint8_t> bytes) noexcept {
@@ -246,19 +309,22 @@ MLS_TEST("projection assembly is canonical under input permutation") {
     const auto forward = projection::build_projection_system(particles, config);
     std::ranges::reverse(particles);
     const auto reverse = projection::build_projection_system(particles, config);
-    MLS_REQUIRE_EQ(forward.particles, reverse.particles);
-    MLS_REQUIRE_EQ(forward.active_nodes, reverse.active_nodes);
-    MLS_REQUIRE_EQ(forward.particle_stencils, reverse.particle_stencils);
-    MLS_REQUIRE_EQ(forward.lumped_mass_kg, reverse.lumped_mass_kg);
-    MLS_REQUIRE_EQ(forward.consistent_mass_rows, reverse.consistent_mass_rows);
-    MLS_REQUIRE_EQ(forward.consistent_rhs_kg_m_per_s, reverse.consistent_rhs_kg_m_per_s);
+    MLS_REQUIRE_EQ(forward.particles(), reverse.particles());
+    MLS_REQUIRE_EQ(forward.active_nodes(), reverse.active_nodes());
+    MLS_REQUIRE_EQ(forward.particle_stencils(), reverse.particle_stencils());
+    MLS_REQUIRE_EQ(forward.lumped_mass_kg(), reverse.lumped_mass_kg());
+    MLS_REQUIRE_EQ(forward.consistent_mass_rows(), reverse.consistent_mass_rows());
     MLS_REQUIRE_EQ(
-        forward.assembly_diagnostics.node_order_digest,
-        reverse.assembly_diagnostics.node_order_digest);
-    MLS_REQUIRE(forward.assembly_diagnostics.partition_unity_max_residual <= 5.0e-14);
-    MLS_REQUIRE(forward.assembly_diagnostics.linear_reproduction_max_residual_m <= 5.0e-13);
-    MLS_REQUIRE(forward.assembly_diagnostics.matrix_symmetry_relative_residual <= 5.0e-15);
-    MLS_REQUIRE(forward.assembly_diagnostics.row_sum_relative_residual <= 5.0e-13);
+        forward.consistent_rhs_kg_m_per_s(), reverse.consistent_rhs_kg_m_per_s());
+    MLS_REQUIRE_EQ(
+        forward.assembly_diagnostics().node_order_digest,
+        reverse.assembly_diagnostics().node_order_digest);
+    MLS_REQUIRE(forward.assembly_diagnostics().partition_unity_max_residual <= 5.0e-14);
+    MLS_REQUIRE(
+        forward.assembly_diagnostics().linear_reproduction_max_residual_m <= 5.0e-13);
+    MLS_REQUIRE(
+        forward.assembly_diagnostics().matrix_symmetry_relative_residual <= 5.0e-15);
+    MLS_REQUIRE(forward.assembly_diagnostics().row_sum_relative_residual <= 5.0e-13);
 }
 
 MLS_TEST("projection PIC and FMPM1 are identical and translation is reproduced") {
@@ -283,17 +349,19 @@ MLS_TEST("projection full mass recovers affine field and agrees with dense compa
     const Vec3d offset{0.888, -0.645, -0.592};
     const auto particles = lattice(matrix, offset);
     const auto system = projection::build_projection_system(particles, config);
-    MLS_REQUIRE(system.active_nodes.size() <= particles.size());
+    MLS_REQUIRE(system.active_nodes().size() <= particles.size());
     const auto full = projection::project_centers(system, ProjectionCandidate::full_consistent);
     std::cout << "[EVIDENCE] projection_unit_full_status="
               << projection::status_name(full.status)
-              << " nodes=" << system.active_nodes.size()
+              << " nodes=" << system.active_nodes().size()
               << " rank=" << full.diagnostics.numerical_rank_estimate
               << " raw_condition=" << full.diagnostics.raw_condition_estimate
               << " preconditioned_condition="
               << full.diagnostics.preconditioned_condition_estimate << '\n';
     MLS_REQUIRE_EQ(full.status, ProjectionStatus::solved);
-    MLS_REQUIRE_EQ(full.diagnostics.numerical_rank_estimate, system.active_nodes.size());
+    MLS_REQUIRE_EQ(full.diagnostics.numerical_rank_estimate, system.active_nodes().size());
+    MLS_REQUIRE(full.diagnostics.rank_certified);
+    MLS_REQUIRE(full.diagnostics.condition_estimated);
     MLS_REQUIRE(full.diagnostics.raw_condition_estimate <= 1.0e10);
     for (const auto residual : full.diagnostics.normalized_solve_residual) {
         MLS_REQUIRE(residual <= 5.0e-12);
@@ -309,6 +377,18 @@ MLS_TEST("projection full mass recovers affine field and agrees with dense compa
     for (std::size_t index = 0; index < dense.size(); ++index) {
         MLS_REQUIRE(close(dense[index], full.grid_velocity_m_per_s[index], 3.0e-10));
     }
+
+    // This SPD Gram matrix is an adversarial counterexample to treating the
+    // spread of Cholesky pivots as the spectral condition number. The true
+    // symmetric-eigen diagnostic is over two orders of magnitude larger.
+    const auto pivot_spread = raw_cholesky_pivot_spread(system);
+    MLS_REQUIRE(full.diagnostics.raw_condition_estimate > 50.0 * pivot_spread);
+    projection::ProjectionSolvePolicy adversarial_gate{};
+    adversarial_gate.raw_condition_max = 2.0 * pivot_spread;
+    adversarial_gate.preconditioned_condition_max = 1.0e12;
+    const auto rejected = projection::project_centers(
+        system, ProjectionCandidate::full_consistent, adversarial_gate);
+    MLS_REQUIRE_EQ(rejected.status, ProjectionStatus::ill_conditioned);
 }
 
 MLS_TEST("projection full static cycle preserves center linear and orbital moments") {
@@ -359,17 +439,29 @@ MLS_TEST("projection FMPM recurrence satisfies residual identity at every frozen
     };
     std::array<double, 4> fingerprint{};
     std::array<double, 4> angular_change{};
+    std::array<double, 4> energy_change{};
     const auto momentum_before = linear_momentum(particles, config);
     const auto angular_before = orbital_angular(particles, config);
     for (std::size_t index = 0; index < candidates.size(); ++index) {
         const auto result = projection::project_centers(system, candidates[index]);
         MLS_REQUIRE_EQ(result.status, ProjectionStatus::solved);
+        MLS_REQUIRE(result.fmpm_residual_identity_applicable);
         MLS_REQUIRE(result.fmpm_residual_identity_normalized <= 5.0e-14);
+        const auto independently_computed = independently_computed_residuals(
+            system, result.grid_velocity_m_per_s);
+        for (std::size_t component = 0; component < 3U; ++component) {
+            MLS_REQUIRE(result.diagnostics.solve_residual_applicable[component]);
+            MLS_REQUIRE(close(
+                result.diagnostics.absolute_solve_residual[component],
+                independently_computed[component],
+                2.0e-14));
+        }
         MLS_REQUIRE(close(
             linear_momentum(result.particles, config), momentum_before, 2.0e-12));
         angular_change[index] = mls::experimental::norm(
             orbital_angular(result.particles, config) - angular_before);
         fingerprint[index] = result.grid_velocity_m_per_s.front().x;
+        energy_change[index] = result.numerical_projection_energy_residual_j;
     }
     std::cout << "[EVIDENCE] projection_fmpm_fingerprint="
               << std::bit_cast<std::uint64_t>(fingerprint[0]) << ','
@@ -384,6 +476,76 @@ MLS_TEST("projection FMPM recurrence satisfies residual identity at every frozen
     // Finite FMPM has no generic orbital-angular theorem. This witness keeps
     // that expected residual visible instead of post-correcting it away.
     MLS_REQUIRE(angular_change[0] > 1.0e-8);
+    // Do not manufacture a positive roundoff witness: with positive weights,
+    // H=D^-1/2 M D^-1/2 has spectrum in [0,1] and finite FMPM applies
+    // 1-(1-lambda)^k in [0,1]. The exact center map is nonexpansive.
+    MLS_REQUIRE(energy_change[0] < 0.0);
+
+    const auto fmpm_one = projection::project_centers(
+        system, ProjectionCandidate::fmpm_1);
+    long double q_dot_v = 0.0L;
+    long double v_dot_m_v = 0.0L;
+    const auto mass_velocity = projection::apply_consistent_mass(
+        system, fmpm_one.grid_velocity_m_per_s);
+    for (std::size_t node = 0; node < system.active_nodes().size(); ++node) {
+        q_dot_v += mls::experimental::dot(
+            system.consistent_rhs_kg_m_per_s()[node],
+            fmpm_one.grid_velocity_m_per_s[node]);
+        v_dot_m_v += mls::experimental::dot(
+            mass_velocity[node], fmpm_one.grid_velocity_m_per_s[node]);
+    }
+    MLS_REQUIRE(fmpm_one.consistent_grid_quadratic_energy_applicable);
+    MLS_REQUIRE(close(
+        fmpm_one.consistent_grid_quadratic_energy_j,
+        0.5 * static_cast<double>(q_dot_v),
+        2.0e-14));
+    MLS_REQUIRE(std::abs(static_cast<double>(q_dot_v - v_dot_m_v)) > 1.0e-8);
+}
+
+MLS_TEST("projection production assembly and FMPM recurrence match rational cross-wire") {
+    // Independent Fraction arithmetic for this two-particle stencil gives the
+    // constants below. Expected values do not call the production M/q/D path.
+    const TransferConfig config{1.0, {}, 1.0};
+    const std::vector<CenterParticle> particles{
+        {2, 1, {0.5, 0.0, 0.0}, {-2.0, 0.0, 0.0}},
+        {1, 1, {0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}},
+    };
+    const auto system = projection::build_projection_system(particles, config);
+    MLS_REQUIRE_EQ(system.active_nodes().size(), std::size_t{27});
+    MLS_REQUIRE_EQ(system.active_nodes().front(), (mls::experimental::GridIndex{-1, -1, -1}));
+    MLS_REQUIRE_EQ(system.active_nodes()[13], (mls::experimental::GridIndex{0, 0, 0}));
+    MLS_REQUIRE_EQ(system.active_nodes().back(), (mls::experimental::GridIndex{1, 1, 1}));
+
+    MLS_REQUIRE_EQ(system.lumped_mass_kg().front(), 1.0 / 512.0);
+    MLS_REQUIRE_EQ(system.lumped_mass_kg()[13], 45.0 / 64.0);
+    MLS_REQUIRE_EQ(system.lumped_mass_kg().back(), 5.0 / 512.0);
+    MLS_REQUIRE_EQ(system.consistent_rhs_kg_m_per_s().front().x, 1.0 / 512.0);
+    MLS_REQUIRE_EQ(system.consistent_rhs_kg_m_per_s()[13].x, -9.0 / 64.0);
+    MLS_REQUIRE_EQ(system.consistent_rhs_kg_m_per_s().back().x, -7.0 / 512.0);
+    MLS_REQUIRE_EQ(system.consistent_mass_rows().front().at(0), 1.0 / 262144.0);
+    MLS_REQUIRE_EQ(system.consistent_mass_rows().front().at(13), 27.0 / 32768.0);
+    MLS_REQUIRE_EQ(system.consistent_mass_rows()[13].at(13), 1053.0 / 4096.0);
+
+    const std::array candidates{
+        ProjectionCandidate::fmpm_1,
+        ProjectionCandidate::fmpm_2,
+        ProjectionCandidate::fmpm_3,
+        ProjectionCandidate::fmpm_4,
+    };
+    const std::array expected_first{1.0, 11.0 / 5.0, 79.0 / 25.0, 491.0 / 125.0};
+    const std::array expected_center{-1.0 / 5.0, 1.0 / 25.0, 29.0 / 125.0, 241.0 / 625.0};
+    const std::array expected_last{-7.0 / 5.0, -53.0 / 25.0, -337.0 / 125.0,
+                                   -1973.0 / 625.0};
+    for (std::size_t order = 0; order < candidates.size(); ++order) {
+        const auto result = projection::project_centers(system, candidates[order]);
+        MLS_REQUIRE_EQ(result.status, ProjectionStatus::solved);
+        MLS_REQUIRE(close(
+            result.grid_velocity_m_per_s.front().x, expected_first[order], 2.0e-14));
+        MLS_REQUIRE(close(
+            result.grid_velocity_m_per_s[13].x, expected_center[order], 2.0e-14));
+        MLS_REQUIRE(close(
+            result.grid_velocity_m_per_s.back().x, expected_last[order], 2.0e-14));
+    }
 }
 
 MLS_TEST("projection singular systems and solver limits fail closed") {
@@ -396,6 +558,11 @@ MLS_TEST("projection singular systems and solver limits fail closed") {
     MLS_REQUIRE(structural.grid_velocity_m_per_s.empty());
     MLS_REQUIRE_EQ(structural.diagnostics.exact_mass_quanta_before, INT64_C(1));
     MLS_REQUIRE_EQ(structural.diagnostics.exact_mass_quanta_after, INT64_C(1));
+    for (std::size_t component = 0; component < 3U; ++component) {
+        MLS_REQUIRE(!structural.diagnostics.solve_residual_applicable[component]);
+        MLS_REQUIRE(std::isnan(structural.diagnostics.absolute_solve_residual[component]));
+        MLS_REQUIRE(std::isnan(structural.diagnostics.normalized_solve_residual[component]));
+    }
 
     std::vector<CenterParticle> coincident;
     for (std::uint64_t id = 1; id <= 27U; ++id) {
@@ -418,6 +585,8 @@ MLS_TEST("projection singular systems and solver limits fail closed") {
         regular, config, ProjectionCandidate::full_consistent, limited);
     MLS_REQUIRE_EQ(stopped.status, ProjectionStatus::iteration_limit);
     MLS_REQUIRE_EQ(stopped.particles, regular);
+    MLS_REQUIRE(stopped.diagnostics.solve_residual_applicable[0]);
+    MLS_REQUIRE(!stopped.diagnostics.solve_residual_applicable[1]);
 
     projection::ProjectionSolvePolicy condition_gate{};
     condition_gate.raw_condition_max = 1.000001;
@@ -426,6 +595,26 @@ MLS_TEST("projection singular systems and solver limits fail closed") {
         regular, config, ProjectionCandidate::full_consistent, condition_gate);
     MLS_REQUIRE_EQ(ill.status, ProjectionStatus::ill_conditioned);
     MLS_REQUIRE_EQ(ill.particles, regular);
+
+    projection::ProjectionSolvePolicy estimated{};
+    estimated.dense_diagnostic_max_nodes = 1;
+    estimated.lanczos_max_steps = 16;
+    estimated.raw_condition_max = 1.0e20;
+    estimated.preconditioned_condition_max = 1.0e20;
+    const auto large_path = projection::project_centers(
+        regular, config, ProjectionCandidate::full_consistent, estimated);
+    MLS_REQUIRE_EQ(large_path.status, ProjectionStatus::solved);
+    MLS_REQUIRE(!large_path.diagnostics.rank_certified);
+    MLS_REQUIRE(large_path.diagnostics.numerical_rank_is_estimated);
+    MLS_REQUIRE_EQ(large_path.diagnostics.numerical_rank_estimate, std::size_t{0});
+    MLS_REQUIRE(large_path.diagnostics.condition_estimated);
+
+    projection::ProjectionSolvePolicy unresolved{};
+    unresolved.dense_jacobi_max_sweeps = 1;
+    const auto unresolved_result = projection::project_centers(
+        regular, config, ProjectionCandidate::full_consistent, unresolved);
+    MLS_REQUIRE_EQ(unresolved_result.status, ProjectionStatus::breakdown);
+    MLS_REQUIRE(!unresolved_result.diagnostics.solve_residual_applicable[0]);
 }
 
 MLS_TEST("projection rejects invalid zero duplicate overflow and nonfinite inputs") {
@@ -476,6 +665,38 @@ MLS_TEST("projection rejects invalid zero duplicate overflow and nonfinite input
             std::array{CenterParticle{
                 1, std::numeric_limits<std::int64_t>::max(), {}, {}}},
             TransferConfig{1.0, {}, std::numeric_limits<double>::max()}));
+
+    const auto huge_speed = 2.0 * std::sqrt(std::numeric_limits<double>::max());
+    const std::vector<CenterParticle> finite_but_overflowing{
+        {2, 1, {0.1, 0.2, 0.3}, {huge_speed, 0.0, 0.0}},
+        {1, 1, {-0.1, -0.2, -0.3}, {-huge_speed, 0.0, 0.0}},
+    };
+    const auto overflow = projection::project_centers(
+        finite_but_overflowing,
+        config,
+        ProjectionCandidate::lumped_pic);
+    MLS_REQUIRE_EQ(overflow.status, ProjectionStatus::numerical_overflow);
+    MLS_REQUIRE_EQ(overflow.particles, finite_but_overflowing);
+    MLS_REQUIRE_EQ(overflow.diagnostics.exact_mass_quanta_before, INT64_C(2));
+    MLS_REQUIRE_EQ(overflow.diagnostics.exact_mass_quanta_after, INT64_C(2));
+}
+
+MLS_TEST("projection failed steps preserve unsorted center state byte-for-byte") {
+    ProjectionLabState state{
+        {1.0, {}, 1.0},
+        PhysicalTimeScale{1, 40},
+        3,
+        {
+            {9, 1, {0.1, 0.2, 0.3}, {1.0, 0.0, 0.0}},
+            {2, 1, {-0.1, -0.2, -0.3}, {-1.0, 0.0, 0.0}},
+        },
+    };
+    const auto before = state;
+    const auto failed = projection::trapezoid_projection_step(
+        state, ProjectionCandidate::full_consistent, 1, 1.0 / 40.0);
+    MLS_REQUIRE_EQ(failed.projection.status, ProjectionStatus::structurally_rank_deficient);
+    MLS_REQUIRE_EQ(failed.state, before);
+    MLS_REQUIRE_EQ(failed.projection.particles, before.particles);
 }
 
 MLS_TEST("projection trapezoid step uses exact clock and has no numerical energy ledger") {
@@ -486,7 +707,8 @@ MLS_TEST("projection trapezoid step uses exact clock and has no numerical energy
         state, ProjectionCandidate::lumped_pic, 4, 1.0 / 40.0);
     MLS_REQUIRE_EQ(step.projection.status, ProjectionStatus::solved);
     MLS_REQUIRE_EQ(step.state.elapsed_time_quanta, UINT64_C(4));
-    MLS_REQUIRE(step.projection.numerical_projection_energy_residual_j <= 1.0e-12);
+    MLS_REQUIRE(step.projection.numerical_projection_energy_residual_applicable);
+    MLS_REQUIRE(std::abs(step.projection.numerical_projection_energy_residual_j) <= 1.0e-12);
     for (std::size_t index = 0; index < state.particles.size(); ++index) {
         const auto expected = state.particles[index].position_m +
             (1.0 / 40.0) * state.particles[index].velocity_m_per_s;
@@ -501,10 +723,10 @@ MLS_TEST("projection trapezoid step uses exact clock and has no numerical energy
         projection::trapezoid_projection_step(
             state, ProjectionCandidate::lumped_pic, 4, 0.026));
     state.elapsed_time_quanta = std::numeric_limits<std::uint64_t>::max() - 1U;
-    MLS_REQUIRE_THROWS(
-        std::overflow_error,
-        projection::trapezoid_projection_step(
-            state, ProjectionCandidate::lumped_pic, 4, 1.0 / 40.0));
+    const auto clock_overflow = projection::trapezoid_projection_step(
+        state, ProjectionCandidate::lumped_pic, 4, 1.0 / 40.0);
+    MLS_REQUIRE_EQ(clock_overflow.projection.status, ProjectionStatus::numerical_overflow);
+    MLS_REQUIRE_EQ(clock_overflow.state, state);
 }
 
 MLS_TEST("projection checkpoint is canonical corruptible and excludes solver state") {
