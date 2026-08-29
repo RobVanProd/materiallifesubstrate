@@ -5014,8 +5014,15 @@ def run_validator(
     bundle: Path,
     compare: Path | None = None,
     findings: Path | None = None,
+    *,
+    allow_smoke: bool = True,
+    legacy_pre_q50_test_fixture: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    command = [sys.executable, str(validator), "--bundle", str(bundle), "--allow-smoke"]
+    command = [sys.executable, str(validator), "--bundle", str(bundle)]
+    if allow_smoke:
+        command.append("--allow-smoke")
+    if legacy_pre_q50_test_fixture:
+        command.append("--legacy-pre-q50-test-fixture")
     if compare is not None:
         command.extend(("--compare", str(compare)))
     if findings is not None:
@@ -5529,6 +5536,52 @@ def main(argv: Sequence[str] | None = None) -> int:
         materialize_registered_smoke_fixture(module, base)
         mutations += decision_state_cases
         shutil.copytree(base, twin)
+
+        implicit_legacy = run_validator(
+            args.validator,
+            base,
+            legacy_pre_q50_test_fixture=False,
+        )
+        if implicit_legacy.returncode == 0 \
+                or "frozen x_m not verbatim" not in implicit_legacy.stderr:
+            raise AssertionError(
+                "pre-q50 fixture was accepted without its explicit legacy route\n"
+                f"{implicit_legacy.stdout}\n{implicit_legacy.stderr}"
+            )
+        mutations += 1
+
+        legacy_without_smoke = run_validator(
+            args.validator,
+            base,
+            allow_smoke=False,
+        )
+        if legacy_without_smoke.returncode == 0 \
+                or "requires --allow-smoke" not in legacy_without_smoke.stderr:
+            raise AssertionError(
+                "legacy fixture route was accepted without --allow-smoke\n"
+                f"{legacy_without_smoke.stdout}\n{legacy_without_smoke.stderr}"
+            )
+        mutations += 1
+
+        legacy_full = root_path / "legacy-route-full"
+        shutil.copytree(base, legacy_full)
+        legacy_full_summary = json.loads(
+            (legacy_full / "summary.json").read_text(encoding="utf-8")
+        )
+        legacy_full_summary["mode"] = "full"
+        legacy_full_summary["provisional"] = False
+        legacy_full_summary["sweep_complete"] = True
+        write_json(legacy_full / "summary.json", legacy_full_summary)
+        refresh_manifest(module, legacy_full)
+        legacy_full_result = run_validator(args.validator, legacy_full)
+        if legacy_full_result.returncode == 0 \
+                or "forbidden for full bundles" not in legacy_full_result.stderr:
+            raise AssertionError(
+                "legacy fixture route was accepted for a full-mode bundle\n"
+                f"{legacy_full_result.stdout}\n{legacy_full_result.stderr}"
+            )
+        mutations += 1
+
         if not args.skip_positive:
             positive_findings = root_path / "positive-findings.json"
             positive = run_validator(
@@ -5608,7 +5661,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         for name, payload in invalid_bytes.items():
             (race_live / name).write_bytes(payload)
         try:
-            module.validate_snapshot_bundle(race_snapshot, allow_smoke=True)
+            module.validate_snapshot_bundle(
+                race_snapshot,
+                allow_smoke=True,
+                legacy_pre_q50_test_fixture=True,
+            )
         except module.InvalidBundle:
             pass
         else:

@@ -389,9 +389,10 @@ A_REPRESENTATIVES = (
 A_ROW_COMPONENTS = ("xx", "yy", "zz", "xy", "xz", "yz")
 AXES = ("x", "y", "z")
 
-# ``--allow-smoke`` is a convenience for the one preregistered, byte-authentic
-# positive control.  It is not permission for a producer to choose a favorable
-# subset of the full configuration matrix.
+# ``--allow-smoke`` permits the preregistered non-sealable subset.  Current
+# producer smoke bundles use the same q50 geometry contract as full evidence.
+# Preserved byte-authentic pre-q50 test fixtures require a second, explicit
+# validator-only compatibility flag.
 SMOKE_CONFIGURATION_IDS = frozenset({
     "base.filament.r205.original",
     "base.filament.r205.original.translation",
@@ -5921,12 +5922,16 @@ def validate_frozen_geometry(
     configurations: Mapping[str, Mapping[str, str]],
     packet_rows: Mapping[str, list[dict[str, str]]],
     *,
-    legacy_nonfull_fixture: bool = False,
+    legacy_pre_q50_test_fixture: bool = False,
 ) -> None:
-    # The byte-authentic smoke/failure fixtures predate the q50 amendment and
-    # are accepted only under the explicit non-sealable --allow-smoke route.
-    # Full producer evidence is bound to the amended common affine lattice.
-    expected = ideal_frozen_geometry() if legacy_nonfull_fixture else frozen_geometry()
+    # The byte-authentic synthetic smoke/failure fixtures predate the q50
+    # amendment.  They are accepted only through an explicit validator-test
+    # compatibility route; every current producer bundle defaults to q50.
+    expected = (
+        ideal_frozen_geometry()
+        if legacy_pre_q50_test_fixture
+        else frozen_geometry()
+    )
     require(set(configurations) <= set(expected), "configuration outside frozen geometry matrix")
     for config_id, config in configurations.items():
         spec = expected[config_id]
@@ -6533,7 +6538,12 @@ def compare_bundles(first: Path, second: Path) -> list[dict[str, str]]:
     return mismatches
 
 
-def validate_snapshot_bundle(bundle: Path, *, allow_smoke: bool) -> Mapping[str, Any]:
+def validate_snapshot_bundle(
+    bundle: Path,
+    *,
+    allow_smoke: bool,
+    legacy_pre_q50_test_fixture: bool = False,
+) -> Mapping[str, Any]:
     require(bundle.is_dir(), f"bundle is not a directory: {bundle}")
     verify_manifest(bundle)
     tables = {name: read_csv(bundle / name, fields) for name, fields in CSV_SCHEMAS.items()}
@@ -6541,6 +6551,14 @@ def validate_snapshot_bundle(bundle: Path, *, allow_smoke: bool) -> Mapping[str,
     require_table_order(tables)
     summary = read_json(bundle / "summary.json")
     validate_summary(summary, tables)
+    require(
+        not legacy_pre_q50_test_fixture or allow_smoke,
+        "--legacy-pre-q50-test-fixture requires --allow-smoke",
+    )
+    require(
+        not legacy_pre_q50_test_fixture or summary["mode"] != "full",
+        "--legacy-pre-q50-test-fixture is forbidden for full bundles",
+    )
     require(summary["mode"] == "full" or allow_smoke, "smoke bundle requires --allow-smoke")
     configurations_by_id = validate_configuration_rows(tables["configurations.csv"])
     if summary["mode"] == "full":
@@ -6551,7 +6569,7 @@ def validate_snapshot_bundle(bundle: Path, *, allow_smoke: bool) -> Mapping[str,
     validate_frozen_geometry(
         configurations_by_id,
         packet_rows,
-        legacy_nonfull_fixture=summary["mode"] != "full",
+        legacy_pre_q50_test_fixture=legacy_pre_q50_test_fixture,
     )
     neighbors, neighbor_lookup_all_agree = validate_neighbors(
         tables["configurations.csv"], tables["neighbor_pairs.csv"], positions_d
@@ -6761,11 +6779,20 @@ def validate_snapshot_bundle(bundle: Path, *, allow_smoke: bool) -> Mapping[str,
     return result
 
 
-def validate_bundle(bundle: Path, *, allow_smoke: bool) -> Mapping[str, Any]:
+def validate_bundle(
+    bundle: Path,
+    *,
+    allow_smoke: bool,
+    legacy_pre_q50_test_fixture: bool = False,
+) -> Mapping[str, Any]:
     with tempfile.TemporaryDirectory(prefix="mls-mechanical-validator-snapshot-") as temporary:
         snapshot = Path(temporary) / "bundle"
         signature = capture_bundle_snapshot(bundle, snapshot)
-        summary = validate_snapshot_bundle(snapshot, allow_smoke=allow_smoke)
+        summary = validate_snapshot_bundle(
+            snapshot,
+            allow_smoke=allow_smoke,
+            legacy_pre_q50_test_fixture=legacy_pre_q50_test_fixture,
+        )
         require_live_bundle_unchanged(bundle, signature)
         return summary
 
@@ -6922,6 +6949,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--compare", type=Path)
     parser.add_argument("--allow-smoke", action="store_true")
+    parser.add_argument(
+        "--legacy-pre-q50-test-fixture",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--findings-output", type=Path)
     parser.add_argument("--validator-sha256")
     args = parser.parse_args(argv)
@@ -6933,7 +6965,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             first_snapshot = snapshot_root / "first"
             first_signature = capture_bundle_snapshot(args.bundle, first_snapshot)
             summary = validate_snapshot_bundle(
-                first_snapshot, allow_smoke=args.allow_smoke
+                first_snapshot,
+                allow_smoke=args.allow_smoke,
+                legacy_pre_q50_test_fixture=args.legacy_pre_q50_test_fixture,
             )
             manifest_pre_hash = read_json(first_snapshot / "manifest.json")[
                 "pre_hash_sha256"
@@ -6947,7 +6981,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.compare, second_snapshot
                 )
                 comparison = validate_snapshot_bundle(
-                    second_snapshot, allow_smoke=args.allow_smoke
+                    second_snapshot,
+                    allow_smoke=args.allow_smoke,
+                    legacy_pre_q50_test_fixture=args.legacy_pre_q50_test_fixture,
                 )
                 outcomes.append(comparison)
                 manifest_pre_hashes.append(

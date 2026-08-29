@@ -68,11 +68,13 @@ still retains the registered topology and passes finite objectivity under the
 unchanged tolerances, but those are design checks only; the regenerated
 producer evidence must pass every frozen gate independently.
 
-The byte-authentic pre-amendment smoke and injected-failure regression
-fixtures remain readable only through the explicit non-full `--allow-smoke`
-test route. They cannot satisfy the full q50 geometry contract and are not
-sealable evidence. Every full producer bundle is validated against the common
-q50 reconstruction above.
+The byte-authentic pre-amendment synthetic smoke and injected-failure
+regression fixtures remain readable only when tests request both the non-full
+`--allow-smoke` route and the default-off
+`--legacy-pre-q50-test-fixture` compatibility route. That second flag is
+forbidden for full bundles. Current producer smoke and every full producer
+bundle are validated against the common q50 reconstruction above; preserved
+legacy fixtures cannot satisfy that contract and are not sealable evidence.
 
 Two narrower responses were rejected. Lowering or bypassing the exact-rank
 check would hide actual emitted-state topology and weaken the registered gate.
