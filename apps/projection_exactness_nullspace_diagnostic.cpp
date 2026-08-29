@@ -101,7 +101,8 @@ constexpr std::string_view rhs_header =
     "system_id,node_index,component,value_kg_m_per_s";
 constexpr std::string_view witness_header =
     "system_id,component,mg_minus_q_l2_kg_m_per_s,mgq_denominator_kg_m_per_s,"
-    "normalized_mg_minus_q,mgq_roundoff_bound,mgq_pass,sg_minus_v_l2_m_per_s,"
+    "normalized_mg_minus_q,mgq_roundoff_bound,mgq_pass,"
+    "sg_minus_v_l2_m_per_s_sqrt_kg,"
     "sgv_denominator_m_per_s_sqrt_kg,normalized_sg_minus_v,"
     "sgv_roundoff_bound,sgv_pass,partition_max_residual,partition_roundoff_bound,"
     "partition_pass,linear_reproduction_max_residual_m,"
@@ -109,7 +110,9 @@ constexpr std::string_view witness_header =
     "gradient_partition_max_residual_per_m,"
     "gradient_partition_roundoff_bound_per_m,gradient_partition_pass,pass";
 constexpr std::string_view solve_header =
-    "system_id,component,status,solver,iterations,"
+    "system_id,component,status,accuracy_classification,solver,iterations,"
+    "legacy_residual_applicable,legacy_normalized_residual,"
+    "legacy_normalized_residual_threshold,legacy_termination_reason,"
     "backward_residual_l2_kg_m_per_s,backward_denominator_kg_m_per_s,"
     "normalized_backward_residual,grid_forward_lumped_numerator_m_per_s_sqrt_kg,"
     "grid_forward_lumped_denominator_m_per_s_sqrt_kg,normalized_forward_error,"
@@ -129,9 +132,19 @@ constexpr std::string_view high_precision_header =
     "reconstruction_mass_numerator_m_per_s_sqrt_kg,"
     "reconstruction_mass_denominator_m_per_s_sqrt_kg,"
     "normalized_reconstruction_error,condition_value,condition_kind";
+constexpr std::string_view high_precision_pivot_header =
+    "system_id,step,original_row_index,original_column_index,pivot_abs_kg,"
+    "pivot_threshold_kg,status,promotion_eligible";
 constexpr std::string_view nullspace_mode_header =
-    "system_id,mode_index,node_index,z_value_m_per_s,method,singular_value_kg,"
+    "system_id,mode_index,node_index,z_value_m_per_s,method,"
+    "singular_value_sqrt_kg,"
     "representative_value_m_per_s,shifted_value_m_per_s";
+constexpr std::string_view nullspace_status_header =
+    "system_id,status,node_count,particle_count,threshold_rank,rank_available,"
+    "rank_method,rank_is_certified,nullity,"
+    "numerical_rank_threshold_sqrt_kg,largest_qr_diagonal_sqrt_kg,"
+    "smallest_accepted_qr_diagonal_sqrt_kg,constructed_mode_count,"
+    "basis_complete,promotion_eligible";
 constexpr std::string_view nullspace_metric_header =
     "system_id,mode_index,rank,rank_method,rank_is_certified,"
     "mz_l2_kg_m_per_s,mz_denominator_kg_m_per_s,mz_normalized,"
@@ -139,6 +152,8 @@ constexpr std::string_view nullspace_metric_header =
     "gradient_max_per_s,gradient_rms_per_s,gradient_roundoff_bound_per_s,"
     "visibility_ratio,gradient_visible,alpha_dimensionless,representative_component,"
     "representative_kind,base_residual_normalized,shifted_residual_normalized,"
+    "residual_change_l2_kg_m_per_s,residual_change_denominator_kg_m_per_s,"
+    "residual_change_normalized,"
     "reconstruction_delta_normalized,phase,orientation,promotion_eligible,pass";
 
 enum class FieldKind : std::uint8_t {
@@ -177,6 +192,7 @@ struct Configuration final {
 struct Options final {
     bool smoke{false};
     bool schema_audit{false};
+    bool logic_audit{false};
     std::size_t jobs{1};
     std::filesystem::path output{
         "evidence/projection-exactness-nullspace"};
@@ -252,10 +268,17 @@ struct ExportRows final {
 struct NumericRow final {
     std::array<Row, 3> solve_rows{};
     std::vector<Row> high_precision_rows{};
+    std::vector<Row> high_precision_pivot_rows{};
     std::vector<Row> nullspace_mode_rows{};
     std::vector<Row> nullspace_metric_rows{};
+    Row nullspace_status_row{};
     ExportRows exported{};
-    bool pcg_miss{false};
+    std::string pcg_status{};
+    std::size_t pcg_solved_gate_miss_component_count{0};
+    std::size_t hp_subset_pcg_nonrecovery_component_count{0};
+    std::size_t hp_subset_paired_recovery_component_count{0};
+    std::size_t prior_failure_geometry_pcg_nonrecovery_component_count{0};
+    std::size_t prior_failure_geometry_paired_recovery_component_count{0};
     bool hp_full_rank_all_pass{false};
     bool hp_contradiction{false};
     bool hp_ambiguous{false};
@@ -503,8 +526,9 @@ struct NumericRow final {
     if (!smoke) {
         return full;
     }
-    const std::array<std::string_view, 3> smoke_ids{
+    const std::array<std::string_view, 4> smoke_ids{
         "main_general_affine_t0_l1_p000_p012_sppp",
+        "main_rigid_rotation_t4_l1_p000_p012_sppp",
         "full_rank_micro_p000_p012_sppp",
         "singular_ppc1_p049_001_083_p012_sppp",
     };
@@ -654,6 +678,12 @@ Accurate& operator+=(Accurate& lhs, Accurate rhs) noexcept {
     }
 
     const auto& analytic = witness.analytic_grid_velocity_m_per_s;
+    Accurate sg_vector_squared{};
+    Accurate reference_vector_squared{};
+    Accurate particle_mass_sum{};
+    for (const auto mass : system.particle_mass_kg()) {
+        particle_mass_sum += Accurate{mass, 0.0};
+    }
     for (std::size_t axis = 0; axis < 3U; ++axis) {
         Accurate mg_squared{};
         Accurate absolute_mg_squared{};
@@ -685,9 +715,6 @@ Accurate& operator+=(Accurate& lhs, Accurate rhs) noexcept {
         }
         metric.mg_normalized = metric.mg_l2 / metric.mg_denominator;
 
-        Accurate sg_squared{};
-        Accurate reference_squared{};
-        Accurate mass_sum{};
         for (std::size_t particle = 0;
              particle < system.particles().size(); ++particle) {
             const auto mass = system.particle_mass_kg()[particle];
@@ -701,24 +728,35 @@ Accurate& operator+=(Accurate& lhs, Accurate rhs) noexcept {
             }
             const auto residual =
                 exact_reconstructed - Accurate{expected, 0.0};
-            sg_squared += Accurate{mass, 0.0} * residual * residual;
-            reference_squared += Accurate{mass, 0.0} *
+            sg_vector_squared += Accurate{mass, 0.0} * residual * residual;
+            reference_vector_squared += Accurate{mass, 0.0} *
                 Accurate{expected, 0.0} * Accurate{expected, 0.0};
-            mass_sum += Accurate{mass, 0.0};
         }
-        metric.sg_l2 =
-            std::sqrt(std::max(0.0, accurate_value(sg_squared)));
-        metric.sg_denominator = std::max(
-            std::sqrt(std::max(0.0, accurate_value(reference_squared))),
-            std::sqrt(std::max(0.0, accurate_value(mass_sum))));
-        if (!(metric.sg_denominator > 0.0)) {
-            throw std::logic_error("zero analytic reconstruction denominator");
-        }
-        metric.sg_normalized = metric.sg_l2 / metric.sg_denominator;
         metric.mg_pass = std::isfinite(metric.mg_normalized) &&
             metric.mg_normalized <= result.mg_bound;
-        metric.sg_pass = std::isfinite(metric.sg_normalized) &&
-            metric.sg_normalized <= result.sg_bound;
+    }
+    const auto sg_vector_l2 =
+        std::sqrt(std::max(0.0, accurate_value(sg_vector_squared)));
+    const auto sg_vector_denominator = std::max(
+        std::sqrt(std::max(
+            0.0, accurate_value(reference_vector_squared))),
+        std::sqrt(std::max(0.0, accurate_value(particle_mass_sum))));
+    if (!(sg_vector_denominator > 0.0)) {
+        throw std::logic_error("zero analytic reconstruction denominator");
+    }
+    const auto sg_vector_normalized =
+        sg_vector_l2 / sg_vector_denominator;
+    const auto sg_vector_pass = std::isfinite(sg_vector_normalized) &&
+        sg_vector_normalized <= result.sg_bound;
+    // The frozen preregistration defines Sg-V as one particle-mass norm over
+    // all three velocity components. The CSV is component-keyed because Mg-q
+    // is componentwise, so repeat the single registered Sg-V witness in each
+    // component row instead of silently changing it into three scalar gates.
+    for (auto& metric : result.axis) {
+        metric.sg_l2 = sg_vector_l2;
+        metric.sg_denominator = sg_vector_denominator;
+        metric.sg_normalized = sg_vector_normalized;
+        metric.sg_pass = sg_vector_pass;
     }
     result.partition_pass = std::isfinite(result.partition_residual) &&
         result.partition_residual <= result.partition_bound;
@@ -1435,13 +1473,38 @@ template <typename Input, typename Output, typename Function>
 
 [[nodiscard]] Row unavailable_solve_row(
     std::string_view system_id, std::size_t axis,
-    std::string_view status) {
+    std::string_view status, std::size_t iterations = 0U,
+    bool legacy_residual_applicable = false,
+    std::string legacy_residual = "NA",
+    std::string legacy_termination_reason = "not_run_witness_failure",
+    std::string raw_condition = "NA",
+    std::string raw_condition_kind = "unavailable",
+    std::string preconditioned_condition = "NA",
+    std::string preconditioned_condition_kind = "unavailable") {
     return {
         std::string(system_id), std::to_string(axis), std::string(status),
-        "pcg_control", "0",
+        "not_available", "pcg_control", std::to_string(iterations),
+        bool_text(legacy_residual_applicable), std::move(legacy_residual),
+        hex64(pf::ProjectionSolvePolicy{}.normalized_residual_max),
+        std::move(legacy_termination_reason),
         "NA", "NA", "NA", "NA", "NA", "NA", "NA", "NA", "NA",
-        "NA", "unavailable", "NA", "unavailable", "NA",
+        std::move(raw_condition), std::move(raw_condition_kind),
+        std::move(preconditioned_condition),
+        std::move(preconditioned_condition_kind), "NA",
     };
+}
+
+[[nodiscard]] std::string_view pcg_accuracy_classification(
+    pf::ProjectionStatus status,
+    double normalized_forward,
+    double normalized_reconstruction) noexcept {
+    if (status != pf::ProjectionStatus::solved) {
+        return "not_available";
+    }
+    return normalized_forward <= forward_gate &&
+            normalized_reconstruction <= forward_gate
+        ? "backward_and_forward_pass"
+        : "backward_pass_forward_fail";
 }
 
 [[nodiscard]] std::array<Row, 3> pcg_rows(
@@ -1451,16 +1514,6 @@ template <typename Input, typename Output, typename Function>
     std::array<Row, 3> rows{};
     const auto available = projection.grid_velocity_m_per_s.size() ==
         system.active_nodes().size();
-    if (!available) {
-        for (std::size_t axis = 0; axis < 3U; ++axis) {
-            rows[axis] = unavailable_solve_row(
-                "", axis, pf::status_name(projection.status));
-        }
-        return rows;
-    }
-    const auto analytic = analytic_grid(system, field);
-    const auto metrics = binary64_metrics(
-        system, projection.grid_velocity_m_per_s, analytic);
     const auto estimated = projection.diagnostics.condition_estimated;
     const auto dense = system.active_nodes().size() <= 128U;
     const auto kind = estimated
@@ -1472,14 +1525,51 @@ template <typename Input, typename Output, typename Function>
     const auto raw_available = estimated && std::isfinite(raw) && raw >= 1.0;
     const auto preconditioned_available = estimated &&
         std::isfinite(preconditioned) && preconditioned >= 1.0;
+    if (!available) {
+        for (std::size_t axis = 0; axis < 3U; ++axis) {
+            rows[axis] = unavailable_solve_row(
+                "", axis, pf::status_name(projection.status),
+                projection.diagnostics.component_iterations[axis],
+                projection.diagnostics.solve_residual_applicable[axis],
+                projection.diagnostics.solve_residual_applicable[axis] &&
+                        std::isfinite(
+                            projection.diagnostics
+                                .normalized_solve_residual[axis])
+                    ? hex64(projection.diagnostics
+                          .normalized_solve_residual[axis])
+                    : "NA",
+                projection.diagnostics.termination_reason,
+                raw_available ? hex64(raw) : "NA",
+                raw_available ? kind : "unavailable",
+                preconditioned_available ? hex64(preconditioned) : "NA",
+                preconditioned_available ? kind : "unavailable");
+        }
+        return rows;
+    }
+    const auto analytic = analytic_grid(system, field);
+    const auto metrics = binary64_metrics(
+        system, projection.grid_velocity_m_per_s, analytic);
     for (std::size_t axis = 0; axis < 3U; ++axis) {
         const auto& metric = metrics[axis];
+        const auto accuracy = pcg_accuracy_classification(
+            projection.status,
+            metric.forward_normalized,
+            metric.reconstruction_normalized);
         rows[axis] = {
             "",
             std::to_string(axis),
             std::string(pf::status_name(projection.status)),
+            std::string(accuracy),
             "pcg_control",
             std::to_string(projection.diagnostics.component_iterations[axis]),
+            bool_text(projection.diagnostics.solve_residual_applicable[axis]),
+            projection.diagnostics.solve_residual_applicable[axis] &&
+                    std::isfinite(
+                        projection.diagnostics.normalized_solve_residual[axis])
+                ? hex64(projection.diagnostics.normalized_solve_residual[axis])
+                : "NA",
+            hex64(pf::ProjectionSolvePolicy{}.normalized_residual_max),
+            projection.diagnostics.termination_reason,
             hex64(metric.backward_l2),
             hex64(metric.backward_denominator),
             hex64(metric.backward_normalized),
@@ -1522,6 +1612,8 @@ template <typename Input, typename Output, typename Function>
     const auto hp_backward_gate =
         dd_safety_factor * static_cast<double>(hp.node_count) *
         std::ldexp(1.0, -104);
+    const auto has_accepted_pivot =
+        !hp.accepted_absolute_pivots.empty();
     auto every_component_pass = solved && hp.threshold_rank == hp.node_count;
     auto any_contradiction = false;
     for (std::size_t axis = 0; axis < 3U; ++axis) {
@@ -1557,17 +1649,20 @@ template <typename Input, typename Output, typename Function>
             "false",
             "false",
             decimal(relative_threshold, decimal_digits),
-            decimal(hp.smallest_accepted_absolute_pivot, decimal_digits),
-            decimal(hp.largest_absolute_pivot, decimal_digits),
+            !has_accepted_pivot
+                ? "NA"
+                : decimal(
+                      hp.smallest_accepted_absolute_pivot, decimal_digits),
+            !has_accepted_pivot
+                ? "NA"
+                : decimal(hp.largest_absolute_pivot, decimal_digits),
         };
         if (solved) {
             for (const auto value : metrics[axis].values) {
                 row.push_back(decimal(extended(value), decimal_digits));
             }
-            row.push_back(decimal(
-                pen::ExtendedScalar{hp.pivot_ratio_estimate, 0.0},
-                decimal_digits));
-            row.push_back("high_precision_pivot_ratio_estimate");
+            row.push_back("NA");
+            row.push_back("unavailable");
         } else {
             row.insert(row.end(), 9U, "NA");
             row.push_back("NA");
@@ -1578,6 +1673,90 @@ template <typename Input, typename Output, typename Function>
     *all_pass = every_component_pass;
     *contradiction = any_contradiction;
     return rows;
+}
+
+[[nodiscard]] std::vector<Row> hp_pivot_rows(
+    const Configuration& config,
+    const pen::HighPrecisionSolveResult& hp) {
+    if (hp.accepted_absolute_pivots.size() != hp.threshold_rank) {
+        throw std::logic_error(
+            "high-precision accepted pivot trace is incomplete");
+    }
+    if (hp.threshold_rank > hp.row_permutation.size() ||
+        hp.threshold_rank > hp.column_permutation.size()) {
+        throw std::logic_error(
+            "high-precision pivot permutation trace is incomplete");
+    }
+    constexpr std::size_t decimal_digits = 40U;
+    std::vector<Row> rows;
+    rows.reserve(hp.threshold_rank);
+    for (std::size_t step = 0; step < hp.threshold_rank; ++step) {
+        rows.push_back({
+            config.system_id,
+            std::to_string(step),
+            std::to_string(hp.row_permutation[step]),
+            std::to_string(hp.column_permutation[step]),
+            decimal(hp.accepted_absolute_pivots[step], decimal_digits),
+            decimal(hp.numerical_rank_threshold, decimal_digits),
+            hp_status_name(hp.status),
+            "false",
+        });
+    }
+    return rows;
+}
+
+[[nodiscard]] Row make_nullspace_status_row(
+    std::string_view system_id,
+    const pen::NullspaceDiagnostics& diagnostic) {
+    const auto analyzed =
+        diagnostic.status == pen::NullspaceStatus::analyzed;
+    const auto basis_complete = analyzed &&
+        diagnostic.modes.size() == diagnostic.nullity &&
+        std::all_of(
+            diagnostic.modes.begin(), diagnostic.modes.end(),
+            [&](const pen::NullspaceModeDiagnostics& mode) {
+                return mode.nodal_mode.size() == diagnostic.node_count;
+            });
+    return {
+        std::string(system_id),
+        std::string(pen::status_name(diagnostic.status)),
+        std::to_string(diagnostic.node_count),
+        std::to_string(diagnostic.particle_count),
+        analyzed ? std::to_string(diagnostic.threshold_rank) : "NA",
+        bool_text(analyzed),
+        diagnostic.rank_method.empty() ? "unavailable" : diagnostic.rank_method,
+        bool_text(analyzed && diagnostic.rank_is_certified),
+        analyzed ? std::to_string(diagnostic.nullity) : "NA",
+        analyzed ? hex64(diagnostic.numerical_rank_threshold) : "NA",
+        analyzed ? hex64(diagnostic.largest_qr_diagonal) : "NA",
+        analyzed ? hex64(diagnostic.smallest_accepted_qr_diagonal) : "NA",
+        analyzed ? std::to_string(diagnostic.modes.size()) : "0",
+        bool_text(basis_complete),
+        "false",
+    };
+}
+
+[[nodiscard]] Row make_stopped_nullspace_status_row(
+    const Configuration& config,
+    std::size_t node_count,
+    std::size_t particle_count) {
+    return {
+        config.system_id,
+        "not_run_witness_failure",
+        std::to_string(node_count),
+        std::to_string(particle_count),
+        "NA",
+        "false",
+        "not_run",
+        "false",
+        "NA",
+        "NA",
+        "NA",
+        "NA",
+        "0",
+        "false",
+        "false",
+    };
 }
 
 struct NullMetric final {
@@ -1594,6 +1773,9 @@ struct NullMetric final {
     bool gradient_visible{false};
     double base_residual_normalized{0.0};
     double shifted_residual_normalized{0.0};
+    double residual_change_l2{0.0};
+    double residual_change_denominator{0.0};
+    double residual_change_normalized{0.0};
     double reconstruction_delta_normalized{0.0};
     bool pass{false};
 };
@@ -1620,6 +1802,7 @@ struct NullMetric final {
     DoubleDouble shifted_squared{};
     DoubleDouble base_residual_squared{};
     DoubleDouble shifted_residual_squared{};
+    DoubleDouble residual_change_squared{};
     for (const auto value : z) {
         const auto item = DoubleDouble(value);
         z_squared += item * item;
@@ -1648,6 +1831,8 @@ struct NullMetric final {
         const auto shifted_residual = shifted_applied - q;
         base_residual_squared += base_residual * base_residual;
         shifted_residual_squared += shifted_residual * shifted_residual;
+        const auto residual_change = shifted_residual - base_residual;
+        residual_change_squared += residual_change * residual_change;
     }
     DoubleDouble reconstruction_delta_squared{};
     DoubleDouble gradient_squared{};
@@ -1732,6 +1917,10 @@ struct NullMetric final {
         dd_value(dd_sqrt(base_residual_squared) / base_denominator);
     result.shifted_residual_normalized =
         dd_value(dd_sqrt(shifted_residual_squared) / shifted_denominator);
+    result.residual_change_l2 = dd_value(dd_sqrt(residual_change_squared));
+    result.residual_change_denominator = dd_value(mz_denominator);
+    result.residual_change_normalized =
+        result.residual_change_l2 / result.residual_change_denominator;
     result.reconstruction_delta_normalized = dd_value(
         dd_sqrt(reconstruction_delta_squared) / sz_denominator);
     const auto limit = null_safety_factor *
@@ -1740,6 +1929,7 @@ struct NullMetric final {
         std::numeric_limits<double>::epsilon();
     result.pass = result.mz_normalized <= limit &&
         result.sz_normalized <= limit &&
+        result.residual_change_normalized <= limit &&
         result.reconstruction_delta_normalized <= limit;
     return result;
 }
@@ -1897,7 +2087,7 @@ struct NullMetric final {
     std::vector<Row> result;
     for (std::size_t axis = 0; axis < 3U; ++axis) {
         result.push_back({
-            config.system_id, std::to_string(axis), "numerical_failure",
+            config.system_id, std::to_string(axis), "not_run_witness_failure",
             "fma_double_double_complete_pivot", "106", "40", "0",
             "dense_complete_pivot_double_double_threshold", "false", "none",
             "false", "false", "false",
@@ -1940,26 +2130,50 @@ struct NullMetric final {
     std::optional<pen::HighPrecisionSolveResult> hp{};
     if (solvers_allowed) {
         pcg = pen::run_legacy_pcg_control(system);
+        result.pcg_status = std::string(pf::status_name(pcg->status));
         result.solve_rows = pcg_rows(system, stage.field, *pcg);
         for (auto& row : result.solve_rows) {
             row[0] = stage.config.system_id;
         }
-        if (stage.config.high_precision &&
-            pcg->grid_velocity_m_per_s.size() == system.active_nodes().size()) {
+        const auto pcg_solved =
+            pcg->status == pf::ProjectionStatus::solved &&
+            pcg->grid_velocity_m_per_s.size() == system.active_nodes().size();
+        if (pcg_solved) {
             const auto metrics = binary64_metrics(
                 system, pcg->grid_velocity_m_per_s,
                 analytic_grid(system, stage.field));
             for (const auto& metric : metrics) {
-                result.pcg_miss = result.pcg_miss ||
-                    metric.forward_normalized > forward_gate ||
-                    metric.reconstruction_normalized > forward_gate;
+                if (metric.forward_normalized > forward_gate ||
+                    metric.reconstruction_normalized > forward_gate) {
+                    ++result.pcg_solved_gate_miss_component_count;
+                }
             }
         }
         if (stage.config.high_precision) {
+            const auto pcg_nonrecovery = pcg_solved
+                ? result.pcg_solved_gate_miss_component_count
+                : 3U;
+            result.hp_subset_pcg_nonrecovery_component_count =
+                pcg_nonrecovery;
+            if (stage.config.case_class == "main") {
+                result.prior_failure_geometry_pcg_nonrecovery_component_count =
+                    pcg_nonrecovery;
+            }
             hp = pen::solve_affine_high_precision(system, stage.field);
             result.high_precision_rows = hp_rows(
                 stage.config, system, stage.field, *hp,
                 &result.hp_full_rank_all_pass, &result.hp_contradiction);
+            result.high_precision_pivot_rows = hp_pivot_rows(
+                stage.config, *hp);
+            if (result.hp_full_rank_all_pass) {
+                result.hp_subset_paired_recovery_component_count =
+                    pcg_nonrecovery;
+                if (stage.config.case_class == "main") {
+                    result
+                        .prior_failure_geometry_paired_recovery_component_count =
+                        pcg_nonrecovery;
+                }
+            }
             result.hp_ambiguous =
                 hp->status != pen::HighPrecisionStatus::solved ||
                 hp->threshold_rank != hp->node_count;
@@ -1968,13 +2182,23 @@ struct NullMetric final {
             const auto representative_grid = analytic_grid(system, stage.field);
             const auto nullspace = pen::diagnose_gram_nullspace(
                 system, representative_grid);
-            result.null_ambiguous =
-                nullspace.status != pen::NullspaceStatus::analyzed ||
+            result.nullspace_status_row = make_nullspace_status_row(
+                stage.config.system_id, nullspace);
+            const auto basis_complete =
+                nullspace.status == pen::NullspaceStatus::analyzed &&
+                nullspace.modes.size() == nullspace.nullity &&
+                std::all_of(
+                    nullspace.modes.begin(), nullspace.modes.end(),
+                    [&](const pen::NullspaceModeDiagnostics& mode) {
+                        return mode.nodal_mode.size() ==
+                            system.active_nodes().size();
+                    });
+            result.null_ambiguous = !basis_complete ||
                 nullspace.modes.empty();
             result.all_constructed_null_modes_accepted =
-                nullspace.status == pen::NullspaceStatus::analyzed &&
+                basis_complete &&
                 !nullspace.modes.empty();
-            if (nullspace.status == pen::NullspaceStatus::analyzed) {
+            if (basis_complete) {
                 std::vector<double> representative(system.active_nodes().size());
                 for (std::size_t node = 0; node < representative.size(); ++node) {
                     representative[node] = representative_grid[node].x;
@@ -2022,6 +2246,9 @@ struct NullMetric final {
                         "analytic_affine",
                         hex64(metric.base_residual_normalized),
                         hex64(metric.shifted_residual_normalized),
+                        hex64(metric.residual_change_l2),
+                        hex64(metric.residual_change_denominator),
+                        hex64(metric.residual_change_normalized),
                         hex64(metric.reconstruction_delta_normalized),
                         stage.config.phase.name,
                         stage.config.orientation.name,
@@ -2042,9 +2269,10 @@ struct NullMetric final {
             }
         }
     } else {
+        result.pcg_status = "not_run_witness_failure";
         for (std::size_t axis = 0; axis < 3U; ++axis) {
             result.solve_rows[axis] = unavailable_solve_row(
-                stage.config.system_id, axis, "numerical_failure");
+                stage.config.system_id, axis, "not_run_witness_failure");
         }
         if (stage.config.high_precision) {
             result.high_precision_rows = stopped_hp_rows(
@@ -2052,6 +2280,8 @@ struct NullMetric final {
             result.hp_ambiguous = true;
         }
         if (stage.config.nullspace) {
+            result.nullspace_status_row = make_stopped_nullspace_status_row(
+                stage.config, stage.node_count, stage.particle_count);
             result.null_ambiguous = true;
         }
     }
@@ -2114,11 +2344,16 @@ struct NullMetric final {
 struct SummaryState final {
     bool witness_all{false};
     bool hp_all{false};
-    bool pcg_miss{false};
     bool contradiction{false};
     bool null_ambiguous{false};
     bool accepted_mode{false};
     bool visible_mode{false};
+    std::map<std::string, std::size_t> pcg_status_component_counts{};
+    std::size_t pcg_solved_gate_miss_component_count{0};
+    std::size_t hp_subset_pcg_nonrecovery_component_count{0};
+    std::size_t hp_subset_paired_recovery_component_count{0};
+    std::size_t prior_failure_geometry_pcg_nonrecovery_component_count{0};
+    std::size_t prior_failure_geometry_paired_recovery_component_count{0};
     std::string decision{};
 };
 
@@ -2149,7 +2384,19 @@ struct SummaryState final {
             result.visible_mode = result.visible_mode ||
                 numeric[index].accepted_gradient_visible;
         }
-        result.pcg_miss = result.pcg_miss || numeric[index].pcg_miss;
+        result.pcg_status_component_counts[numeric[index].pcg_status] += 3U;
+        result.pcg_solved_gate_miss_component_count +=
+            numeric[index].pcg_solved_gate_miss_component_count;
+        result.hp_subset_pcg_nonrecovery_component_count +=
+            numeric[index].hp_subset_pcg_nonrecovery_component_count;
+        result.hp_subset_paired_recovery_component_count +=
+            numeric[index].hp_subset_paired_recovery_component_count;
+        result.prior_failure_geometry_pcg_nonrecovery_component_count +=
+            numeric[index]
+                .prior_failure_geometry_pcg_nonrecovery_component_count;
+        result.prior_failure_geometry_paired_recovery_component_count +=
+            numeric[index]
+                .prior_failure_geometry_paired_recovery_component_count;
     }
     if (!result.witness_all) {
         result.decision = "stop_assembly_or_basis_inconsistency";
@@ -2173,18 +2420,24 @@ struct SummaryState final {
     const SummaryState& state,
     const std::map<std::string, std::size_t>& row_counts) {
     std::vector<std::string> findings;
-    if (state.hp_all && state.pcg_miss) {
+    if (!smoke &&
+        state.hp_subset_paired_recovery_component_count > 0U) {
+        findings.emplace_back(
+            "paired_high_precision_recovery_after_pcg_nonrecovery");
+    }
+    if (!smoke &&
+        state.prior_failure_geometry_paired_recovery_component_count > 0U) {
         findings.emplace_back(
             "prior_affine_failure_is_solver_or_conditioning");
     }
-    if (state.contradiction) {
+    if (!smoke && state.contradiction) {
         findings.emplace_back(
             "high_precision_forward_contradiction_or_implementation_defect");
     }
-    if (state.accepted_mode) {
+    if (!smoke && state.accepted_mode) {
         findings.emplace_back("center_invisible_numerical_null_modes");
     }
-    if (state.visible_mode) {
+    if (!smoke && state.visible_mode) {
         findings.emplace_back("center_invisible_gradient_visible_modes");
     }
     std::ostringstream output;
@@ -2204,7 +2457,10 @@ struct SummaryState final {
            << json_escape(MLS_CONFIGURED_COMPILER_VERSION) << "\",\n"
            << "  \"configured_source_branch\": \""
            << json_escape(MLS_CONFIGURED_SOURCE_BRANCH) << "\",\n"
-           << "  \"decision\": \"" << json_escape(state.decision)
+           << "  \"decision\": \""
+           << json_escape(smoke
+                   ? "smoke_provisional_no_scientific_decision"
+                   : state.decision)
            << "\",\n"
            << "  \"diagnostic_pseudoinverse_promotion_eligible\": false,\n"
            << "  \"high_precision_all_pass\": "
@@ -2212,7 +2468,27 @@ struct SummaryState final {
            << "  \"mode\": \"" << (smoke ? "smoke" : "full")
            << "\",\n"
            << "  \"parent_sha\": \"" << accepted_parent_sha << "\",\n"
-           << "  \"pcg_miss_observed\": " << bool_text(state.pcg_miss)
+           << "  \"hp_subset_pcg_nonrecovery_component_count\": "
+           << state.hp_subset_pcg_nonrecovery_component_count << ",\n"
+           << "  \"hp_subset_paired_recovery_component_count\": "
+           << state.hp_subset_paired_recovery_component_count << ",\n"
+           << "  \"pcg_solved_gate_miss_component_count\": "
+           << state.pcg_solved_gate_miss_component_count << ",\n"
+           << "  \"pcg_status_component_counts\": {\n";
+    std::size_t pcg_status_index = 0U;
+    for (const auto& [status, count] : state.pcg_status_component_counts) {
+        output << "    \"" << json_escape(status) << "\": " << count
+               << (++pcg_status_index ==
+                           state.pcg_status_component_counts.size()
+                       ? "\n"
+                       : ",\n");
+    }
+    output << "  },\n"
+           << "  \"prior_failure_geometry_pcg_nonrecovery_component_count\": "
+           << state.prior_failure_geometry_pcg_nonrecovery_component_count
+           << ",\n"
+           << "  \"prior_failure_geometry_paired_recovery_component_count\": "
+           << state.prior_failure_geometry_paired_recovery_component_count
            << ",\n"
            << "  \"producer\": \"cpp_projection_exactness_nullspace_lab\",\n"
            << "  \"promotion\": false,\n"
@@ -2304,6 +2580,135 @@ void write_manifest(
     write_text(output_directory / "manifest.json", output.str());
 }
 
+[[nodiscard]] int run_logic_audit() {
+    const auto require = [](bool condition, std::string_view message) {
+        if (!condition) {
+            throw std::logic_error(
+                "projection diagnostic logic audit failed: " +
+                std::string(message));
+        }
+    };
+    require(
+        pcg_accuracy_classification(
+            pf::ProjectionStatus::solved, 0.0, 0.0) ==
+            "backward_and_forward_pass",
+        "PCG pass classification");
+    require(
+        pcg_accuracy_classification(
+            pf::ProjectionStatus::solved, 2.0 * forward_gate, 0.0) ==
+            "backward_pass_forward_fail",
+        "PCG forward-fail classification");
+    require(
+        pcg_accuracy_classification(
+            pf::ProjectionStatus::ill_conditioned, 0.0, 0.0) ==
+            "not_available",
+        "PCG unavailable classification");
+
+    Configuration stopped_config{};
+    stopped_config.system_id = "logic_stopped";
+    const auto stopped_solve = unavailable_solve_row(
+        stopped_config.system_id, 0U, "not_run_witness_failure");
+    require(
+        stopped_solve.size() == split_header(solve_header).size() &&
+            stopped_solve[2] == "not_run_witness_failure" &&
+            stopped_solve[3] == "not_available" &&
+            stopped_solve[6] == "false" && stopped_solve[7] == "NA" &&
+            stopped_solve[8] ==
+                hex64(pf::ProjectionSolvePolicy{}.normalized_residual_max) &&
+            stopped_solve[9] == "not_run_witness_failure",
+        "witness-stopped PCG row");
+    const auto stopped_hp = stopped_hp_rows(stopped_config, 1U);
+    require(
+        stopped_hp.size() == 3U &&
+            std::all_of(
+                stopped_hp.begin(), stopped_hp.end(),
+                [](const Row& row) {
+                    return row[2] == "not_run_witness_failure";
+                }),
+        "witness-stopped HP rows");
+    const auto stopped_null = make_stopped_nullspace_status_row(
+        stopped_config, 7U, 3U);
+    require(
+        stopped_null.size() == split_header(nullspace_status_header).size() &&
+            stopped_null[1] == "not_run_witness_failure" &&
+            stopped_null[5] == "false" && stopped_null[12] == "0",
+        "witness-stopped nullspace status");
+
+    pen::NullspaceDiagnostics limited{};
+    limited.status = pen::NullspaceStatus::size_limit;
+    limited.node_count = 7U;
+    limited.particle_count = 3U;
+    limited.rank_method = "bounded_test";
+    const auto limited_row = make_nullspace_status_row("logic_limited", limited);
+    require(
+        limited_row[1] == "size_limit" && limited_row[4] == "NA" &&
+            limited_row[5] == "false" && limited_row[12] == "0",
+        "bounded QR failure status preservation");
+
+    std::vector<StageRow> hp_stages(2U);
+    std::vector<NumericRow> hp_numeric(2U);
+    for (auto& stage : hp_stages) {
+        stage.witness.pass = true;
+        stage.config.high_precision = true;
+    }
+    hp_stages[0].config.case_class = "main";
+    hp_stages[1].config.case_class = "full_rank_micro";
+    hp_numeric[0].pcg_status = "ill_conditioned";
+    hp_numeric[0].hp_full_rank_all_pass = true;
+    hp_numeric[0].hp_subset_pcg_nonrecovery_component_count = 3U;
+    hp_numeric[0].hp_subset_paired_recovery_component_count = 3U;
+    hp_numeric[0].prior_failure_geometry_pcg_nonrecovery_component_count = 3U;
+    hp_numeric[0].prior_failure_geometry_paired_recovery_component_count = 3U;
+    hp_numeric[1].pcg_status = "solved";
+    hp_numeric[1].hp_full_rank_all_pass = false;
+    const auto paired_state = summarize(hp_stages, hp_numeric);
+    require(
+        !paired_state.hp_all &&
+            paired_state.hp_subset_paired_recovery_component_count == 3U &&
+            paired_state
+                    .prior_failure_geometry_paired_recovery_component_count ==
+                3U,
+        "per-system paired recovery survives unrelated HP failure");
+    const auto paired_json = summary_json(false, hp_stages, paired_state, {});
+    require(
+        paired_json.find(
+            "paired_high_precision_recovery_after_pcg_nonrecovery") !=
+                std::string::npos &&
+            paired_json.find(
+                "prior_affine_failure_is_solver_or_conditioning") !=
+                std::string::npos,
+        "paired recovery findings");
+
+    std::vector<StageRow> null_stages(1U);
+    std::vector<NumericRow> null_numeric(1U);
+    null_stages[0].witness.pass = true;
+    null_stages[0].config.nullspace = true;
+    null_numeric[0].pcg_status = "solved";
+    null_numeric[0].null_ambiguous = true;
+    require(
+        summarize(null_stages, null_numeric).decision ==
+            "stop_inconclusive_rank_or_solver_diagnosis",
+        "QR ambiguity decision");
+    null_numeric[0].null_ambiguous = false;
+    null_numeric[0].accepted_null_mode = true;
+    null_numeric[0].accepted_gradient_visible = true;
+    require(
+        summarize(null_stages, null_numeric).decision ==
+            "stop_center_state_gradient_nullspace_blocker",
+        "gradient-visible nullspace decision");
+    null_stages[0].witness.pass = false;
+    null_numeric[0].pcg_status = "not_run_witness_failure";
+    require(
+        summarize(null_stages, null_numeric).decision ==
+            "stop_assembly_or_basis_inconsistency",
+        "witness-first decision");
+
+    std::cout << "Projection Exactness + Nullspace logic audit: PASS "
+                 "(failure statuses, classifications, paired findings, "
+                 "decision precedence)\n";
+    return EXIT_SUCCESS;
+}
+
 [[nodiscard]] Options parse_options(int argc, char** argv) {
     Options result{};
     for (int index = 1; index < argc; ++index) {
@@ -2312,6 +2717,8 @@ void write_manifest(
             result.smoke = true;
         } else if (argument == "--schema-audit") {
             result.schema_audit = true;
+        } else if (argument == "--logic-audit") {
+            result.logic_audit = true;
         } else if (argument == "--jobs") {
             if (index + 1 >= argc) {
                 throw std::invalid_argument("--jobs requires a positive integer");
@@ -2331,7 +2738,7 @@ void write_manifest(
         } else if (argument == "--help") {
             std::cout
                 << "Usage: mls_projection_exactness_nullspace_diagnostic "
-                   "[--smoke] [--schema-audit] [--jobs N] "
+                   "[--smoke] [--schema-audit] [--logic-audit] [--jobs N] "
                    "[--output DIRECTORY]\n";
             std::exit(EXIT_SUCCESS);
         } else {
@@ -2375,13 +2782,15 @@ void write_manifest(
             throw std::logic_error("duplicate registered system ID");
         }
     }
-    const std::array<std::string_view, 11> headers{
+    const std::array<std::string_view, 13> headers{
         system_header, particle_header, node_header, stencil_header,
         matrix_header, rhs_header, witness_header, solve_header,
-        high_precision_header, nullspace_mode_header,
+        high_precision_header, high_precision_pivot_header,
+        nullspace_status_header, nullspace_mode_header,
         nullspace_metric_header};
-    const std::array<std::size_t, 11> widths{
-        44U, 10U, 19U, 7U, 4U, 4U, 22U, 19U, 27U, 8U, 26U};
+    const std::array<std::size_t, 13> widths{
+        44U, 10U, 19U, 7U, 4U, 4U, 22U, 24U, 27U, 8U, 15U, 8U,
+        29U};
     for (std::size_t index = 0; index < headers.size(); ++index) {
         if (split_header(headers[index]).size() != widths[index]) {
             throw std::logic_error("CSV header width audit failed");
@@ -2395,6 +2804,9 @@ void write_manifest(
 [[nodiscard]] int run(const Options& options) {
     if (options.schema_audit) {
         return run_schema_audit();
+    }
+    if (options.logic_audit) {
+        return run_logic_audit();
     }
     const auto configs = configurations(options.smoke);
     const auto stages = parallel_map<Configuration, StageRow>(
@@ -2418,6 +2830,8 @@ void write_manifest(
     Csv witness(witness_header);
     Csv solve(solve_header);
     Csv high_precision(high_precision_header);
+    Csv high_precision_pivots(high_precision_pivot_header);
+    Csv nullspace_status(nullspace_status_header);
     Csv nullspace_modes(nullspace_mode_header);
     Csv nullspace_metrics(nullspace_metric_header);
     for (std::size_t index = 0; index < stages.size(); ++index) {
@@ -2427,6 +2841,11 @@ void write_manifest(
             solve.row(numeric[index].solve_rows[axis]);
         }
         high_precision.rows(numeric[index].high_precision_rows);
+        high_precision_pivots.rows(
+            numeric[index].high_precision_pivot_rows);
+        if (!numeric[index].nullspace_status_row.empty()) {
+            nullspace_status.row(numeric[index].nullspace_status_row);
+        }
         nullspace_modes.rows(numeric[index].nullspace_mode_rows);
         nullspace_metrics.rows(numeric[index].nullspace_metric_rows);
         if (stages[index].config.assembly_exported) {
@@ -2448,26 +2867,22 @@ void write_manifest(
     if (high_precision.size() != 3U * hp_selection) {
         throw std::logic_error("high-precision component coverage is incomplete");
     }
-    if (witness_all) {
-        const auto null_selection = static_cast<std::size_t>(std::count_if(
-            stages.begin(), stages.end(),
-            [](const StageRow& stage) { return stage.config.nullspace; }));
-        const auto diagnosed = static_cast<std::size_t>(std::count_if(
-            numeric.begin(), numeric.end(),
-            [](const NumericRow& row) {
-                return !row.nullspace_metric_rows.empty();
-            }));
-        if (diagnosed != null_selection) {
-            throw std::logic_error("selected nullspace diagnosis is incomplete");
-        }
+    const auto null_selection = static_cast<std::size_t>(std::count_if(
+        stages.begin(), stages.end(),
+        [](const StageRow& stage) { return stage.config.nullspace; }));
+    if (nullspace_status.size() != null_selection) {
+        throw std::logic_error(
+            "selected nullspace status coverage is incomplete");
     }
 
     std::map<std::string, std::size_t> row_counts{
         {"high_precision.csv", high_precision.size()},
+        {"high_precision_pivots.csv", high_precision_pivots.size()},
         {"matrix.csv", matrix.size()},
         {"nodes.csv", nodes.size()},
         {"nullspace_metrics.csv", nullspace_metrics.size()},
         {"nullspace_modes.csv", nullspace_modes.size()},
+        {"nullspace_status.csv", nullspace_status.size()},
         {"particles.csv", particles.size()},
         {"rhs.csv", rhs.size()},
         {"solve_diagnostics.csv", solve.size()},
@@ -2477,7 +2892,7 @@ void write_manifest(
     };
     const auto summary_state = summarize(stages, numeric);
     std::filesystem::create_directories(options.output);
-    const std::array<std::pair<std::string_view, const Csv*>, 11> tables{
+    const std::array<std::pair<std::string_view, const Csv*>, 13> tables{
         std::pair{"systems.csv", &systems},
         std::pair{"particles.csv", &particles},
         std::pair{"nodes.csv", &nodes},
@@ -2487,11 +2902,13 @@ void write_manifest(
         std::pair{"witness.csv", &witness},
         std::pair{"solve_diagnostics.csv", &solve},
         std::pair{"high_precision.csv", &high_precision},
+        std::pair{"high_precision_pivots.csv", &high_precision_pivots},
+        std::pair{"nullspace_status.csv", &nullspace_status},
         std::pair{"nullspace_modes.csv", &nullspace_modes},
         std::pair{"nullspace_metrics.csv", &nullspace_metrics},
     };
     std::vector<std::string> manifest_files;
-    manifest_files.reserve(12U);
+    manifest_files.reserve(14U);
     for (const auto& [name, table] : tables) {
         write_text(options.output / name, table->contents());
         manifest_files.emplace_back(name);
@@ -2504,7 +2921,11 @@ void write_manifest(
     std::cout << "Projection Exactness + Nullspace "
               << (options.smoke ? "provisional smoke" : "full")
               << " evidence written to " << options.output.string()
-              << " (decision=" << summary_state.decision << ")\n";
+              << " (decision="
+              << (options.smoke
+                      ? "smoke_provisional_no_scientific_decision"
+                      : summary_state.decision)
+              << ")\n";
     return EXIT_SUCCESS;
 }
 

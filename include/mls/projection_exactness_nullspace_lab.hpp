@@ -154,6 +154,9 @@ struct HighPrecisionSolveResult final {
     ExtendedScalar numerical_rank_threshold{};
     std::vector<std::size_t> row_permutation{};
     std::vector<std::size_t> column_permutation{};
+    // Entry k is the accepted absolute pivot after row/column k of the final
+    // permutations was fixed. Its size is exactly threshold_rank.
+    std::vector<ExtendedScalar> accepted_absolute_pivots{};
     ExtendedScalar largest_absolute_pivot{};
     ExtendedScalar smallest_accepted_absolute_pivot{};
     double pivot_ratio_estimate{std::numeric_limits<double>::infinity()};

@@ -178,6 +178,7 @@ MLS_TEST("projection high precision preserves rank-deficient evidence") {
     const auto result = diagnostic::solve_affine_high_precision(system, field);
     MLS_REQUIRE_EQ(result.status, diagnostic::HighPrecisionStatus::rank_deficient);
     MLS_REQUIRE_EQ(result.threshold_rank, std::size_t{1});
+    MLS_REQUIRE_EQ(result.accepted_absolute_pivots.size(), std::size_t{1});
     MLS_REQUIRE(!result.regularization_applied);
     MLS_REQUIRE(result.grid_velocity_extended.empty());
 }
@@ -218,6 +219,9 @@ MLS_TEST("projection exactness high precision retains auditable hi lo solution")
         high_precision.row_permutation.size(), system.active_nodes().size());
     MLS_REQUIRE_EQ(
         high_precision.column_permutation.size(), system.active_nodes().size());
+    MLS_REQUIRE_EQ(
+        high_precision.accepted_absolute_pivots.size(),
+        system.active_nodes().size());
     MLS_REQUIRE(!high_precision.regularization_applied);
     std::cout << "[EVIDENCE] hp_backward="
               << high_precision.backward_error.relative_l2

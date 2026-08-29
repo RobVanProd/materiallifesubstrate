@@ -83,20 +83,27 @@ void set_component(Vec3d& value, std::size_t index, double scalar) noexcept {
     ErrorNorms result{};
     result.absolute_l2 = vec_l2_norm(residual);
     result.absolute_max = vec_max_norm(residual);
-    long double denominator_squared = 0.0L;
+    long double matrix_action_bound_squared = 0.0L;
+    long double rhs_squared = 0.0L;
     for (std::size_t row = 0; row < system.active_nodes().size(); ++row) {
         for (std::size_t axis = 0; axis < 3U; ++axis) {
-            long double denominator = std::abs(component(
-                system.consistent_rhs_kg_m_per_s()[row], axis));
+            long double matrix_action_bound = 0.0L;
             for (const auto& [column, coefficient] :
                  system.consistent_mass_rows()[row]) {
-                denominator += std::abs(static_cast<long double>(coefficient) *
+                matrix_action_bound += std::abs(
+                    static_cast<long double>(coefficient) *
                     component(grid_velocity[column], axis));
             }
-            denominator_squared += denominator * denominator;
+            const auto rhs = static_cast<long double>(component(
+                system.consistent_rhs_kg_m_per_s()[row], axis));
+            matrix_action_bound_squared +=
+                matrix_action_bound * matrix_action_bound;
+            rhs_squared += rhs * rhs;
         }
     }
-    result.reference_l2 = std::sqrt(static_cast<double>(denominator_squared));
+    result.reference_l2 =
+        std::sqrt(static_cast<double>(matrix_action_bound_squared)) +
+        std::sqrt(static_cast<double>(rhs_squared));
     result.relative_l2 = result.reference_l2 > 0.0
         ? result.absolute_l2 / result.reference_l2
         : result.absolute_l2;
@@ -1037,7 +1044,8 @@ AnalyticAffineWitness evaluate_analytic_affine_witness(
     result.derivative_partition_roundoff_scale_m_inv =
         std::sqrt(static_cast<double>(derivative_scale_squared));
     result.assembled_equation_normalization =
-        "||M g-q||_2 / || |M||g|+|q| ||_2";
+        "||M g-q||_2 / (|| |M||g| ||_2+||q||_2); evidence gates "
+        "recompute this component by component";
     result.reconstruction_normalization =
         "sqrt(sum_p m_p |Sg_p-V_p|^2) / max(sqrt(sum_p m_p |V_p|^2),sqrt(sum_p m_p)*(1 m/s))";
     result.roundoff_model =
@@ -1235,6 +1243,17 @@ HighPrecisionSolveResult solve_affine_high_precision(
     DoubleDouble largest_pivot{};
     DoubleDouble smallest_pivot{
         std::numeric_limits<double>::infinity(), 0.0};
+    const auto preserve_pivot_summary = [&] {
+        result.largest_absolute_pivot = extended(largest_pivot);
+        result.smallest_accepted_absolute_pivot =
+            result.accepted_absolute_pivots.empty()
+            ? ExtendedScalar{}
+            : extended(smallest_pivot);
+        result.pivot_ratio_estimate =
+            result.accepted_absolute_pivots.empty()
+            ? std::numeric_limits<double>::infinity()
+            : approximate(largest_pivot / smallest_pivot);
+    };
 
     for (std::size_t step = 0; step < count; ++step) {
         auto pivot_row = step;
@@ -1252,18 +1271,13 @@ HighPrecisionSolveResult solve_affine_high_precision(
         }
         if (!finite(pivot_magnitude)) {
             result.status = HighPrecisionStatus::numerical_failure;
+            preserve_pivot_summary();
             return result;
         }
         if (less_equal(pivot_magnitude, threshold)) {
             result.status = HighPrecisionStatus::rank_deficient;
             result.threshold_rank = step;
-            result.largest_absolute_pivot = extended(largest_pivot);
-            result.smallest_accepted_absolute_pivot = step == 0U
-                ? ExtendedScalar{}
-                : extended(smallest_pivot);
-            result.pivot_ratio_estimate = step == 0U
-                ? std::numeric_limits<double>::infinity()
-                : approximate(largest_pivot / smallest_pivot);
+            preserve_pivot_summary();
             return result;
         }
         if (pivot_row != step) {
@@ -1294,6 +1308,7 @@ HighPrecisionSolveResult solve_affine_high_precision(
         if (greater(smallest_pivot, pivot_magnitude)) {
             smallest_pivot = pivot_magnitude;
         }
+        result.accepted_absolute_pivots.push_back(extended(pivot_magnitude));
         ++result.threshold_rank;
         const auto pivot = matrix[step * count + step];
         for (std::size_t row = step + 1U; row < count; ++row) {
@@ -1324,6 +1339,7 @@ HighPrecisionSolveResult solve_affine_high_precision(
             permuted[row] = value / matrix[row * count + row];
             if (!finite(permuted[row])) {
                 result.status = HighPrecisionStatus::numerical_failure;
+                preserve_pivot_summary();
                 return result;
             }
         }
@@ -1412,9 +1428,7 @@ HighPrecisionSolveResult solve_affine_high_precision(
     result.grid_forward_error_max_extended = extended(forward.maximum);
     result.particle_reconstruction_error_max_extended =
         extended(reconstruction.maximum);
-    result.largest_absolute_pivot = extended(largest_pivot);
-    result.smallest_accepted_absolute_pivot = extended(smallest_pivot);
-    result.pivot_ratio_estimate = approximate(largest_pivot / smallest_pivot);
+    preserve_pivot_summary();
     result.status = HighPrecisionStatus::solved;
     return result;
 }
