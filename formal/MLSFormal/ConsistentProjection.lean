@@ -15,12 +15,10 @@ open scoped BigOperators
 This module models the full consistent-mass projection used by the Projection
 Foundation Lab.  It is an exact-rational, finite model of the actual mass
 matrix, right-hand side, solve equation, and interpolation operation.  The
-grid solve is not made total: singular systems exist.  Affine grid recovery
-takes an explicit uniqueness assumption, while the Gram/nullspace theorems
-show without invertibility that all exact solutions reconstruct the same
-particle-center velocities under strictly positive masses.  No particle
-affine mode, force, constitutive law, time integrator, or kinetic-energy
-conservation claim is present here.
+grid solve is not made total: singular systems exist, so every recovery theorem
+takes an explicit uniqueness assumption.  No particle affine mode, force,
+constitutive law, time integrator, or kinetic-energy conservation claim is
+present here.
 -/
 
 /-- Physical particle-center state admitted by the consistent projection. -/
@@ -70,144 +68,6 @@ def consistentInterpolate
   fun component =>
     ∑ grid : Grid, weight particle grid * gridVelocity grid component
 
-/--
-Apply the particle-to-grid adjoint of the interpolation map after weighting
-particle vectors by their strictly physical particle masses.  In matrix
-notation this is `Sᵀ W`; no inverse or solver is part of this operator.
--/
-def weightedShapeTransposeApply
-    {Particle Grid : Type*} [Fintype Particle]
-    (particles : Particle → ProjectionParticle)
-    (weight : Particle → Grid → ℚ)
-    (particleValue : Particle → Vec3)
-    (grid : Grid) : Vec3 :=
-  fun component =>
-    ∑ particle : Particle,
-      (particles particle).mass * weight particle grid *
-        particleValue particle component
-
-/--
-The actual finite consistent-mass operator factors exactly as `M = Sᵀ W S`.
-This is an equality of the executable finite operators above, not a premise
-about an abstract matrix.
--/
-theorem consistentMass_is_gram_operator
-    {Particle Grid : Type*} [Fintype Particle] [Fintype Grid]
-    (particles : Particle → ProjectionParticle)
-    (weight : Particle → Grid → ℚ)
-    (gridVelocity : Grid → Vec3) :
-    consistentMassApply particles weight gridVelocity =
-      weightedShapeTransposeApply particles weight
-        (fun particle =>
-          consistentInterpolate weight gridVelocity particle) := by
-  funext grid component
-  simp only [consistentMassApply, consistentMassMatrix,
-    weightedShapeTransposeApply, consistentInterpolate]
-  simp_rw [Finset.sum_mul]
-  rw [Finset.sum_comm]
-  apply Finset.sum_congr rfl
-  intro particle _
-  rw [Finset.mul_sum]
-  apply Finset.sum_congr rfl
-  intro column _
-  ring
-
-/-- The quadratic form induced by the finite Gram operator, componentwise. -/
-private theorem consistentMass_gram_quadratic_component
-    {Particle Grid : Type*} [Fintype Particle] [Fintype Grid]
-    (particles : Particle → ProjectionParticle)
-    (weight : Particle → Grid → ℚ)
-    (gridVelocity : Grid → Vec3)
-    (component : Fin 3) :
-    (∑ grid : Grid,
-        gridVelocity grid component *
-          consistentMassApply particles weight gridVelocity grid component) =
-      ∑ particle : Particle,
-        (particles particle).mass *
-          (consistentInterpolate weight gridVelocity particle component) ^ 2 := by
-  rw [consistentMass_is_gram_operator]
-  simp only [weightedShapeTransposeApply]
-  simp_rw [Finset.mul_sum]
-  rw [Finset.sum_comm]
-  apply Finset.sum_congr rfl
-  intro particle _
-  calc
-    ∑ grid : Grid,
-        gridVelocity grid component *
-          ((particles particle).mass * weight particle grid *
-            consistentInterpolate weight gridVelocity particle component) =
-        ∑ grid : Grid,
-          ((particles particle).mass * weight particle grid *
-            gridVelocity grid component) *
-              consistentInterpolate weight gridVelocity particle component := by
-          apply Finset.sum_congr rfl
-          intro grid _
-          ring
-    _ = (∑ grid : Grid,
-          (particles particle).mass * weight particle grid *
-            gridVelocity grid component) *
-          consistentInterpolate weight gridVelocity particle component := by
-            rw [Finset.sum_mul]
-    _ = (particles particle).mass *
-          (∑ grid : Grid,
-            weight particle grid * gridVelocity grid component) *
-          consistentInterpolate weight gridVelocity particle component := by
-            rw [Finset.mul_sum]
-    _ = (particles particle).mass *
-          (consistentInterpolate weight gridVelocity particle component) ^ 2 := by
-            simp only [consistentInterpolate]
-            ring
-
-/--
-With strictly positive particle masses, the nullspace of the actual consistent
-mass operator is exactly the nullspace of particle-center interpolation:
-`ker(Sᵀ W S) = ker(S)`.  No invertibility or uniqueness premise appears.
--/
-theorem consistentMass_kernel_eq_interpolation_kernel
-    {Particle Grid : Type*} [Fintype Particle] [Fintype Grid]
-    (particles : Particle → ProjectionParticle)
-    (weight : Particle → Grid → ℚ)
-    (positiveMass : ∀ particle, 0 < (particles particle).mass)
-    (gridVelocity : Grid → Vec3) :
-    consistentMassApply particles weight gridVelocity = 0 ↔
-      (fun particle =>
-        consistentInterpolate weight gridVelocity particle) = 0 := by
-  constructor
-  · intro inMassKernel
-    funext particle component
-    have quadraticZero :
-        (∑ candidate : Particle,
-          (particles candidate).mass *
-            (consistentInterpolate weight gridVelocity candidate component) ^ 2) = 0 := by
-      rw [← consistentMass_gram_quadratic_component particles weight
-        gridVelocity component]
-      simp only [inMassKernel, Pi.zero_apply, mul_zero, Finset.sum_const_zero]
-    have everyWeightedSquareZero :=
-      (Finset.sum_eq_zero_iff_of_nonneg
-        (fun candidate _ =>
-          mul_nonneg (positiveMass candidate).le
-            (sq_nonneg
-              (consistentInterpolate weight gridVelocity candidate component)))).mp
-        quadraticZero
-    have weightedSquareZero :=
-      everyWeightedSquareZero particle (Finset.mem_univ particle)
-    have interpolationSquareZero :
-        (consistentInterpolate weight gridVelocity particle component) ^ 2 = 0 :=
-      (mul_eq_zero.mp weightedSquareZero).resolve_left
-        (positiveMass particle).ne'
-    exact sq_eq_zero_iff.mp interpolationSquareZero
-  · intro inInterpolationKernel
-    rw [consistentMass_is_gram_operator]
-    funext grid component
-    simp only [weightedShapeTransposeApply, Pi.zero_apply]
-    apply Finset.sum_eq_zero
-    intro particle _
-    have reconstructedZero :
-        consistentInterpolate weight gridVelocity particle = 0 :=
-      congrFun inInterpolationKernel particle
-    rw [congrFun reconstructedZero component]
-    ring
-
 /-- The exact finite normal equation `M v = q`. -/
 def IsConsistentProjectionSolution
     {Particle Grid : Type*} [Fintype Particle] [Fintype Grid]
@@ -230,41 +90,6 @@ def ConsistentProjectionUnique
     IsConsistentProjectionSolution particles weight left →
     IsConsistentProjectionSolution particles weight right →
     left = right
-
-/--
-Any two exact solutions of the same finite consistent normal equation have the
-same particle-center reconstruction when all particle masses are strictly
-positive.  Grid solutions may differ by a singular null mode; invertibility,
-a pseudoinverse, and a preferred representative are deliberately absent.
--/
-theorem consistentProjection_solutions_have_equal_reconstruction
-    {Particle Grid : Type*} [Fintype Particle] [Fintype Grid]
-    (particles : Particle → ProjectionParticle)
-    (weight : Particle → Grid → ℚ)
-    (positiveMass : ∀ particle, 0 < (particles particle).mass)
-    (left right : Grid → Vec3)
-    (leftSolution : IsConsistentProjectionSolution particles weight left)
-    (rightSolution : IsConsistentProjectionSolution particles weight right) :
-    (fun particle => consistentInterpolate weight left particle) =
-      fun particle => consistentInterpolate weight right particle := by
-  let difference : Grid → Vec3 := fun grid => left grid - right grid
-  have differenceInMassKernel :
-      consistentMassApply particles weight difference = 0 := by
-    funext grid component
-    have leftEquation := congrFun (congrFun leftSolution grid) component
-    have rightEquation := congrFun (congrFun rightSolution grid) component
-    simp only [consistentMassApply, difference, Pi.zero_apply]
-    simp_rw [Pi.sub_apply, mul_sub]
-    rw [Finset.sum_sub_distrib, leftEquation, rightEquation, sub_self]
-  have differenceInInterpolationKernel :=
-    (consistentMass_kernel_eq_interpolation_kernel particles weight
-      positiveMass difference).mp differenceInMassKernel
-  funext particle component
-  have reconstructedDifferenceZero :=
-    congrFun (congrFun differenceInInterpolationKernel particle) component
-  simp only [consistentInterpolate, difference, Pi.sub_apply, mul_sub,
-    Finset.sum_sub_distrib, Pi.zero_apply] at reconstructedDifferenceZero
-  exact sub_eq_zero.mp reconstructedDifferenceZero
 
 /-- Explicit finite basis properties used by the projection proofs. -/
 structure ConsistentBasisAssumptions

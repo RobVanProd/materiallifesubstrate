@@ -69,13 +69,14 @@ Lean kernel build is authoritative for theorem acceptance.
   an exact discrepancy formula. It assumes only the displayed finite-stencil
   moments and explicit inverse witnesses; it is not a mechanics model.
 - `ConsistentProjection.lean`: the exact finite full consistent-mass operator,
-  including the executable Gram factorization `M = Sᵀ W S`; the equality
-  `ker(M) = ker(S)` under explicitly strictly positive particle masses; and
-  the resulting theorem that any two exact, possibly non-unique grid solutions
-  reconstruct identical particle-center velocities. The nullspace results do
-  not assume invertibility or select a pseudoinverse representative. Existing
-  affine recovery, linear-momentum, and orbital-angular-momentum results remain
-  scoped to their displayed basis/solution assumptions.
+  affine recovery, and linear/orbital-angular momentum results, scoped to their
+  displayed basis/solution assumptions.
+- `ProjectionNullspace.lean`: a separately compiled exact-rational layer with
+  the executable Gram factorization `M = Sᵀ W S`; `ker(M) = ker(S)` under
+  explicitly strictly positive particle masses; and the resulting theorem that
+  any two exact, possibly non-unique grid solutions reconstruct identical
+  particle-center velocities. It assumes no invertibility and selects no
+  pseudoinverse representative.
 - `AxiomReport.lean`: committed `#print axioms` coverage for every theorem
   exported by all project modules; CI checks declarations against this list.
 

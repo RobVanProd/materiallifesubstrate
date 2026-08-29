@@ -8,6 +8,7 @@ import MLSFormal.TransferLab
 import MLSFormal.AffineAdvection
 import MLSFormal.MovingAPICLimit
 import MLSFormal.ConsistentProjection
+import MLSFormal.ProjectionNullspace
 
 /-!
 Complete kernel axiom report for every theorem exported by the MLSFormal
