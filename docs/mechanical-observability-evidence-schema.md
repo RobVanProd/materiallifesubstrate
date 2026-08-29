@@ -576,7 +576,7 @@ file SHA-256.
 The validator accepts `--validator-sha256 <lowercase64>` and emits that pin
 verbatim after executing those exact bytes; without the option it hashes its
 own file. The frozen release-validator SHA-256 is
-`a953eb095f65d280f4a80e8e1a8d3be756bc9047d58c39368ddb7f04a2444890`.
+`8aeee52a6b05354a905941a86902562a2404ce7424b959d9dab8d605b306a87f`.
 The outer seal always supplies and rechecks that exact pin. A valid claim
 disagreement, byte divergence, or failed derived gate is evidence and produces
 no promotion; malformed structure, noncanonical bytes, invalid provenance, an
