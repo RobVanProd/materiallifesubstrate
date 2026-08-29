@@ -225,16 +225,28 @@ are recorded even when one determines the bounded-decision string.
 
 ## 9. Evidence and replication gate
 
-The full bundle must contain deterministic tables for systems, particles,
-nodes, stencils including analytic gradients, sparse `M`, `q`, witnesses,
-PCG error separation, high precision, null vectors, per-mode gradient metrics,
-checkpoint/state-boundary controls, summary, and SHA-256 manifest.
+The full bundle must contain deterministic tables for all 76 systems and their
+witness, PCG-error-separation, condition, checkpoint/state-boundary, and
+decision metrics. Complete particles, nodes, stencils including analytic
+gradients, sparse `M`, and `q` are emitted for the 14-system union of the four
+high-precision and ten nullspace selections. Those are every system that can
+determine the solver/nullspace decision. Exporting duplicate full level-2
+assemblies for the other 62 metric-only systems would add roughly a gigabyte
+per repeat without strengthening the decisive independent checks.
+
+Every system row records `assembly_exported` and a canonical assembly-payload
+SHA-256. An unexported system must have no stray raw assembly rows. A selected
+high-precision or nullspace system without a complete assembly export fails.
+This evidence-storage boundary does not change the 76-system numerical sweep,
+its metrics, or any gate.
 
 All binary64 inputs are emitted as canonical hexadecimal floating literals;
 higher-precision outputs use canonical decimal strings. The independent
-validator rebuilds `M` and `q` from `S,W,V`, recomputes witness and null-mode
-relations, validates the 76/4/10 selection, recomputes decisions, and rejects
-missing/extra/duplicate or silently inapplicable rows.
+validator rebuilds `M` and `q` from `S,W,V` for all 14 exported decisive
+systems, recomputes their witness and null-mode relations, validates all 76
+metric rows and the 76/4/10 selection, recomputes decisions, and rejects
+missing/extra/duplicate, inconsistent digest, stray raw, or silently
+inapplicable rows.
 
 Before sealing: two full executions must be byte-identical; C++ tests must pass
 under local warnings-as-errors and CI Linux GCC, Linux Clang, and Windows/MSVC;
