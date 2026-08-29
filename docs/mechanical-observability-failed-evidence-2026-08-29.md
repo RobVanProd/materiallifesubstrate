@@ -24,3 +24,35 @@ packet as `built`; it is more than three orders of magnitude below the frozen
 `1e10` condition limit. The rejected result exposed an invalid direct equality
 between condition estimates from different arithmetic paths, not a changed
 scientific decision.
+
+After that cross-arithmetic validator defect was corrected, the next failure
+was the QRCP pivot order at step 99 of
+`base.bcc35.r105.original.B`. The producer selected original column 1 while an
+independent Decimal replay selected original column 24. Their suffix norms
+were approximately `1.31e-15` and `1.41e-15`, respectively, but the frozen
+ambiguity lower bound was `5.158849339689051e-12`. Both pivots were rejected;
+both traces produced rank 99, nullity 6, rigid rank 6, non-rigid nullity 0,
+and no ambiguity. The corrected validator preserves maximal-pivot checking at
+or above the frozen lower bound, independently replays the claimed path and a
+greedy path, and permits different pivot order only in a suffix wholly below
+that bound. It does not change the rank threshold or residual gates.
+
+With the condition and QRCP checks corrected, both untouched bundles reached
+the same first substantive rejection:
+`base.filament.r205.original.rotation_translation.C` reported a rigid basis of
+width five even though exact dyadic analysis of its emitted binary64 packet
+positions gave affine rank three and rigid-generator rank six. Coordinate-wise
+rounding of the intended rational rotation and translation had made the
+filament microscopically three-dimensional; several transformed sheets were
+likewise microscopically nonplanar. Full-a rejected after `561.974 s` and
+full-b after `688.688 s`. The 21-file trees remained byte-identical with zero
+SHA-256 differences.
+
+The rejected bundles were not repaired. Before a new full run, the diagnostic
+fixture rule was amended to realize rational configurations on a common
+`2^-50 m` dyadic affine lattice, with exact integer bounds and independent
+topology replay. The generic jittered case has a measured worst departure from
+the ideal rational coordinates of exactly
+`31397/253327479039590400 m` (about `1.2393839041477703e-13 m`); this corrected
+the narrower preliminary estimate without changing a scientific tolerance,
+rank rule, candidate, or decision rule.
