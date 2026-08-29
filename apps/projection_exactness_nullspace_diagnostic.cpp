@@ -137,7 +137,7 @@ constexpr std::string_view nullspace_metric_header =
     "mz_l2_kg_m_per_s,mz_denominator_kg_m_per_s,mz_normalized,"
     "sz_l2_m_per_s,sz_denominator_m_per_s,sz_normalized,"
     "gradient_max_per_s,gradient_rms_per_s,gradient_roundoff_bound_per_s,"
-    "visibility_ratio,gradient_visible,alpha_m_per_s,representative_component,"
+    "visibility_ratio,gradient_visible,alpha_dimensionless,representative_component,"
     "representative_kind,base_residual_normalized,shifted_residual_normalized,"
     "reconstruction_delta_normalized,phase,orientation,promotion_eligible,pass";
 
@@ -2194,7 +2194,7 @@ struct SummaryState final {
            << bool_text(state.witness_all) << ",\n"
            << "  \"authoritative_input_sha256\": {\n"
            << "    \"contract\": \"4cbd68a597c15a015ee545293608f7887c387df5c31c87b5fd42e49699348224\",\n"
-           << "    \"independent_oracle\": \"c3d2404640d9627fe081e97f4bae2fbf8523686cea846f6cce528ee7a4175a5c\",\n"
+           << "    \"independent_oracle_canonical\": \"3e8565277a5b0cfad5497950fe30f59f86616034e6e90535d7adaf1ec2029a42\",\n"
            << "    \"preregistration\": \"ce7771b75fdf6c076d6ef42cae57d497fc32ae8e0e73f0b5bf9dfa7162969d32\"\n"
            << "  },\n"
            << "  \"branch\": \"projection-exactness-nullspace-lab\",\n"
