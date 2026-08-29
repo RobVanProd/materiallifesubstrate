@@ -247,7 +247,7 @@ VALID_DECISIONS = RETENTION_DECISIONS | {
     STOP_DECISION,
     RECONSIDER_DECISION,
 }
-PINNED_VALIDATOR_SHA256 = "ebf9629dda1deeeeea81ad4661a1d145daa91fce0a6762918318cfc5eb8cd4bc"
+PINNED_VALIDATOR_SHA256 = "6fc972fb9510a6ee2d50a475f0978a9b1ce4d944d918f59eabbbd7e811bba7a7"
 OFFLINE_CLAIM_SCOPE = "integrity_and_independent_local_semantic_validation_only"
 UNAUTHENTICATED_EXTERNAL = "not_authenticated_by_offline_seal"
 
