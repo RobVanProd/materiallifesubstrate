@@ -104,9 +104,12 @@ evidence. No disconnected or underconnected result is dropped.
 
 Exact Fraction RREF preregisters expected central ranks/nullities:
 `K4=6/6`, `K4-minus-edge=5/7`, `octahedron=12/6`, and
-`square-plus-diagonal=5/7`. The volume-enriched square expectation is tested,
-not assumed; if its exact rank is not `6`, the counterexample is preserved and
-the preregistration records the actual oracle result before any full sweep.
+`square-plus-diagonal=5/7`. Before any C++ full sweep, the independent
+Fraction oracle confirmed that adding the registered oriented-volume
+derivative gives the square rank/nullity `6/6`; its canonical pre-hash is
+`86b4d4c3d024f3cee683cf90ee6e757b68b4e57d55ad607bde84d87e111c0a83`.
+This confirmation freezes D's only enrichment type; it is not final numerical
+candidate evidence.
 
 ## 4. Metamorphic matrix
 
