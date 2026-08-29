@@ -1999,6 +1999,52 @@ def derive_generic_solid_facts(
     }
 
 
+TRANSFORM_TOPOLOGY_FACT_FIELDS = (
+    ("affine_rank", "affine rank"),
+    ("connected", "connectivity"),
+    ("edge_count", "edge count"),
+    ("edge_lower_bound", "edge lower bound"),
+    ("minimum_direction_rank", "minimum incident-direction rank"),
+    ("rigid_rank", "rigid-generator rank"),
+    ("generic_solid_gate", "generic-solid gate"),
+)
+
+
+def validate_transform_topology_preservation(
+    configurations: Mapping[str, Mapping[str, str]],
+    topology: Mapping[str, Mapping[str, Any]],
+) -> None:
+    """Bind every registered transform to its base's emitted-state topology.
+
+    Every compared value is reconstructed from packet coordinates and relation
+    rows before this function is called.  Producer configuration facts and
+    invariance-table claims are intentionally not inputs to the comparison.
+    """
+
+    require(set(configurations) == set(topology),
+            "transform-topology configuration inventory mismatch")
+    for configuration_id in sorted(configurations):
+        configuration = configurations[configuration_id]
+        base_id = configuration["base_configuration_id"]
+        variant = configuration["variant"]
+        if base_id == configuration_id:
+            require(variant == "original",
+                    f"{configuration_id}: base configuration is not original")
+            continue
+        require(variant != "original" and base_id in topology,
+                f"{configuration_id}: transformed configuration has no registered base")
+        current = topology[configuration_id]
+        base = topology[base_id]
+        for field, label in TRANSFORM_TOPOLOGY_FACT_FIELDS:
+            require(current[field] == base[field],
+                    f"{configuration_id}: transformed emitted-state {label} differs from base")
+        require(
+            tuple(current["canonical_retained_relation_ids"])
+            == tuple(base["canonical_retained_relation_ids"]),
+            f"{configuration_id}: transformed canonical retained relation IDs differ from base",
+        )
+
+
 def q_rigid_generators(
     positions: Mapping[int, tuple[Q, Q, Q]],
 ) -> list[list[Q]]:
@@ -2167,6 +2213,7 @@ def validate_relations(
         )
         require(configuration["relation_payload_sha256"] == digest, f"{configuration_id}: relation digest")
         relation_ids: set[str] = set()
+        retained_relation_ids: list[str] = []
         retained_edges: list[tuple[int, int]] = []
         deleted_edges: list[tuple[int, int]] = []
         volumes: list[tuple[int, int, int, int]] = []
@@ -2212,6 +2259,7 @@ def validate_relations(
                         f"{configuration_id}/{relation_id}: bond provenance")
                 if status == "retained":
                     retained_edges.append((first, second))
+                    retained_relation_ids.append(relation_id)
                     incident[first].add(second)
                     incident[second].add(first)
                 else:
@@ -2244,6 +2292,7 @@ def validate_relations(
                 require(row["selection_source"] == expected_source,
                         f"{configuration_id}/{relation_id}: volume provenance")
                 volumes.append(sites)
+                retained_relation_ids.append(relation_id)
         require(len(retained_edges) == len(set(retained_edges)), f"{configuration_id}: duplicate retained edge")
         require(len(deleted_edges) == len(set(deleted_edges)), f"{configuration_id}: duplicate deleted edge")
         require(not set(retained_edges) & set(deleted_edges), f"{configuration_id}: retained/deleted overlap")
@@ -2307,19 +2356,33 @@ def validate_relations(
             "deleted_edges": deleted_edges,
             "volumes": volumes,
             "references": references,
+            "canonical_retained_relation_ids": tuple(sorted(retained_relation_ids)),
+            "affine_rank": affine_rank,
+            "connected": connected,
+            "edge_count": len(retained_edges),
+            "edge_lower_bound": edge_lower_bound,
+            "minimum_direction_rank": minimum_direction_rank,
             "generic_solid_gate": generic_gate,
             "rigid_rank": rigid_rank,
             "expected_enrichment": expected_enrichment,
         }
     configurations_by_id = {row["configuration_id"]: row for row in configurations}
+    validate_transform_topology_preservation(configurations_by_id, topology)
     for configuration_id, configuration in configurations_by_id.items():
         base_id = configuration["base_configuration_id"]
         if base_id == configuration_id or base_id not in topology:
             topology[configuration_id]["base_topology_match"] = True
             topology[configuration_id]["base_relation_ids_match"] = True
             continue
+        derived_fact_match = all(
+            topology[configuration_id][field] == topology[base_id][field]
+            for field, _label in TRANSFORM_TOPOLOGY_FACT_FIELDS
+        )
         topology[configuration_id]["base_topology_match"] = (
-            topology[configuration_id]["retained_edges"]
+            derived_fact_match
+            and topology[configuration_id]["canonical_retained_relation_ids"]
+            == topology[base_id]["canonical_retained_relation_ids"]
+            and topology[configuration_id]["retained_edges"]
             == topology[base_id]["retained_edges"]
             and topology[configuration_id]["deleted_edges"]
             == topology[base_id]["deleted_edges"]
@@ -5633,7 +5696,7 @@ def rectangular_q(nx: int, ny: int, nz: int, spacing: Q = Q(1, 4)) -> list[tuple
     ]
 
 
-def frozen_geometry() -> dict[str, dict[str, Any]]:
+def ideal_frozen_geometry() -> dict[str, dict[str, Any]]:
     a = Q(1, 4)
     bases: dict[str, dict[str, Any]] = {}
 
@@ -5726,6 +5789,127 @@ def frozen_geometry() -> dict[str, dict[str, Any]]:
     return bases
 
 
+AFFINE_LATTICE_FRACTION_BITS = 50
+AFFINE_LATTICE_DENOMINATOR = 1 << AFFINE_LATTICE_FRACTION_BITS
+MAXIMUM_EXACT_BINARY64_INTEGER = 1 << 53
+SIGNED_INT64_MIN = -(1 << 63)
+SIGNED_INT64_MAX = (1 << 63) - 1
+
+
+def round_fraction_to_affine_ticks(value: Q) -> int:
+    """Round an exact rational to q=2^-50 m using ties-to-even."""
+
+    scaled_numerator = abs(value.numerator) * AFFINE_LATTICE_DENOMINATOR
+    quotient, remainder = divmod(scaled_numerator, value.denominator)
+    doubled = 2 * remainder
+    if doubled > value.denominator or (
+        doubled == value.denominator and quotient % 2 == 1
+    ):
+        quotient += 1
+    return -quotient if value < 0 else quotient
+
+
+def quantized_affine_realization(
+    points: Sequence[tuple[Q, Q, Q]],
+    jitter: Sequence[tuple[Q, Q, Q]],
+    scale: Q,
+    rotate: bool,
+    translate: bool,
+) -> tuple[list[tuple[Q, Q, Q]], list[tuple[Q, Q, Q]]]:
+    """Independently realize one registered fixture on its common q50 frame."""
+
+    require(len(points) == len(jitter), "q50 point/jitter inventory mismatch")
+    coordinate_denominator = math.lcm(*(
+        component.denominator
+        for vector in (*points, *jitter)
+        for component in vector
+    ))
+    translation = TRANSLATION_Q if translate else (Q(0), Q(0), Q(0))
+    origin_ticks = tuple(
+        round_fraction_to_affine_ticks(component) for component in translation
+    )
+    basis_ticks: list[tuple[int, int, int]] = []
+    for input_axis in range(3):
+        basis = tuple(
+            Q(1, coordinate_denominator) if axis == input_axis else Q(0)
+            for axis in range(3)
+        )
+        transformed = q_matvec(ROTATION_Q, basis) if rotate else basis
+        basis_ticks.append(tuple(
+            round_fraction_to_affine_ticks(scale * component)
+            for component in transformed
+        ))
+
+    def checked_int64(value: int, where: str) -> int:
+        require(SIGNED_INT64_MIN <= value <= SIGNED_INT64_MAX,
+                f"{where}: signed-int64 reconstruction overflow")
+        return value
+
+    def realize(value: tuple[Q, Q, Q], include_origin: bool) -> tuple[Q, Q, Q]:
+        coordinates: list[int] = []
+        for component in value:
+            require(coordinate_denominator % component.denominator == 0,
+                    "q50 coordinate denominator does not divide common frame")
+            coordinates.append(checked_int64(
+                component.numerator
+                * (coordinate_denominator // component.denominator),
+                "q50 integer coordinate",
+            ))
+        ticks = list(origin_ticks if include_origin else (0, 0, 0))
+        for input_axis in range(3):
+            for output_axis in range(3):
+                term = checked_int64(
+                    coordinates[input_axis] * basis_ticks[input_axis][output_axis],
+                    "q50 basis product",
+                )
+                ticks[output_axis] = checked_int64(
+                    ticks[output_axis] + term, "q50 affine sum"
+                )
+        require(all(abs(tick) <= MAXIMUM_EXACT_BINARY64_INTEGER for tick in ticks),
+                "q50 emitted numerator exceeds exact binary64 range")
+        return tuple(Q(tick, AFFINE_LATTICE_DENOMINATOR) for tick in ticks)  # type: ignore[return-value]
+
+    return (
+        [realize(point, True) for point in points],
+        [realize(offset, False) for offset in jitter],
+    )
+
+
+def frozen_geometry() -> dict[str, dict[str, Any]]:
+    """Return the independently reconstructed q50 authoritative fixtures."""
+
+    ideal = ideal_frozen_geometry()
+    variant_specs = {
+        "translation": (Q(1), False, True),
+        "rotation": (Q(1), True, False),
+        "rotation_translation": (Q(1), True, True),
+        "scale_half_rotation": (Q(1, 2), True, False),
+        "scale_double_rotation": (Q(2), True, False),
+    }
+    variant_by_id = {
+        f"{base_id}.{variant}": (base_id, scale, rotate, translate)
+        for base_id in A_REPRESENTATIVES
+        for variant, (scale, rotate, translate) in variant_specs.items()
+    }
+    result: dict[str, dict[str, Any]] = {}
+    for configuration_id, specification in ideal.items():
+        if configuration_id in variant_by_id:
+            base_id, scale, rotate, translate = variant_by_id[configuration_id]
+            source = ideal[base_id]
+        else:
+            scale, rotate, translate = Q(1), False, False
+            source = specification
+        positions, jitter = quantized_affine_realization(
+            source["positions"], source["jitter"], scale, rotate, translate
+        )
+        result[configuration_id] = {
+            **specification,
+            "positions": positions,
+            "jitter": jitter,
+        }
+    return result
+
+
 def rational_binary64_text(value: Q) -> str:
     result = float(value)
     if result == 0.0:
@@ -5736,8 +5920,13 @@ def rational_binary64_text(value: Q) -> str:
 def validate_frozen_geometry(
     configurations: Mapping[str, Mapping[str, str]],
     packet_rows: Mapping[str, list[dict[str, str]]],
+    *,
+    legacy_nonfull_fixture: bool = False,
 ) -> None:
-    expected = frozen_geometry()
+    # The byte-authentic smoke/failure fixtures predate the q50 amendment and
+    # are accepted only under the explicit non-sealable --allow-smoke route.
+    # Full producer evidence is bound to the amended common affine lattice.
+    expected = ideal_frozen_geometry() if legacy_nonfull_fixture else frozen_geometry()
     require(set(configurations) <= set(expected), "configuration outside frozen geometry matrix")
     for config_id, config in configurations.items():
         spec = expected[config_id]
@@ -6359,7 +6548,11 @@ def validate_snapshot_bundle(bundle: Path, *, allow_smoke: bool) -> Mapping[str,
     packet_rows, positions_d, positions_q = validate_packet_tables(
         tables["configurations.csv"], tables["packets.csv"]
     )
-    validate_frozen_geometry(configurations_by_id, packet_rows)
+    validate_frozen_geometry(
+        configurations_by_id,
+        packet_rows,
+        legacy_nonfull_fixture=summary["mode"] != "full",
+    )
     neighbors, neighbor_lookup_all_agree = validate_neighbors(
         tables["configurations.csv"], tables["neighbor_pairs.csv"], positions_d
     )

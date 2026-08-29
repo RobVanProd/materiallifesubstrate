@@ -56,12 +56,23 @@ field, scientific tolerance, numerical-rank threshold, ambiguity band,
 residual rule, or decision rule. It specifies a correlated binary64
 realization of the already registered rational transforms so a rigid transform
 does not acquire a false geometric dimension solely through independently
-rounded coordinates. A q=50 pre-run diagnostic bounded the largest coordinate
-departure from the ideal rational transforms by `2.78e-15 m`, retained the
-registered filament and sheet edge inventories, and remained more than four
-orders of magnitude inside the unchanged spectral-invariance tolerances. Those
-diagnostics are design checks only; the regenerated producer evidence must
-pass the frozen gates independently.
+rounded coordinates. The initial narrow filament/sheet q=50 precheck reported
+`2.78e-15 m`; that number was not a generic bound because it did not exercise
+the `D=400` jitter coordinate lattice. A subsequent independent audit of every
+registered rational packet fixture found the exact worst departure
+`31397/253327479039590400 m = 1.2393839041477703e-13 m` at
+`base.jitter27.r180.original.scale_double_rotation`, packet 25, z. Among the
+untransformed jitter packet rows the exact maximum is
+`2277/28147497671065600 m = 8.08952904662874e-14 m`. The amended construction
+still retains the registered topology and passes finite objectivity under the
+unchanged tolerances, but those are design checks only; the regenerated
+producer evidence must pass every frozen gate independently.
+
+The byte-authentic pre-amendment smoke and injected-failure regression
+fixtures remain readable only through the explicit non-full `--allow-smoke`
+test route. They cannot satisfy the full q50 geometry contract and are not
+sealable evidence. Every full producer bundle is validated against the common
+q50 reconstruction above.
 
 Two narrower responses were rejected. Lowering or bypassing the exact-rank
 check would hide actual emitted-state topology and weaken the registered gate.
@@ -151,6 +162,15 @@ The affine-span, incident-direction, and rigid-generator eligibility ranks are
 computed exactly over the rational values represented by the emitted
 binary64 coordinates (dyadic arithmetic, no floating rank threshold). The
 producer and independent validator must agree exactly on those topology facts.
+For each registered non-original transform, the validator must also compare
+the independently reconstructed affine rank, connectivity, edge count and
+lower bound, minimum incident-direction rank, rigid-generator rank,
+generic-solid gate, and canonical retained relation IDs with the registered
+base. This transform-topology gate consumes emitted packet/relation state, not
+producer fact fields or invariance claims, and admits no tolerance. It changes
+neither an observability threshold nor a scientific decision rule; it prevents
+a numerical realization of a registered rigid transform from silently
+changing the physical fixture.
 
 ## 3. Frozen base configuration matrix
 

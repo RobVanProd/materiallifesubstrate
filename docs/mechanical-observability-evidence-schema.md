@@ -42,6 +42,16 @@ sampling_operator_id,derivative_operator_id,configuration_id,lookup_phase,node_i
 configuration_id,relation_index,relation_id,relation_kind,center_id,first_id,second_id,third_id,selection_status,selection_source,reference_value,reference_units,selection_score_m4
 ```
 
+For every non-original registered configuration, the independent validator
+reconstructs from `packets.csv` and `relations.csv` the affine rank,
+connectivity, retained-edge count and lower bound, minimum incident-direction
+rank, rigid-generator rank, generic-solid gate, and sorted canonical retained
+relation IDs. Each value must equal the independently reconstructed value for
+the registered base configuration. Producer configuration fields and
+`invariance.csv` claims do not participate in that comparison. These are exact
+topology equalities over emitted binary64 state; there is no comparison
+tolerance.
+
 `operator_status.csv`
 
 ```text

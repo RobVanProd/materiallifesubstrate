@@ -5276,7 +5276,7 @@ def exercise_rejected_jitter_condition_regression(module: ModuleType) -> int:
 
     configuration_id = "base.jitter27.r105.original"
     packet_id = 4
-    specification = module.frozen_geometry()[configuration_id]
+    specification = module.ideal_frozen_geometry()[configuration_id]
     positions = {
         index: tuple(Decimal.from_float(float(value)) for value in position)
         for index, position in enumerate(specification["positions"], start=1)
@@ -5353,6 +5353,153 @@ def exercise_rejected_jitter_condition_regression(module: ModuleType) -> int:
     return 3
 
 
+def exercise_q50_geometry_regression(module: ModuleType) -> int:
+    """Bind the independent common-frame reconstruction and its worst errors."""
+
+    ideal = module.ideal_frozen_geometry()
+    emitted = module.frozen_geometry()
+    if emitted != module.frozen_geometry() or set(emitted) != set(ideal):
+        raise AssertionError("q50 frozen geometry is not deterministic")
+
+    worst = (module.Q(0), "", 0, 0)
+    original_jitter_worst = (module.Q(0), "", 0, 0)
+    for configuration_id in sorted(ideal):
+        for packet_index, (ideal_point, emitted_point) in enumerate(zip(
+            ideal[configuration_id]["positions"],
+            emitted[configuration_id]["positions"],
+            strict=True,
+        ), start=1):
+            for axis, (ideal_value, emitted_value) in enumerate(zip(
+                ideal_point, emitted_point, strict=True
+            )):
+                tick = emitted_value * module.AFFINE_LATTICE_DENOMINATOR
+                if tick.denominator != 1 \
+                        or abs(tick.numerator) > module.MAXIMUM_EXACT_BINARY64_INTEGER:
+                    raise AssertionError("q50 emitted coordinate left exact binary64 range")
+                departure = abs(ideal_value - emitted_value)
+                if departure > worst[0]:
+                    worst = (departure, configuration_id, packet_index, axis)
+                if configuration_id.startswith("base.jitter27.") \
+                        and configuration_id.endswith(".original") \
+                        and departure > original_jitter_worst[0]:
+                    original_jitter_worst = (
+                        departure, configuration_id, packet_index, axis
+                    )
+        for offset in emitted[configuration_id]["jitter"]:
+            for value in offset:
+                tick = value * module.AFFINE_LATTICE_DENOMINATOR
+                if tick.denominator != 1 \
+                        or abs(tick.numerator) > module.MAXIMUM_EXACT_BINARY64_INTEGER:
+                    raise AssertionError("q50 jitter offset left exact binary64 range")
+
+    expected_worst = (
+        module.Q(31397, 253327479039590400),
+        "base.jitter27.r180.original.scale_double_rotation",
+        25,
+        2,
+    )
+    expected_original_jitter = (
+        module.Q(2277, 28147497671065600),
+        "base.jitter27.r105.original",
+        9,
+        0,
+    )
+    if worst != expected_worst or original_jitter_worst != expected_original_jitter:
+        raise AssertionError(
+            "q50 generic departure provenance changed: "
+            f"{worst!r}, {original_jitter_worst!r}"
+        )
+    return 3
+
+
+def exercise_rejected_transform_topology_regression(module: ModuleType) -> int:
+    """Reproduce the pre-q50 filament/sheet topology lifts from emitted bits."""
+
+    geometry = module.ideal_frozen_geometry()
+    cases = (
+        (
+            "base.filament.r205.original",
+            "base.filament.r205.original.rotation_translation",
+            (1, 3, 1, 2, 5, 6),
+        ),
+        (
+            "base.sheet.r150.original",
+            "base.sheet.r150.original.rotation_translation",
+            (2, 3, 2, 3, 6, 6),
+        ),
+    )
+    rejected = 0
+    for base_id, transformed_id, expected in cases:
+        topology: dict[str, dict[str, Any]] = {}
+        configurations = {
+            base_id: {
+                "base_configuration_id": base_id,
+                "variant": "original",
+            },
+            transformed_id: {
+                "base_configuration_id": base_id,
+                "variant": "rotation_translation",
+            },
+        }
+        for configuration_id in (base_id, transformed_id):
+            specification = geometry[configuration_id]
+            positions = {
+                index + 1: tuple(
+                    module.fraction64(
+                        module.rational_binary64_text(component),
+                        f"{configuration_id}/{index}/{axis}",
+                    )
+                    for axis, component in enumerate(point)
+                )
+                for index, point in enumerate(specification["positions"])
+            }
+            support = module.fraction64(
+                module.rational_binary64_text(specification["support"]),
+                f"{configuration_id}/support",
+            )
+            retained_edges = [
+                (first, second)
+                for first, second in itertools.combinations(sorted(positions), 2)
+                if 0 < sum(
+                    (positions[second][axis] - positions[first][axis]) ** 2
+                    for axis in range(3)
+                ) < support * support
+            ]
+            facts = module.derive_generic_solid_facts(
+                positions, retained_edges, True
+            )
+            topology[configuration_id] = {
+                **facts,
+                "canonical_retained_relation_ids": tuple(
+                    f"bond.{first}.{second}" for first, second in retained_edges
+                ),
+            }
+        base = topology[base_id]
+        transformed = topology[transformed_id]
+        observed = (
+            base["affine_rank"], transformed["affine_rank"],
+            base["minimum_direction_rank"],
+            transformed["minimum_direction_rank"],
+            base["rigid_rank"], transformed["rigid_rank"],
+        )
+        if observed != expected:
+            raise AssertionError(
+                f"rejected transform-topology fixture changed: {transformed_id} "
+                f"{observed!r} != {expected!r}"
+            )
+        try:
+            module.validate_transform_topology_preservation(
+                configurations, topology
+            )
+        except module.InvalidBundle:
+            rejected += 1
+        else:
+            raise AssertionError(
+                f"rejected emitted-state topology lift was accepted: {transformed_id}"
+            )
+    return rejected
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     root = Path(__file__).resolve().parents[1]
@@ -5373,6 +5520,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
     mutations = exercise_rejected_jitter_condition_regression(module)
+    mutations += exercise_q50_geometry_regression(module)
+    mutations += exercise_rejected_transform_topology_regression(module)
     with tempfile.TemporaryDirectory(prefix="mls-mechanical-validator-") as temporary:
         root_path = Path(temporary)
         base = root_path / "base"
@@ -6300,6 +6449,34 @@ def main(argv: Sequence[str] | None = None) -> int:
                 .__setitem__("value", hx(0.123)),
             ),
         )
+
+        reject(
+            "transformed-rigid-config-fact",
+            lambda bundle: mutate_csv(
+                bundle, "configurations.csv",
+                lambda rows: next(
+                    row for row in rows
+                    if row["configuration_id"]
+                    == "base.filament.r205.original.translation"
+                ).__setitem__("rigid_generator_rank", "6"),
+            ),
+        )
+
+        def transformed_rigid_q_width(bundle: Path) -> None:
+            operator_id = "base.filament.r205.original.translation.C"
+            fields, rows = read_csv(bundle / "rigid_basis.csv")
+            rows = [
+                row for row in rows
+                if not (
+                    row["operator_id"] == operator_id
+                    and row["basis_kind"] == "orthonormal"
+                    and row["mode_index"] == "4"
+                )
+            ]
+            write_csv(bundle / "rigid_basis.csv", fields, rows)
+            refresh_summary_row_counts(module, bundle)
+
+        reject("transformed-rigid-q-width", transformed_rigid_q_width)
 
         reject(
             "finite-value",
