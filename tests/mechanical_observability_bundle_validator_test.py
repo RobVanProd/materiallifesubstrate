@@ -5271,6 +5271,88 @@ def exercise_decision_state_machine(module: ModuleType) -> int:
     return cases
 
 
+def exercise_rejected_jitter_condition_regression(module: ModuleType) -> int:
+    """Preserve the exact binary64/Decimal mismatch found in full source 2e563ed."""
+
+    configuration_id = "base.jitter27.r105.original"
+    packet_id = 4
+    specification = module.frozen_geometry()[configuration_id]
+    positions = {
+        index: tuple(Decimal.from_float(float(value)) for value in position)
+        for index, position in enumerate(specification["positions"], start=1)
+    }
+    support = Decimal.from_float(float(specification["support"]))
+    _operator, reconstructed = module.reconstruct_corrected_gradient(
+        positions, support
+    )
+    ideal_eigenvalues = module.symmetric_eigenvalues3_decimal(
+        reconstructed[packet_id]["moment"]
+    )
+
+    emitted_moment_hex = (
+        ("0x1.fb07cab5e3708p-17", "0x1.8889d3b069aaap-13", "0x1.411a8799bef30p-14"),
+        ("0x1.8889d3b069aaap-13", "0x1.be619eb573809p-9", "0x1.6d843b7f82cabp-14"),
+        ("0x1.411a8799bef30p-14", "0x1.6d843b7f82cabp-14", "0x1.188a5ca4a55a8p-10"),
+    )
+    emitted_moment = [
+        [Decimal.from_float(float.fromhex(value)) for value in row]
+        for row in emitted_moment_hex
+    ]
+    emitted_smallest = Decimal.from_float(
+        float.fromhex("0x1.841739e9564f7p-32")
+    )
+    emitted_largest = Decimal.from_float(
+        float.fromhex("0x1.c03239ff449bdp-9")
+    )
+    emitted_condition = Decimal.from_float(
+        float.fromhex("0x1.27a5dfcfabdb0p+23")
+    )
+
+    ideal_condition = ideal_eigenvalues[-1] / ideal_eigenvalues[0]
+    obsolete_direct_budget = (
+        Decimal(8192) * module.EPS64 * max(Decimal(1), abs(ideal_condition))
+    )
+    if abs(emitted_condition - ideal_condition) <= obsolete_direct_budget:
+        raise AssertionError("frozen jitter condition no longer reproduces rejected mismatch")
+
+    status, _condition = module.validate_moment_spectrum_cross_arithmetic(
+        f"{configuration_id}.B/{packet_id}",
+        ideal_eigenvalues[0],
+        ideal_eigenvalues[-1],
+        emitted_moment,
+        emitted_smallest,
+        emitted_largest,
+        emitted_condition,
+        "built",
+    )
+    if status != "built":
+        raise AssertionError("frozen jitter condition changed classification")
+
+    altered_condition = Decimal.from_float(math.nextafter(
+        float(emitted_condition), math.inf
+    ))
+    for label, condition, claimed_status in (
+        ("altered-condition", altered_condition, "built"),
+        ("altered-classification", emitted_condition, "ill_conditioned_local_moment"),
+    ):
+        try:
+            module.validate_moment_spectrum_cross_arithmetic(
+                f"{configuration_id}.B/{packet_id}/{label}",
+                ideal_eigenvalues[0],
+                ideal_eigenvalues[-1],
+                emitted_moment,
+                emitted_smallest,
+                emitted_largest,
+                condition,
+                claimed_status,
+            )
+        except module.InvalidBundle:
+            pass
+        else:
+            raise AssertionError(f"frozen jitter {label} mutation was accepted")
+    return 3
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     root = Path(__file__).resolve().parents[1]
@@ -5290,7 +5372,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"({decision_state_cases} cases)"
         )
         return 0
-    mutations = 0
+    mutations = exercise_rejected_jitter_condition_regression(module)
     with tempfile.TemporaryDirectory(prefix="mls-mechanical-validator-") as temporary:
         root_path = Path(temporary)
         base = root_path / "base"

@@ -104,6 +104,18 @@ STOP.
 operator_id,packet_id,neighbor_count,m00_m2,m01_m2,m02_m2,m10_m2,m11_m2,m12_m2,m20_m2,m21_m2,m22_m2,symmetry_residual,smallest_eigenvalue_m2,largest_eigenvalue_m2,condition_number,condition_kind,inverse_residual_normalized,inverse_residual_tolerance,status,inverse_emitted
 ```
 
+Moment validation keeps the ideal-Decimal reconstruction and its frozen
+`2e-12*max(1,lambda_max)` spectrum bound. It also interprets every emitted
+binary64 moment cell as an exact Decimal, independently solves that `M64`, and
+checks the emitted spectrum under the same bound. The emitted condition field
+is the exact binary64 quotient of the emitted largest and smallest eigenvalue,
+not a direct numerical-equality claim against the ideal-Decimal condition
+number. The ideal-Decimal spectrum, high-precision `M64` spectrum, and emitted
+estimate must agree on the frozen singular and `1e10` condition
+classifications. Any disagreement is invalid. This is cross-arithmetic
+classification validation; it changes no scientific threshold or registered
+tolerance.
+
 `affine_objectivity.csv`
 
 ```text

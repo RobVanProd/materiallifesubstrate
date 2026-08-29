@@ -895,6 +895,99 @@ def symmetric_eigenvalues3_decimal(matrix: Sequence[Sequence[Decimal]]) -> list[
         return sorted(work[index][index] for index in range(3))
 
 
+def moment_spectrum_classification(
+    smallest: Decimal,
+    largest: Decimal,
+    condition: Decimal | None = None,
+) -> tuple[str, Decimal | None]:
+    """Apply the frozen singular/condition gates to one three-value spectrum."""
+
+    singular_floor = Decimal(64) * EPS64 * max(largest, MIN_NORMAL)
+    if not (largest > 0) or not (smallest > singular_floor):
+        return "singular_local_moment", None
+    resolved_condition = largest / smallest if condition is None else condition
+    return (
+        "ill_conditioned_local_moment"
+        if resolved_condition > Decimal("1e10") else "built",
+        resolved_condition,
+    )
+
+
+def validate_moment_spectrum_cross_arithmetic(
+    where: str,
+    ideal_smallest: Decimal,
+    ideal_largest: Decimal,
+    emitted_moment: Sequence[Sequence[Decimal]],
+    emitted_smallest: Decimal,
+    emitted_largest: Decimal,
+    emitted_condition: Decimal | None,
+    claimed_status: str,
+) -> tuple[str, Decimal | None]:
+    """Validate one condition estimate without equating distinct arithmetic paths."""
+
+    ideal_scale = max(Decimal(1), abs(ideal_largest))
+    require(
+        abs(emitted_smallest - ideal_smallest) <= Decimal("2e-12") * ideal_scale
+        and abs(emitted_largest - ideal_largest) <= Decimal("2e-12") * ideal_scale,
+        f"{where}: independent moment spectrum",
+    )
+
+    # The producer assembles M in binary64.  Preserve the separate ideal-
+    # Decimal check above, then independently solve the exact Decimal matrix
+    # whose entries are the emitted binary64 cells.  Comparing condition
+    # numbers across the two assembly paths directly is invalid for a nearly
+    # singular matrix: small entry perturbations can be amplified by kappa.
+    emitted_matrix_eigenvalues = symmetric_eigenvalues3_decimal(emitted_moment)
+    emitted_matrix_smallest = emitted_matrix_eigenvalues[0]
+    emitted_matrix_largest = emitted_matrix_eigenvalues[-1]
+    emitted_matrix_scale = max(Decimal(1), abs(emitted_matrix_largest))
+    require(
+        abs(emitted_smallest - emitted_matrix_smallest)
+        <= Decimal("2e-12") * emitted_matrix_scale
+        and abs(emitted_largest - emitted_matrix_largest)
+        <= Decimal("2e-12") * emitted_matrix_scale,
+        f"{where}: binary64-moment spectrum",
+    )
+
+    ideal_status, ideal_condition = moment_spectrum_classification(
+        ideal_smallest, ideal_largest
+    )
+    emitted_matrix_status, _emitted_matrix_condition = (
+        moment_spectrum_classification(
+            emitted_matrix_smallest, emitted_matrix_largest
+        )
+    )
+    emitted_estimate_status, _emitted_estimate_condition = (
+        moment_spectrum_classification(
+            emitted_smallest, emitted_largest, emitted_condition
+        )
+    )
+
+    if emitted_estimate_status == "singular_local_moment":
+        require(emitted_condition is None,
+                f"{where}: singular estimate condition must be NA")
+    else:
+        require(emitted_condition is not None,
+                f"{where}: nonsingular estimate condition is NA")
+        emitted_ratio_float = float(emitted_largest) / float(emitted_smallest)
+        require(math.isfinite(emitted_ratio_float),
+                f"{where}: nonfinite condition ratio")
+        require(
+            emitted_condition == Decimal.from_float(emitted_ratio_float),
+            f"{where}: condition is not exact binary64 eigenvalue ratio",
+        )
+
+    claimed_classification = (
+        "built" if claimed_status == "numerical_failure" else claimed_status
+    )
+    require(
+        ideal_status == emitted_matrix_status
+        == emitted_estimate_status == claimed_classification,
+        f"{where}: cross-arithmetic moment classification",
+    )
+    return ideal_status, ideal_condition
+
+
 def decimal_rank(matrix: Sequence[Sequence[Decimal]], tolerance: Decimal = Decimal("1e-40")) -> int:
     work = [list(row) for row in matrix]
     if not work:
@@ -2819,11 +2912,15 @@ def validate_b_moment_eligibility(
             moment = item["moment"]
             require(int(row["neighbor_count"]) == item["neighbor_count"],
                     f"{operator_id}/{packet_id}: independent neighbor count")
+            emitted_moment: list[list[Decimal]] = [
+                [Decimal(0) for _ in range(3)] for _ in range(3)
+            ]
             for matrix_row in range(3):
                 for matrix_column in range(3):
                     field = f"m{matrix_row}{matrix_column}_m2"
                     emitted = binary64(row[field], f"{operator_id}/{packet_id}/{field}")
                     assert emitted is not None
+                    emitted_moment[matrix_row][matrix_column] = emitted
                     require(close_decimal(emitted, moment[matrix_row][matrix_column],
                                           factor=Decimal("8e-14")),
                             f"{operator_id}/{packet_id}: moment entry mismatch")
@@ -2843,47 +2940,38 @@ def validate_b_moment_eligibility(
             emitted_largest = binary64(row["largest_eigenvalue_m2"],
                                        f"{operator_id}/{packet_id} largest")
             assert emitted_smallest is not None and emitted_largest is not None
-            eigen_scale = max(Decimal(1), abs(largest))
-            require(abs(emitted_smallest - smallest) <= Decimal("2e-12") * eigen_scale
-                    and abs(emitted_largest - largest) <= Decimal("2e-12") * eigen_scale,
-                    f"{operator_id}/{packet_id}: independent moment spectrum")
-            singular_floor = Decimal(64) * EPS64 * max(largest, MIN_NORMAL)
-            if not (largest > 0) or not (smallest > singular_floor):
-                expected_status = "singular_local_moment"
-                expected_condition: Decimal | None = None
-                expected_residual: Decimal | None = None
-            else:
-                expected_condition = largest / smallest
-                if expected_condition > Decimal("1e10"):
-                    expected_status = "ill_conditioned_local_moment"
-                    expected_residual = None
-                else:
-                    inverse = decimal_inverse3(moment)
-                    residual_matrix = [
-                        [dsum(moment[row_index][inner] * inverse[inner][column_index]
-                              for inner in range(3)) - (Decimal(1) if row_index == column_index else Decimal(0))
-                         for column_index in range(3)]
-                        for row_index in range(3)
-                    ]
-                    expected_residual = decimal_matrix_norm(residual_matrix) / max(
-                        Decimal(1), decimal_matrix_norm(moment) * decimal_matrix_norm(inverse)
-                    )
-                    expected_status = "built" if expected_residual <= tolerance else "numerical_failure"
-            independent_statuses.append(expected_status)
             require(row["condition_kind"] == "dense_symmetric_eigen_estimate",
                     f"{operator_id}/{packet_id}: condition kind")
             emitted_condition = binary64(row["condition_number"],
                                          f"{operator_id}/{packet_id} condition", optional=True)
-            if expected_condition is None:
-                require(emitted_condition is None,
-                        f"{operator_id}/{packet_id}: singular condition must be NA")
-            else:
-                condition_budget = Decimal(8192) * EPS64 * max(
-                    Decimal(1), abs(expected_condition)
+            expected_status, expected_condition = (
+                validate_moment_spectrum_cross_arithmetic(
+                    f"{operator_id}/{packet_id}",
+                    smallest,
+                    largest,
+                    emitted_moment,
+                    emitted_smallest,
+                    emitted_largest,
+                    emitted_condition,
+                    row["status"],
                 )
-                require(emitted_condition is not None
-                        and abs(emitted_condition - expected_condition) <= condition_budget,
-                        f"{operator_id}/{packet_id}: independent condition number")
+            )
+            if expected_status == "built":
+                inverse = decimal_inverse3(moment)
+                residual_matrix = [
+                    [dsum(moment[row_index][inner] * inverse[inner][column_index]
+                          for inner in range(3)) - (Decimal(1) if row_index == column_index else Decimal(0))
+                     for column_index in range(3)]
+                    for row_index in range(3)
+                ]
+                expected_residual = decimal_matrix_norm(residual_matrix) / max(
+                    Decimal(1), decimal_matrix_norm(moment) * decimal_matrix_norm(inverse)
+                )
+                if expected_residual > tolerance:
+                    expected_status = "numerical_failure"
+            else:
+                expected_residual = None
+            independent_statuses.append(expected_status)
             emitted_tolerance = binary64(row["inverse_residual_tolerance"],
                                          f"{operator_id}/{packet_id} inverse tolerance")
             assert emitted_tolerance is not None
