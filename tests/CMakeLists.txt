@@ -215,6 +215,33 @@ if(Python3_Interpreter_FOUND)
       TIMEOUT 60)
 
   add_test(
+    NAME mls.projection_exactness_nullspace.exact.oracle
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/reference/projection_exactness_nullspace_oracle.py"
+      --verify
+      "${CMAKE_CURRENT_SOURCE_DIR}/projection_exactness_nullspace_oracle.canonical.json")
+  set_tests_properties(
+    mls.projection_exactness_nullspace.exact.oracle
+    PROPERTIES
+      LABELS "deterministic;exact;projection-nullspace;independent"
+      PASS_REGULAR_EXPRESSION "result_sha256_before_hash_field"
+      TIMEOUT 60)
+
+  add_test(
+    NAME mls.projection_exactness_nullspace.validator.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/projection_exactness_nullspace_validator_test.py")
+  set_tests_properties(
+    mls.projection_exactness_nullspace.validator.regression
+    PROPERTIES
+      LABELS "deterministic;projection-nullspace;validator;independent"
+      PASS_REGULAR_EXPRESSION
+        "Projection exactness/nullspace validator regression: PASS"
+      TIMEOUT 180)
+
+  add_test(
     NAME mls.affine_advection.smoke.verify
     COMMAND
       "${Python3_EXECUTABLE}"

@@ -160,6 +160,11 @@ jobs:
           python reference/projection_foundation_oracle.py \
             --verify tests/projection_foundation_oracle.canonical.json \
             2>&1 | tee ci-artifacts/projection-foundation-oracle.txt
+          python reference/projection_exactness_nullspace_oracle.py \
+            --verify tests/projection_exactness_nullspace_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/projection-exactness-nullspace-oracle.txt
+          python tests/projection_exactness_nullspace_validator_test.py \
+            2>&1 | tee ci-artifacts/projection-exactness-nullspace-validator.txt
 
       - name: Preserve exact-oracle evidence
         if: always()
