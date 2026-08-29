@@ -9,6 +9,7 @@ on:
       - affine-advection-lab
       - moving-apic-limit-lab
       - projection-foundation-lab
+      - projection-exactness-nullspace-lab
   pull_request:
   workflow_dispatch:
 
@@ -211,37 +212,8 @@ jobs:
             printf 'lean-toolchain=' && tr -d '\r\n' < lean-toolchain && printf '\n'
           } 2>&1 | tee ../ci-artifacts/lean-tool-versions.txt
           lake --wfail build 2>&1 | tee ../ci-artifacts/lean-build-and-axioms.txt
-          python - <<'PY' 2>&1 | tee ../ci-artifacts/lean-source-scan.txt
-          from pathlib import Path
-          import re
-          import sys
-
-          forbidden_terms = re.compile(r"\b(?:sorry|admit|sorryAx)\b")
-          project_axiom = re.compile(r"^\s*axiom\s+", re.MULTILINE)
-          findings = []
-          project_sources = [Path("MLSFormal.lean"), *sorted(Path("MLSFormal").rglob("*.lean"))]
-          for path in project_sources:
-              source = path.read_text(encoding="utf-8")
-              for match in forbidden_terms.finditer(source):
-                  line = source.count("\n", 0, match.start()) + 1
-                  findings.append(f"{path}:{line}: forbidden term {match.group(0)}")
-              for match in project_axiom.finditer(source):
-                  line = source.count("\n", 0, match.start()) + 1
-                  findings.append(f"{path}:{line}: project-defined axiom declaration")
-          report = Path("MLSFormal/AxiomReport.lean").read_text(encoding="utf-8")
-          theorem_declaration = re.compile(r"^\s*theorem\s+([A-Za-z0-9_]+)", re.MULTILINE)
-          for path in project_sources:
-              if path.name == "AxiomReport.lean":
-                  continue
-              source = path.read_text(encoding="utf-8")
-              for theorem in theorem_declaration.findall(source):
-                  if f"#print axioms MLSFormal.{theorem}" not in report:
-                      findings.append(f"{path}: missing #print axioms entry for {theorem}")
-          if findings:
-              print("\n".join(findings))
-              sys.exit(1)
-          print("PASS: no sorry, admit, sorryAx, or project-defined axiom declaration")
-          PY
+          python ../tools/formal_trust_scan.py --formal-root . \
+            2>&1 | tee ../ci-artifacts/lean-source-scan.txt
           git -C .lake/packages/mathlib rev-parse HEAD \
             | tee ../ci-artifacts/mathlib-commit.txt
 
