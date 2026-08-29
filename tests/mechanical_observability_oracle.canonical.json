@@ -1,0 +1,937 @@
+{
+  "arithmetic": "fractions.Fraction only",
+  "central_relation": "derivative of squared packet distance; no force or constitutive law",
+  "constitutive_law_present": false,
+  "corrected_wls_controls": {
+    "affine_field_controls": {
+      "general_affine": {
+        "claimed_gradient": [
+          [
+            "1/5",
+            "-2/7",
+            "3/11"
+          ],
+          [
+            "4/9",
+            "-1/6",
+            "2/13"
+          ],
+          [
+            "-3/8",
+            "5/12",
+            "7/10"
+          ]
+        ],
+        "exact": true,
+        "numerator": [
+          [
+            "8157/35840",
+            "-3903/17920",
+            "116019/394240"
+          ],
+          [
+            "61049/119808",
+            "-12179/239616",
+            "29123/119808"
+          ],
+          [
+            "-20717/122880",
+            "8561/15360",
+            "50207/61440"
+          ]
+        ],
+        "recovered_gradient": [
+          [
+            "1/5",
+            "-2/7",
+            "3/11"
+          ],
+          [
+            "4/9",
+            "-1/6",
+            "2/13"
+          ],
+          [
+            "-3/8",
+            "5/12",
+            "7/10"
+          ]
+        ]
+      },
+      "infinitesimal_rigid_rotation": {
+        "claimed_gradient": [
+          [
+            "0/1",
+            "-2/1",
+            "3/1"
+          ],
+          [
+            "2/1",
+            "0/1",
+            "-1/1"
+          ],
+          [
+            "-3/1",
+            "1/1",
+            "0/1"
+          ]
+        ],
+        "exact": true,
+        "numerator": [
+          [
+            "121/512",
+            "-409/256",
+            "3059/1024"
+          ],
+          [
+            "265/128",
+            "121/512",
+            "-697/1024"
+          ],
+          [
+            "-3301/1024",
+            "455/1024",
+            "-121/256"
+          ]
+        ],
+        "recovered_gradient": [
+          [
+            "0/1",
+            "-2/1",
+            "3/1"
+          ],
+          [
+            "2/1",
+            "0/1",
+            "-1/1"
+          ],
+          [
+            "-3/1",
+            "1/1",
+            "0/1"
+          ]
+        ]
+      },
+      "isotropic_expansion": {
+        "claimed_gradient": [
+          [
+            "3/7",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "3/7",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "3/7"
+          ]
+        ],
+        "exact": true,
+        "numerator": [
+          [
+            "3543/7168",
+            "363/3584",
+            "363/3584"
+          ],
+          [
+            "363/3584",
+            "3543/7168",
+            "363/3584"
+          ],
+          [
+            "363/3584",
+            "363/3584",
+            "3543/7168"
+          ]
+        ],
+        "recovered_gradient": [
+          [
+            "3/7",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "3/7",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "3/7"
+          ]
+        ]
+      },
+      "pure_shear": {
+        "claimed_gradient": [
+          [
+            "0/1",
+            "1/3",
+            "0/1"
+          ],
+          [
+            "1/3",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1"
+          ]
+        ],
+        "exact": true,
+        "numerator": [
+          [
+            "121/1536",
+            "1181/3072",
+            "121/1536"
+          ],
+          [
+            "1181/3072",
+            "121/1536",
+            "121/1536"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1"
+          ]
+        ],
+        "recovered_gradient": [
+          [
+            "0/1",
+            "1/3",
+            "0/1"
+          ],
+          [
+            "1/3",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1"
+          ]
+        ]
+      },
+      "uniform_translation": {
+        "claimed_gradient": [
+          [
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1"
+          ]
+        ],
+        "exact": true,
+        "numerator": [
+          [
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1"
+          ]
+        ],
+        "recovered_gradient": [
+          [
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1"
+          ]
+        ]
+      }
+    },
+    "affine_reproduction_count": 5,
+    "center": [
+      "1/5",
+      "-2/7",
+      "3/8"
+    ],
+    "equation": "G=(sum_q w_pq (v_q-v_p) tensor r_pq) M^-1",
+    "moment": [
+      [
+        "1181/1024",
+        "121/512",
+        "121/512"
+      ],
+      [
+        "121/512",
+        "1181/1024",
+        "121/512"
+      ],
+      [
+        "121/512",
+        "121/512",
+        "1181/1024"
+      ]
+    ],
+    "moment_determinant": "1468065465/1073741824",
+    "moment_equation": "M=sum_q w_pq r_pq tensor r_pq",
+    "moment_rank": 3,
+    "moment_scale_power_two_exact": true,
+    "neighbor_offsets": [
+      [
+        "1/1",
+        "0/1",
+        "0/1"
+      ],
+      [
+        "0/1",
+        "1/1",
+        "0/1"
+      ],
+      [
+        "0/1",
+        "0/1",
+        "1/1"
+      ],
+      [
+        "-1/1",
+        "-1/2",
+        "0/1"
+      ],
+      [
+        "0/1",
+        "-1/1",
+        "-1/2"
+      ],
+      [
+        "-1/2",
+        "0/1",
+        "-1/1"
+      ]
+    ],
+    "scale_factor": "5/3",
+    "scaled_gradient_unchanged": true,
+    "singular_control": {
+      "inverse_rejected": true,
+      "moment": [
+        [
+          "621/512",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "0/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "0/1",
+          "0/1",
+          "0/1"
+        ]
+      ],
+      "moment_rank": 1,
+      "neighbor_offsets": [
+        [
+          "-1/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "1/2",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "3/2",
+          "0/1",
+          "0/1"
+        ]
+      ],
+      "regularization_used": false
+    },
+    "support_radius": "2/1",
+    "translation_relation_exact": true,
+    "weight_equation": "w=(1-r_squared/H_squared)^2"
+  },
+  "implementation": "independent Python standard-library Fraction matrix/RREF oracle",
+  "objectivity_controls": {
+    "all_exact": true,
+    "derivative_rotation_pullback_checks": 46,
+    "derivative_scale_covariance_checks": 46,
+    "derivative_translation_invariance_checks": 46,
+    "finite_oriented_volume_objectivity_and_scale_checks": 2,
+    "finite_squared_length_objectivity_and_scale_checks": 45,
+    "proper_rotation": [
+      [
+        "1/9",
+        "8/9",
+        "4/9"
+      ],
+      [
+        "8/9",
+        "1/9",
+        "-4/9"
+      ],
+      [
+        "-4/9",
+        "4/9",
+        "-7/9"
+      ]
+    ],
+    "proper_rotation_determinant": "1/1",
+    "proper_rotation_orthogonal": true,
+    "scale_factor": "5/3",
+    "translation": [
+      "7/5",
+      "-11/7",
+      "13/9"
+    ]
+  },
+  "promotion_eligible": false,
+  "registered_rank_claims": {
+    "cube_edge_graph": {
+      "nonrigid_nullity": 6,
+      "nullity": 12,
+      "rank": 12
+    },
+    "octahedron_graph": {
+      "nonrigid_nullity": 0,
+      "nullity": 6,
+      "rank": 12
+    },
+    "planar_square_plus_diagonal": {
+      "nonrigid_nullity": 1,
+      "nullity": 7,
+      "rank": 5
+    },
+    "planar_square_plus_diagonal_and_volume": {
+      "nonrigid_nullity": 0,
+      "nullity": 6,
+      "rank": 6
+    },
+    "tetrahedron_k4": {
+      "nonrigid_nullity": 0,
+      "nullity": 6,
+      "rank": 6
+    },
+    "tetrahedron_k4_minus_edge": {
+      "nonrigid_nullity": 1,
+      "nullity": 7,
+      "rank": 5
+    }
+  },
+  "regularization_used": false,
+  "result_sha256_before_hash_field": "86b4d4c3d024f3cee683cf90ee6e757b68b4e57d55ad607bde84d87e111c0a83",
+  "rigid_motion_definition": "three translations plus omega cross x for three rotation axes",
+  "rigidity_cases": [
+    {
+      "combined_kernel_rigid_span_rank": 6,
+      "degrees_of_freedom": 12,
+      "edge_count": 6,
+      "edges": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          2,
+          3
+        ]
+      ],
+      "kernel_basis_rank": 6,
+      "kernel_equals_rigid_span": true,
+      "name": "tetrahedron_k4",
+      "nonrigid_nullity": 0,
+      "nullity": 6,
+      "objective_volume_relations": [],
+      "point_count": 4,
+      "points": [
+        [
+          "0/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "1/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "0/1",
+          "1/1",
+          "0/1"
+        ],
+        [
+          "0/1",
+          "0/1",
+          "1/1"
+        ]
+      ],
+      "rank": 6,
+      "relation_row_count": 6,
+      "rigid_generator_rank": 6,
+      "rigid_generators_in_kernel": true
+    },
+    {
+      "combined_kernel_rigid_span_rank": 7,
+      "degrees_of_freedom": 12,
+      "edge_count": 5,
+      "edges": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "kernel_basis_rank": 7,
+      "kernel_equals_rigid_span": false,
+      "name": "tetrahedron_k4_minus_edge",
+      "nonrigid_nullity": 1,
+      "nullity": 7,
+      "objective_volume_relations": [],
+      "point_count": 4,
+      "points": [
+        [
+          "0/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "1/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "0/1",
+          "1/1",
+          "0/1"
+        ],
+        [
+          "0/1",
+          "0/1",
+          "1/1"
+        ]
+      ],
+      "rank": 5,
+      "relation_row_count": 5,
+      "rigid_generator_rank": 6,
+      "rigid_generators_in_kernel": true
+    },
+    {
+      "combined_kernel_rigid_span_rank": 6,
+      "degrees_of_freedom": 18,
+      "edge_count": 12,
+      "edges": [
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          3
+        ],
+        [
+          0,
+          4
+        ],
+        [
+          0,
+          5
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          3,
+          5
+        ]
+      ],
+      "kernel_basis_rank": 6,
+      "kernel_equals_rigid_span": true,
+      "name": "octahedron_graph",
+      "nonrigid_nullity": 0,
+      "nullity": 6,
+      "objective_volume_relations": [],
+      "point_count": 6,
+      "points": [
+        [
+          "1/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "-1/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "0/1",
+          "1/1",
+          "0/1"
+        ],
+        [
+          "0/1",
+          "-1/1",
+          "0/1"
+        ],
+        [
+          "0/1",
+          "0/1",
+          "1/1"
+        ],
+        [
+          "0/1",
+          "0/1",
+          "-1/1"
+        ]
+      ],
+      "rank": 12,
+      "relation_row_count": 12,
+      "rigid_generator_rank": 6,
+      "rigid_generators_in_kernel": true
+    },
+    {
+      "combined_kernel_rigid_span_rank": 12,
+      "degrees_of_freedom": 24,
+      "edge_count": 12,
+      "edges": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          4
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          6
+        ],
+        [
+          3,
+          7
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          5,
+          7
+        ],
+        [
+          6,
+          7
+        ]
+      ],
+      "kernel_basis_rank": 12,
+      "kernel_equals_rigid_span": false,
+      "name": "cube_edge_graph",
+      "nonrigid_nullity": 6,
+      "nullity": 12,
+      "objective_volume_relations": [],
+      "point_count": 8,
+      "points": [
+        [
+          "0/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "1/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "0/1",
+          "1/1",
+          "0/1"
+        ],
+        [
+          "1/1",
+          "1/1",
+          "0/1"
+        ],
+        [
+          "0/1",
+          "0/1",
+          "1/1"
+        ],
+        [
+          "1/1",
+          "0/1",
+          "1/1"
+        ],
+        [
+          "0/1",
+          "1/1",
+          "1/1"
+        ],
+        [
+          "1/1",
+          "1/1",
+          "1/1"
+        ]
+      ],
+      "rank": 12,
+      "relation_row_count": 12,
+      "rigid_generator_rank": 6,
+      "rigid_generators_in_kernel": true
+    },
+    {
+      "combined_kernel_rigid_span_rank": 7,
+      "degrees_of_freedom": 12,
+      "edge_count": 5,
+      "edges": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          3,
+          0
+        ],
+        [
+          0,
+          2
+        ]
+      ],
+      "kernel_basis_rank": 7,
+      "kernel_equals_rigid_span": false,
+      "name": "planar_square_plus_diagonal",
+      "nonrigid_nullity": 1,
+      "nullity": 7,
+      "objective_volume_relations": [],
+      "point_count": 4,
+      "points": [
+        [
+          "0/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "1/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "1/1",
+          "1/1",
+          "0/1"
+        ],
+        [
+          "0/1",
+          "1/1",
+          "0/1"
+        ]
+      ],
+      "rank": 5,
+      "relation_row_count": 5,
+      "rigid_generator_rank": 6,
+      "rigid_generators_in_kernel": true
+    },
+    {
+      "combined_kernel_rigid_span_rank": 6,
+      "degrees_of_freedom": 12,
+      "edge_count": 5,
+      "edges": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          3,
+          0
+        ],
+        [
+          0,
+          2
+        ]
+      ],
+      "kernel_basis_rank": 6,
+      "kernel_equals_rigid_span": true,
+      "name": "planar_square_plus_diagonal_and_volume",
+      "nonrigid_nullity": 0,
+      "nullity": 6,
+      "objective_volume_relations": [
+        [
+          0,
+          1,
+          2,
+          3
+        ]
+      ],
+      "point_count": 4,
+      "points": [
+        [
+          "0/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "1/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "1/1",
+          "1/1",
+          "0/1"
+        ],
+        [
+          "0/1",
+          "1/1",
+          "0/1"
+        ]
+      ],
+      "rank": 6,
+      "relation_row_count": 6,
+      "rigid_generator_rank": 6,
+      "rigid_generators_in_kernel": true
+    }
+  ],
+  "schema": "mls.mechanical-observability.exact-oracle.v1",
+  "scope": "small exact algebra controls; independent of C++ and promotion-ineligible",
+  "seed": 260828,
+  "triple_volume_enrichment": {
+    "expected_identity_confirmed": true,
+    "nullity_after": 6,
+    "nullity_before": 7,
+    "planar_derivative_row": [
+      "0/1",
+      "0/1",
+      "-1/1",
+      "0/1",
+      "0/1",
+      "1/1",
+      "0/1",
+      "0/1",
+      "-1/1",
+      "0/1",
+      "0/1",
+      "1/1"
+    ],
+    "rank_after": 6,
+    "rank_before": 5,
+    "relation": "det(x1-x0,x2-x0,x3-x0)"
+  }
+}
