@@ -1864,9 +1864,18 @@ def validate_summary_provenance(
                 "bad source SHA")
         require(summary.get("parent_sha") == SOURCE_PARENT_SHA,
                 "accepted parent SHA mismatch")
-        require(summary.get("configured_source_branch")
-                == "projection-exactness-nullspace-lab",
-                "configured source branch mismatch")
+        configured_branch = summary.get("configured_source_branch")
+        if smoke_provisional:
+            # Historical smoke diagnostics are intentionally rerun on later
+            # descendant branches.  Preserve exact branch binding for sealed
+            # full evidence, but require honest, nonempty provenance for a
+            # provisional compatibility smoke.
+            require(isinstance(configured_branch, str)
+                    and configured_branch.strip() not in {"", "unknown"},
+                    "configured source branch is empty/unknown")
+        else:
+            require(configured_branch == "projection-exactness-nullspace-lab",
+                    "configured source branch mismatch")
         require(type(summary.get("source_dirty")) is bool,
                 "source_dirty must be a JSON boolean")
         if smoke_provisional:

@@ -536,6 +536,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     validator_module.validate_summary_provenance(full_summary, False)
     positives += 1
 
+    smoke_summary = copy.deepcopy(full_summary)
+    smoke_summary.update({
+        "configured_source_branch": "mechanical-observability-lab",
+        "decision": "smoke_provisional_no_scientific_decision",
+        "mode": "smoke",
+        "provisional": True,
+        "source_dirty": True,
+        "sweep_complete": False,
+    })
+    validator_module.validate_summary_provenance(
+        smoke_summary, False, smoke_provisional=True)
+    positives += 1
+
     def reject_summary(name: str, mutate: Callable[[dict[str, object]], None]) -> None:
         summary = copy.deepcopy(full_summary)
         mutate(summary)
