@@ -67,6 +67,9 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.movingAPIC_CNext_eq_oldGradient_when_moment_fixed
 #print axioms MLSFormal.movingAPIC_staleGradient_exact_discrepancy
 #print axioms MLSFormal.movingAPIC_CNext_minus_exactAffineGradient
+#print axioms MLSFormal.consistentMass_is_gram_operator
+#print axioms MLSFormal.consistentMass_kernel_eq_interpolation_kernel
+#print axioms MLSFormal.consistentProjection_solutions_have_equal_reconstruction
 #print axioms MLSFormal.consistentProjection_affine_rhs_relation
 #print axioms MLSFormal.consistentProjection_unique_grid_recovery
 #print axioms MLSFormal.consistentProjection_affine_particle_recovery
