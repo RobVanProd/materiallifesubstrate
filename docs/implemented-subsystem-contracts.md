@@ -875,9 +875,74 @@ The final co-refinement, phase/orientation, particles-per-cell, compiler, and
 independent evidence bundle remains necessary before any research-candidate
 decision.
 
+## 8. Projection exactness and Gram-nullspace diagnostic
+
+**Implementation:** `include/mls/projection_exactness_nullspace_lab.hpp` and
+`src/projection_exactness_nullspace_lab.cpp`. This is a read-only diagnostic
+layer over the center-only projection laboratory. It adds no transfer law,
+force, persistent particle mode, physical update, or promotion path.
+
+### State variables and units
+
+Authoritative input remains packet ID, exact mass quanta, center position in
+metres, center velocity in metres per second, the dimensioned grid
+configuration, and exact physical-time quanta. All nodal affine witnesses,
+PCG iterates, double-double values, QR factors, null vectors, and gradients are
+transient. A scalar null mode is normalized to `1 m/s`; its sampled center
+value is in `m/s` and its basis gradient is in `s^-1`. Matrix residuals are in
+`kg m/s`.
+
+### Diagnostic law and accounting boundary
+
+Before any solve, the layer constructs `g_i=A(t)x_i+b(t)` and evaluates
+`Mg-q`, `Sg-V`, partition of unity, linear reproduction, and derivative of
+partition. The unchanged historical PCG control is then assessed separately
+for backward error, nodal forward error, and center reconstruction error. A
+complete-pivot double-double solve promotes the exact assembled binary64
+`M,q` without altering either. Householder column-pivoted QR diagnoses
+`sqrt(W)S`; each constructed mode is checked through `Mz`, `Sz`, solution
+residual change, center reconstruction change, and
+`G_p(z)=sum_i z_i grad N_i(x_p)`.
+
+There is no physical transition to conserve. The exact checkpoint hash before
+and after every diagnostic must be identical. Numerical residuals are never
+converted into heat, stored energy, or another physical ledger channel.
+
+### Numerical approximation and failure modes
+
+- binary64 assembly with long-double diagnostic reductions;
+- normwise solve backward error
+  `||Mv-q||/(||M||_F||v||+||q||)` kept distinct from measured forward error;
+- approximately 106-bit FMA double-double complete-pivot elimination with the
+  preregistered rank threshold and no shift, node drop, or regularization;
+- binary64 Householder CPQR of `sqrt(W)S` with deterministic node order and an
+  explicitly numerical—not certified—rank threshold; and
+- an independent exact-rational/100-digit Decimal oracle and strict evidence
+  validator that share inputs and schemas, not solver code.
+
+Failure is preserved for an affine witness mismatch, nonfinite arithmetic,
+old-PCG structural/breakdown/iteration outcomes, high-precision rank ambiguity,
+an unresolved `Mz` or `Sz` mode, incomplete null-basis evidence, phase or
+orientation dependence, a center-invisible but gradient-visible mode, or any
+checkpoint/schema/manifest/repeatability disagreement. A residual-only pass is
+never labeled an accurate solve.
+
+### Mapped tests
+
+- `projection exactness analytic witness bypasses every solver`
+- `projection solve diagnostics separate backward from forward error`
+- `projection exactness high precision retains auditable hi lo solution`
+- `projection high precision preserves rank-deficient evidence`
+- `projection Gram QR exhibits center invisible gradient visible modes`
+- `projection exactness basis derivative controls and invalid inputs`
+- `projection exactness diagnostic policies fail closed`
+- the independent exact/nullspace oracle and canonical digest
+- the bundle-validator positive and mutation regression
+- the outer-seal deterministic-create and mutation regression
+
 ## Review rule
 
-All records (the seven numbered records here plus the dedicated physical-support,
+All records (the eight numbered records here plus the dedicated physical-support,
 time/checkpoint, transfer-lab, and angular contracts) must be updated when their
 public state, operation, formula, or test mapping changes. Changes to point
 interaction, boundary, or ledger semantics must also update the cross-cutting
