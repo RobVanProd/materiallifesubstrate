@@ -10,6 +10,7 @@ on:
       - moving-apic-limit-lab
       - projection-foundation-lab
       - projection-exactness-nullspace-lab
+      - mechanical-observability-lab
   pull_request:
   workflow_dispatch:
 
@@ -20,7 +21,7 @@ jobs:
   cpp-build-and-test:
     name: C++ / ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -113,7 +114,7 @@ jobs:
   exact-oracle:
     name: Python exact oracle
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - name: Check out tested source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -165,6 +166,15 @@ jobs:
             2>&1 | tee ci-artifacts/projection-exactness-nullspace-oracle.txt
           python tests/projection_exactness_nullspace_validator_test.py \
             2>&1 | tee ci-artifacts/projection-exactness-nullspace-validator.txt
+          python reference/mechanical_observability_oracle.py \
+            --verify tests/mechanical_observability_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/mechanical-observability-oracle.txt
+          python tests/mechanical_observability_oracle_test.py \
+            2>&1 | tee ci-artifacts/mechanical-observability-oracle-regression.txt
+          python tests/mechanical_observability_bundle_validator_test.py \
+            2>&1 | tee ci-artifacts/mechanical-observability-validator.txt
+          python tests/mechanical_observability_seal_test.py \
+            2>&1 | tee ci-artifacts/mechanical-observability-seal.txt
 
       - name: Preserve exact-oracle evidence
         if: always()
@@ -216,7 +226,9 @@ jobs:
             lake --version
             printf 'lean-toolchain=' && tr -d '\r\n' < lean-toolchain && printf '\n'
           } 2>&1 | tee ../ci-artifacts/lean-tool-versions.txt
-          lake --wfail build 2>&1 | tee ../ci-artifacts/lean-build-and-axioms.txt
+          lake --wfail build 2>&1 | tee ../ci-artifacts/lean-build.txt
+          lake env lean MLSFormal/AxiomReport.lean \
+            2>&1 | tee ../ci-artifacts/lean-axioms.txt
           python ../tools/formal_trust_scan.py --formal-root . \
             2>&1 | tee ../ci-artifacts/lean-source-scan.txt
           git -C .lake/packages/mathlib rev-parse HEAD \

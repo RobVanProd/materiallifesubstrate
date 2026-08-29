@@ -10,6 +10,7 @@ add_executable(
   physical_support_tests.cpp
   affine_advection_tests.cpp
   moving_apic_limit_tests.cpp
+  mechanical_observability_tests.cpp
   projection_exactness_nullspace_tests.cpp
   projection_foundation_tests.cpp
   transfer_lab_tests.cpp
@@ -173,6 +174,49 @@ set_tests_properties(
       "Projection Exactness \\+ Nullspace logic audit: PASS"
     TIMEOUT 30)
 
+add_test(
+  NAME mls.mechanical_observability.smoke.a
+  COMMAND
+    mls_mechanical_observability_diagnostic
+    --smoke
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/mechanical-observability-smoke-a")
+add_test(
+  NAME mls.mechanical_observability.smoke.b
+  COMMAND
+    mls_mechanical_observability_diagnostic
+    --smoke
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/mechanical-observability-smoke-b")
+set_tests_properties(
+  mls.mechanical_observability.smoke.a
+  mls.mechanical_observability.smoke.b
+  PROPERTIES
+    LABELS "deterministic;mechanical-observability;smoke"
+    PASS_REGULAR_EXPRESSION
+      "Mechanical Observability provisional smoke evidence written"
+    TIMEOUT 300)
+
+add_test(
+  NAME mls.mechanical_observability.schema.audit
+  COMMAND mls_mechanical_observability_diagnostic --schema-audit)
+set_tests_properties(
+  mls.mechanical_observability.schema.audit
+  PROPERTIES
+    LABELS "deterministic;mechanical-observability;schema"
+    PASS_REGULAR_EXPRESSION "Mechanical Observability schema audit: PASS"
+    TIMEOUT 30)
+
+add_test(
+  NAME mls.mechanical_observability.logic.audit
+  COMMAND mls_mechanical_observability_diagnostic --logic-audit)
+set_tests_properties(
+  mls.mechanical_observability.logic.audit
+  PROPERTIES
+    LABELS "deterministic;mechanical-observability;logic"
+    PASS_REGULAR_EXPRESSION "Mechanical Observability logic audit: PASS"
+    TIMEOUT 30)
+
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
   add_test(
@@ -213,6 +257,44 @@ if(Python3_Interpreter_FOUND)
       PASS_REGULAR_EXPRESSION
         "PROJECTION EXACTNESS NULLSPACE BUNDLE VALID"
       TIMEOUT 300)
+
+  add_test(
+    NAME mls.mechanical_observability.smoke.byte_compare
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/compare_evidence_directories.py"
+      --first
+      "${CMAKE_CURRENT_BINARY_DIR}/mechanical-observability-smoke-a"
+      --second
+      "${CMAKE_CURRENT_BINARY_DIR}/mechanical-observability-smoke-b")
+  set_tests_properties(
+    mls.mechanical_observability.smoke.byte_compare
+    PROPERTIES
+      DEPENDS
+        "mls.mechanical_observability.smoke.a;mls.mechanical_observability.smoke.b"
+      LABELS "deterministic;mechanical-observability;smoke;independent"
+      PASS_REGULAR_EXPRESSION
+        "Projection exactness/nullspace smoke byte comparison: PASS"
+      TIMEOUT 30)
+
+  add_test(
+    NAME mls.mechanical_observability.smoke.verify
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/reference/validate_mechanical_observability_bundle.py"
+      --bundle
+      "${CMAKE_CURRENT_BINARY_DIR}/mechanical-observability-smoke-a"
+      --compare
+      "${CMAKE_CURRENT_BINARY_DIR}/mechanical-observability-smoke-b"
+      --allow-smoke)
+  set_tests_properties(
+    mls.mechanical_observability.smoke.verify
+    PROPERTIES
+      DEPENDS
+        "mls.mechanical_observability.smoke.a;mls.mechanical_observability.smoke.b"
+      LABELS "deterministic;mechanical-observability;smoke;independent"
+      PASS_REGULAR_EXPRESSION "MECHANICAL OBSERVABILITY BUNDLE VALID"
+      TIMEOUT 900)
 
   add_test(
     NAME mls.formal.source.scan
@@ -313,6 +395,58 @@ if(Python3_Interpreter_FOUND)
       LABELS "deterministic;exact;projection-nullspace;independent"
       PASS_REGULAR_EXPRESSION "result_sha256_before_hash_field"
       TIMEOUT 60)
+
+  add_test(
+    NAME mls.mechanical_observability.exact.oracle
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/reference/mechanical_observability_oracle.py"
+      --verify
+      "${CMAKE_CURRENT_SOURCE_DIR}/mechanical_observability_oracle.canonical.json")
+  set_tests_properties(
+    mls.mechanical_observability.exact.oracle
+    PROPERTIES
+      LABELS "deterministic;exact;mechanical-observability;independent"
+      PASS_REGULAR_EXPRESSION "result_sha256_before_hash_field"
+      TIMEOUT 60)
+
+  add_test(
+    NAME mls.mechanical_observability.exact.oracle.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/mechanical_observability_oracle_test.py")
+  set_tests_properties(
+    mls.mechanical_observability.exact.oracle.regression
+    PROPERTIES
+      LABELS "deterministic;exact;mechanical-observability;independent"
+      PASS_REGULAR_EXPRESSION "mechanical observability exact-oracle regression: PASS"
+      TIMEOUT 90)
+
+  add_test(
+    NAME mls.mechanical_observability.validator.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/mechanical_observability_bundle_validator_test.py")
+  set_tests_properties(
+    mls.mechanical_observability.validator.regression
+    PROPERTIES
+      LABELS "deterministic;mechanical-observability;validator;independent"
+      PASS_REGULAR_EXPRESSION
+        "mechanical observability bundle validator regression: PASS"
+      TIMEOUT 1800)
+
+  add_test(
+    NAME mls.mechanical_observability.seal.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/mechanical_observability_seal_test.py")
+  set_tests_properties(
+    mls.mechanical_observability.seal.regression
+    PROPERTIES
+      LABELS "deterministic;mechanical-observability;seal;independent"
+      PASS_REGULAR_EXPRESSION
+        "mechanical observability outer seal mutation regression PASS"
+      TIMEOUT 900)
 
   add_test(
     NAME mls.projection_exactness_nullspace.validator.regression
