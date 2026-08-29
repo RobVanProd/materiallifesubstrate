@@ -10,6 +10,7 @@ import MLSFormal.MovingAPICLimit
 import MLSFormal.ConsistentProjection
 import MLSFormal.ProjectionNullspace
 import MLSFormal.MechanicalObservability
+import MLSFormal.KelvinCovariance
 
 /-!
 Complete kernel axiom report for every theorem exported by the MLSFormal
@@ -91,3 +92,14 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.rationalTetraMissingRelation_floppy_in_kernel
 #print axioms MLSFormal.rationalTetraMissingRelation_floppy_not_rigid
 #print axioms MLSFormal.rationalTetraMissingRelation_not_mechanicallyObservable
+#print axioms MLSFormal.transformedRawCorrectedSymmetricGradient_translation_independent
+#print axioms MLSFormal.transformedRawCorrectedSymmetricGradient_mul_inputRotation
+#print axioms MLSFormal.transformedRawCorrectedSymmetricGradient_descaled_gram
+#print axioms MLSFormal.transformedRawCorrectedSymmetricGradient_raw_spectrum_covariant
+#print axioms MLSFormal.diagnosticKelvinBlockScale_covariant
+#print axioms MLSFormal.kelvinRowMixing_orthogonal
+#print axioms MLSFormal.kelvinRowNormalizationCounterexample_raw_gram_covariant
+#print axioms MLSFormal.kelvinRowNormalizationCounterexample_exact_normalizations
+#print axioms MLSFormal.kelvinRowsNormalizedBeforeMixing_unit_rows
+#print axioms MLSFormal.kelvinRowsNormalizedAfterMixing_unit_rows
+#print axioms MLSFormal.scalarRowNormalization_destroys_raw_spectrum_covariance
