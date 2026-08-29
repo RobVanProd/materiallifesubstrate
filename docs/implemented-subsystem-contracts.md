@@ -889,17 +889,21 @@ metres, center velocity in metres per second, the dimensioned grid
 configuration, and exact physical-time quanta. All nodal affine witnesses,
 PCG iterates, double-double values, QR factors, null vectors, and gradients are
 transient. A scalar null mode is normalized to `1 m/s`; its sampled center
-value is in `m/s` and its basis gradient is in `s^-1`. Matrix residuals are in
-`kg m/s`.
+value is in `m/s`, the basis gradient is in `m^-1`, and the induced mode
+velocity gradient is in `s^-1`. Matrix residuals are in `kg m/s`.
 
 ### Diagnostic law and accounting boundary
 
 Before any solve, the layer constructs `g_i=A(t)x_i+b(t)` and evaluates
-`Mg-q`, `Sg-V`, partition of unity, linear reproduction, and derivative of
+componentwise `Mg-q`, the registered vector particle-mass norm `Sg-V`,
+partition of unity, linear reproduction, and derivative of
 partition. The unchanged historical PCG control is then assessed separately
-for backward error, nodal forward error, and center reconstruction error. A
+for its frozen legacy residual/threshold/termination status, independently
+recomputed backward error, nodal forward error, and center reconstruction
+error. A
 complete-pivot double-double solve promotes the exact assembled binary64
-`M,q` without altering either. Householder column-pivoted QR diagnoses
+`M,q` without altering either and exports every accepted pivot magnitude and
+row/column order. Householder column-pivoted QR diagnoses
 `sqrt(W)S`; each constructed mode is checked through `Mz`, `Sz`, solution
 residual change, center reconstruction change, and
 `G_p(z)=sum_i z_i grad N_i(x_p)`.
@@ -919,18 +923,27 @@ converted into heat, stored energy, or another physical ledger channel.
   preregistered rank threshold and no shift, node drop, or regularization;
 - binary64 Householder CPQR of `sqrt(W)S` with deterministic node order and an
   explicitly numerical—not certified—rank threshold; and
-- an independent exact-rational/100-digit Decimal oracle and strict evidence
-  validator that share inputs and schemas, not solver code.
+- an independent exact-rational oracle over its two canonical synthetic
+  fixtures; and a strict evidence validator that reconstructs exported C++
+  systems and Decimal-solves both exported micro systems without importing
+  C++ solver code.
 
 Failure is preserved for an affine witness mismatch, nonfinite arithmetic,
 old-PCG structural/breakdown/iteration outcomes, high-precision rank ambiguity,
-an unresolved `Mz` or `Sz` mode, incomplete null-basis evidence, phase or
-orientation dependence, a center-invisible but gradient-visible mode, or any
+an unresolved `Mz` or `Sz` mode, incomplete null-basis evidence, a
+center-invisible but gradient-visible mode, or any
 checkpoint/schema/manifest/repeatability disagreement. A residual-only pass is
-never labeled an accurate solve.
+never labeled an accurate solve. A witness-first stop is recorded as
+`not_run_witness_failure`, not fabricated as a numerical failure. Every selected
+nullspace system has a status row even when QR cannot construct modes. Phase
+and orientation labels are retained for analysis; this lab preregisters no
+generic cross-system equivalence gate between their null bases.
 
 ### Mapped tests
 
+- Lean `consistentMass_is_gram_operator`
+- Lean `consistentMass_kernel_eq_interpolation_kernel`
+- Lean `consistentProjection_solutions_have_equal_reconstruction`
 - `projection exactness analytic witness bypasses every solver`
 - `projection solve diagnostics separate backward from forward error`
 - `projection exactness high precision retains auditable hi lo solution`
@@ -941,6 +954,14 @@ never labeled an accurate solve.
 - the independent exact/nullspace oracle and canonical digest
 - the bundle-validator positive and mutation regression
 - the outer-seal deterministic-create and mutation regression
+
+The Lean statements cover finite exact-rational operators. Kernel equality
+requires strictly positive particle masses, and solution reconstruction
+equality is conditional on two supplied exact solutions of the same system;
+neither assumes matrix invertibility. They do not connect to C++ binary64/QR
+or prove gradient visibility. Their reported dependencies are only `propext`,
+`Classical.choice`, and `Quot.sound`, with no project-defined axioms or proof
+placeholders.
 
 ## Review rule
 

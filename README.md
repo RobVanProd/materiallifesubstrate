@@ -48,6 +48,7 @@ or `reward`. Those may exist only as observer interpretations.
 - [Projection Foundation Lab preregistration](docs/projection-foundation-preregistration.md)
 - [Projection Exactness + Nullspace Lab contract](docs/projection-exactness-nullspace-contract.md)
 - [Projection Exactness + Nullspace Lab preregistration](docs/projection-exactness-nullspace-preregistration.md)
+- [Projection Exactness + Nullspace Lab result](docs/projection-exactness-nullspace-result.md)
 - [Forbidden-semantics contract](docs/forbidden-semantics.md)
 - [Accounting invariants](docs/accounting-invariants.md)
 - [Research roadmap and gates](docs/roadmap.md)
