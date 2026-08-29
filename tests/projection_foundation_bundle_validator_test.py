@@ -218,6 +218,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             mutate_csv(bundle / "main_raw.csv", change)
 
+        def drift_physical_record(field: str, value: str) -> Callable[[Path], None]:
+            def mutate(bundle: Path) -> None:
+                def change(rows: list[dict[str, str]]) -> None:
+                    if not rows:
+                        raise AssertionError("main_raw fixture unexpectedly empty")
+                    if field not in rows[0]:
+                        raise AssertionError(f"missing physical record field {field}")
+                    rows[0][field] = value
+
+                mutate_csv(bundle / "main_raw.csv", change)
+
+            return mutate
+
         def flip_hard_gate(bundle: Path) -> None:
             def change(rows: list[dict[str, str]]) -> None:
                 if not rows:
@@ -276,6 +289,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             ("missing-registered-row", missing_registered_row),
             ("duplicate-primary-key", duplicate_primary_key),
             ("registered-config-drift", drift_registered_configuration),
+            ("domain-record-drift", drift_physical_record("domain_max_m", "6.0e-1")),
+            ("density-record-drift", drift_physical_record("density_kg_per_m3", "5.0e-1")),
+            ("mass-record-drift", drift_physical_record("registered_total_mass_kg", "5.0e-1")),
+            ("cfl-record-drift", drift_physical_record("cfl_u_ref_dt_over_h", "1.26e-1")),
+            ("grid-cell-record-drift", drift_physical_record("nominal_domain_grid_cell_count", "9")),
             ("hard-gate-flip", flip_hard_gate),
             ("identity-na-contract", break_identity_na_contract),
             ("order-decision-flip", flip_order_decision),

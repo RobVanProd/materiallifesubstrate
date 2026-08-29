@@ -282,3 +282,11 @@ outer evidence seal therefore also requires two byte-identical full runs,
 separate exact-oracle evidence, complete local command logs, source provenance,
 and public CI job metadata. The seal is a tamper-evident hash record, not a
 cryptographic signature or proof of physical validity.
+
+The raw evidence schema v2 explicitly records and cross-checks domain bounds,
+density, registered mass, nominal bounded-domain grid-cell count, particle
+sampling, mass quantum, and `U_ref dt/h` for every configuration. The nominal
+grid-cell count is `cells_per_axis^3`; it is distinct from the transient active
+node count because the experimental projection grid is not a bounded physical
+container. These fields are evidence metadata only and never enter the
+authoritative center-state update.

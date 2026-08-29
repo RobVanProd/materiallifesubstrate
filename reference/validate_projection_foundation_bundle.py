@@ -23,7 +23,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 
 SEED = 260828
-SUMMARY_SCHEMA = "mls.projection-foundation.summary.v1"
+SUMMARY_SCHEMA = "mls.projection-foundation.summary.v2"
 MANIFEST_SCHEMA = "mls.projection-foundation.manifest.v1"
 ORACLE_SHA256 = "7f3119d609bf022fa31bfc5bf01a6c15189aaede7e35f9cfad13f4c275fae4bc"
 PARENT_SHA = "aa084440fcd859b4f3416b21623cc3ac0c5b3e16"
@@ -52,8 +52,9 @@ REQUIRED_FILES = (
 )
 
 RAW_FIELDS = tuple((
-    "mode,seed,scope,candidate,field,phase,orientation,level,h_m,dt_s,dt_quanta,steps,"
-    "cells_per_axis,particles_per_axis,particle_count,particles_per_cell,particle_spacing_m,"
+    "mode,seed,scope,candidate,field,phase,orientation,level,domain_min_m,domain_max_m,"
+    "density_kg_per_m3,registered_total_mass_kg,cfl_u_ref_dt_over_h,h_m,dt_s,dt_quanta,steps,"
+    "cells_per_axis,nominal_domain_grid_cell_count,particles_per_axis,particle_count,particles_per_cell,particle_spacing_m,"
     "mass_quanta_per_particle,kg_per_mass_quantum,expected_mass_quanta,exact_mass_before,"
     "exact_mass_after,expected_elapsed_quanta,observed_elapsed_quanta,exact_mass_ok,"
     "exact_clock_ok,status,full_reference_status,full_reference_available,"
@@ -269,11 +270,45 @@ def validate_raw(rows: list[dict[str, str]], scope: str, mode: str,
             require(integer(row[name], where) == cfg[name], f"{where}: {name} drift")
         for name in ("h_m", "dt_s", "particle_spacing_m"):
             require(number(row[name], where) == cfg[name], f"{where}: {name} drift")
+        domain_min = number(row["domain_min_m"], where)
+        domain_max = number(row["domain_max_m"], where)
+        density = number(row["density_kg_per_m3"], where)
+        registered_mass = number(row["registered_total_mass_kg"], where)
+        observed_cfl = number(row["cfl_u_ref_dt_over_h"], where)
+        require(domain_min == -0.5, f"{where}: domain minimum")
+        require(domain_max == 0.5, f"{where}: domain maximum")
+        require(density == 1.0, f"{where}: density")
+        require(registered_mass == 1.0, f"{where}: registered total mass")
+        require(observed_cfl == 0.125, f"{where}: CFL-like ratio")
+        assert domain_min is not None and domain_max is not None
+        assert density is not None and registered_mass is not None
+        assert observed_cfl is not None
+        extent = domain_max - domain_min
         axis = int(cfg["particles_per_axis"])
+        cells = int(cfg["cells_per_axis"])
         particle_count = axis ** 3
+        nominal_grid_cell_count = integer(row["nominal_domain_grid_cell_count"], where)
+        require(nominal_grid_cell_count == cells ** 3,
+                f"{where}: nominal grid-cell count relation")
+        require(cells * float(cfg["h_m"]) == extent,
+                f"{where}: grid extent relation")
+        require(axis * float(cfg["particle_spacing_m"]) == extent,
+                f"{where}: particle extent relation")
+        require(axis % cells == 0 and (axis // cells) ** 3 == int(cfg["particles_per_cell"]),
+                f"{where}: particles-per-cell relation")
+        require(observed_cfl == 2.5 * float(cfg["dt_s"]) / float(cfg["h_m"]),
+                f"{where}: CFL reconstruction relation")
         require(integer(row["particle_count"], where) == particle_count, f"{where}: particle count")
-        require(number(row["kg_per_mass_quantum"], where) == 1.0 / 4096.0, f"{where}: mass quantum")
+        kg_per_quantum = number(row["kg_per_mass_quantum"], where)
+        require(kg_per_quantum == 1.0 / 4096.0, f"{where}: mass quantum")
         require(integer(row["expected_mass_quanta"], where) == 4096, f"{where}: expected mass")
+        assert kg_per_quantum is not None
+        require(registered_mass == extent ** 3 * density,
+                f"{where}: density/domain mass relation")
+        require(registered_mass == 4096 * kg_per_quantum,
+                f"{where}: exact-quantum total-mass relation")
+        require(registered_mass == particle_count * int(cfg["mass_quanta_per_particle"]) *
+                kg_per_quantum, f"{where}: particle mass relation")
         before = integer(row["exact_mass_before"], where)
         after = integer(row["exact_mass_after"], where)
         mass_ok = before == 4096 and after == 4096
@@ -808,7 +843,11 @@ def validate_summary(summary: Mapping[str, Any], mode: str, counts: Mapping[str,
             isinstance(summary.get("compiler_id"), str) and summary.get("compiler_id") not in {"", "unknown"} and
             isinstance(summary.get("compiler_version"), str) and summary.get("compiler_version") not in {"", "unknown"},
             "summary tool provenance")
-    require(summary.get("time_quantum_s") == 1.0 / 160.0 and summary.get("u_ref_m_per_s") == 2.5,
+    require(summary.get("time_quantum_s") == 1.0 / 160.0 and summary.get("u_ref_m_per_s") == 2.5 and
+            summary.get("domain_min_m") == -0.5 and summary.get("domain_max_m") == 0.5 and
+            summary.get("density_kg_per_m3") == 1.0 and
+            summary.get("registered_total_mass_kg") == 1.0 and
+            summary.get("registered_cfl_u_ref_dt_over_h") == 0.125,
             "summary physical scales")
     require(isinstance(summary.get("source_sha"), str) and isinstance(summary.get("source_branch"), str) and
             isinstance(summary.get("source_dirty"), bool), "summary source provenance")

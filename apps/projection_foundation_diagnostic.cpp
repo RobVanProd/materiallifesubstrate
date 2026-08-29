@@ -80,7 +80,7 @@ constexpr double pic_identity_tolerance = 5.0e-13;
 constexpr double affine_energy_diagnostic_tolerance = 5.0e-9;
 constexpr double roundoff_guard = 5.0e-14;
 
-constexpr std::string_view schema = "mls.projection-foundation.summary.v1";
+constexpr std::string_view schema = "mls.projection-foundation.summary.v2";
 constexpr std::string_view manifest_schema = "mls.projection-foundation.manifest.v1";
 constexpr std::string_view exact_oracle_result_sha =
     "7f3119d609bf022fa31bfc5bf01a6c15189aaede7e35f9cfad13f4c275fae4bc";
@@ -1164,8 +1164,9 @@ private:
 }
 
 constexpr std::string_view raw_header =
-    "mode,seed,scope,candidate,field,phase,orientation,level,h_m,dt_s,dt_quanta,steps,"
-    "cells_per_axis,particles_per_axis,particle_count,particles_per_cell,particle_spacing_m,"
+    "mode,seed,scope,candidate,field,phase,orientation,level,domain_min_m,domain_max_m,"
+    "density_kg_per_m3,registered_total_mass_kg,cfl_u_ref_dt_over_h,h_m,dt_s,dt_quanta,steps,"
+    "cells_per_axis,nominal_domain_grid_cell_count,particles_per_axis,particle_count,particles_per_cell,particle_spacing_m,"
     "mass_quanta_per_particle,kg_per_mass_quantum,expected_mass_quanta,exact_mass_before,"
     "exact_mass_after,expected_elapsed_quanta,observed_elapsed_quanta,exact_mass_ok,"
     "exact_clock_ok,status,full_reference_status,full_reference_available,"
@@ -1204,11 +1205,18 @@ void write_raw_row(Csv& csv, const RawRow& row, bool smoke) {
         config.phase.name,
         config.orientation.name,
         std::to_string(config.level),
+        format_double(domain_min_m),
+        format_double(domain_max_m),
+        format_double(density_kg_per_m3),
+        format_double(static_cast<double>(expected_mass_quanta) * kg_per_mass_quantum),
+        format_double(u_ref_m_per_s * config.dt_s / config.h_m),
         format_double(config.h_m),
         format_double(config.dt_s),
         std::to_string(config.dt_quanta),
         std::to_string(config.steps),
         std::to_string(config.cells_per_axis),
+        std::to_string(config.cells_per_axis * config.cells_per_axis *
+                       config.cells_per_axis),
         std::to_string(config.particles_per_axis),
         std::to_string(config.particles_per_axis * config.particles_per_axis *
                        config.particles_per_axis),
@@ -2127,6 +2135,9 @@ struct Counts final {
            << "    \"primary_total\": " << counts.primary_total << ",\n"
            << "    \"solver_failures\": " << counts.solver_failures << "\n"
            << "  },\n"
+           << "  \"density_kg_per_m3\": " << format_double(density_kg_per_m3) << ",\n"
+           << "  \"domain_max_m\": " << format_double(domain_max_m) << ",\n"
+           << "  \"domain_min_m\": " << format_double(domain_min_m) << ",\n"
            << "  \"exact_oracle_result_sha256\": \"" << exact_oracle_result_sha << "\",\n"
            << "  \"full_reference_failures\": " << full_reference_failures << ",\n"
            << "  \"hard_gate_failures\": " << applicable_gate_failures << ",\n"
@@ -2134,6 +2145,10 @@ struct Counts final {
            << "  \"no_constitutive_mechanics_authorized\": true,\n"
            << "  \"order_failures\": " << order_failures << ",\n"
            << "  \"order_unavailable\": " << order_unavailable << ",\n"
+           << "  \"registered_cfl_u_ref_dt_over_h\": " << format_double(cfl) << ",\n"
+           << "  \"registered_total_mass_kg\": "
+           << format_double(static_cast<double>(expected_mass_quanta) * kg_per_mass_quantum)
+           << ",\n"
            << "  \"schema\": \"" << schema << "\",\n"
            << "  \"seed\": " << seed << ",\n"
            << "  \"source_branch\": \"" << json_escape(MLS_CONFIGURED_SOURCE_BRANCH) << "\",\n"

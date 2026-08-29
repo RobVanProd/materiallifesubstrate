@@ -124,11 +124,11 @@ as an independent algorithmic discovery.
 `h`, `dt`, and particle spacing halve together. Density, domain, total mass,
 particles/cell, horizon, and `U_ref dt/h=1/8` remain fixed.
 
-| Level | `h` m | `dt` s | dt quanta | steps | cells/axis | particles/axis | particles | ppc | `dx_p` m | mass quanta/particle |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 0 | `1/2` | `1/40` | 4 | 1 | 2 | 4 | 64 | 8 | `1/4` | 64 |
-| 1 | `1/4` | `1/80` | 2 | 2 | 4 | 8 | 512 | 8 | `1/8` | 8 |
-| 2 | `1/8` | `1/160` | 1 | 4 | 8 | 16 | 4096 | 8 | `1/16` | 1 |
+| Level | `h` m | `dt` s | dt quanta | steps | cells/axis | nominal domain grid cells | particles/axis | particles | ppc | `dx_p` m | mass quanta/particle |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0 | `1/2` | `1/40` | 4 | 1 | 2 | 8 | 4 | 64 | 8 | `1/4` | 64 |
+| 1 | `1/4` | `1/80` | 2 | 2 | 4 | 64 | 8 | 512 | 8 | `1/8` | 8 |
+| 2 | `1/8` | `1/160` | 1 | 4 | 8 | 512 | 16 | 4096 | 8 | `1/16` | 1 |
 
 The complete main matrix is:
 
@@ -146,11 +146,11 @@ This separate sweep fixes `h=1/4 m`, `dt=1/80 s`, two steps, the hard phase,
 orientation `p210_sppm`, and the same cube/density/mass. It uses the general
 affine and smooth non-affine fields.
 
-| Level | ppc | particles/axis/cell | `dx_p` m | particles | mass quanta/particle |
-|---:|---:|---:|---:|---:|---:|
-| 0 | 1 | 1 | `1/4` | 64 | 64 |
-| 1 | 8 | 2 | `1/8` | 512 | 8 |
-| 2 | 64 | 4 | `1/16` | 4096 | 1 |
+| Level | ppc | particles/axis/cell | nominal domain grid cells | `dx_p` m | particles | mass quanta/particle |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 1 | 1 | 64 | `1/4` | 64 | 64 |
+| 1 | 8 | 2 | 64 | `1/8` | 512 | 8 |
+| 2 | 64 | 4 | 64 | `1/16` | 4096 | 1 |
 
 This contains `2*6*3 = 36` raw rows. The ppc=1 full matrix is expected to be
 structurally rank deficient when active nodes exceed particles; that expected
@@ -287,6 +287,14 @@ cross-table consistency checker, not an independent floating-point trajectory
 solver. It does not recompute numerical trajectories from checkpoints. The
 exact-rational oracle is separate, and two-run byte identity tests deterministic
 repeatability rather than numerical truth.
+
+Every raw v2 row explicitly records the fixed domain bounds, density,
+registered total mass, `U_ref dt/h`, cells per axis, nominal bounded-domain
+grid-cell count, particle count and spacing, particles per cell, mass quantum,
+and exact observed mass/clock. “Nominal domain grid cells” is not a claim about
+the transient unbounded active-node allocation. The independent validator
+recomputes the domain/grid/particle extents, density-to-mass, particle-to-mass,
+mass-quantum, particles-per-cell, CFL-like, and grid-cell-count relations.
 
 ## 12. Decision logic
 

@@ -868,6 +868,7 @@ identity is not assumed for PIC or finite FMPM.
 - `projection checkpoint restart reproduces continued center evolution exactly`
 - independent exact-rational full/FMPM oracle and its canonical digest
 - projection full-family schema audit and bundle-validator mutation regression
+- projection v2 physical-scale relation and re-manifested mutation checks
 - outer evidence-seal deterministic-create and mutation regression
 
 The final co-refinement, phase/orientation, particles-per-cell, compiler, and
