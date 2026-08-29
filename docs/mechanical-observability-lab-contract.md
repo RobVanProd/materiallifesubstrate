@@ -125,9 +125,12 @@ art limitations outside this lab.
 
 ## 6. Conditional candidate D: oriented-volume relations
 
-Candidate D is enabled only because preregistered ordinary three-dimensional
-candidate-C controls contain non-rigid modes during the diagnostic pilot. The
-only permitted enrichment type is frozen before the final sweep.
+Candidate D is enabled only when at least one preregistered ordinary
+three-dimensional Candidate-C control has a resolved non-rigid mode and every
+generic non-exact C row has first passed the complete local rank, basis, rigid
+containment, and residual contract. An invalid or unresolved generic C row
+blocks the global D trigger and forces an implementation stop. The only
+permitted enrichment type is frozen before the final sweep.
 
 For an explicit ordered tuple `(i,j,k,l)`, let
 

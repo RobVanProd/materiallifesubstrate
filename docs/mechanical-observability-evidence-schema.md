@@ -145,16 +145,17 @@ also requires both the resolved-spectrum delta and normalized-residual delta
 to be at most the unchanged invariance tolerance
 `16384*max(m,n)*epsilon64`.
 
-Every registered base/variant B/C/D pair has an invariance row even when an
-operator is unavailable. `metrics_available=true` only when both operators
+Every registered base/variant B/C/D pair and every attempted C lookup-phase
+self-comparison has an invariance row even when an operator is unavailable.
+`metrics_available=true` only when both operators
 are built, both ranks are analyzed/unambiguous, and dimensions are comparable.
 Otherwise rank/nullity matches are false, numerical metrics and tolerance are
 `NA`, and canonical bytes are false. Such a row may pass only as closed status
 parity: both operators are unavailable and their independently derived build
 status and complete failure tuple (stage, reason, row, column, value, bits,
-and class) match. Mandatory
-generic B/C/triggered-D unavailability still forces the overall lab stop even
-when its metamorphic status parity passes.
+and class) match. Mandatory decision-driving unavailability (all attempted C,
+generic B, and triggered generic D) still forces `invariance_all_pass=false`
+and the overall lab stop even when its status-parity row itself passes.
 
 `rigid_basis.csv`
 
@@ -205,6 +206,15 @@ operator_id,basis_kind,mode_index,operator_image_l2,operator_denominator,normali
 ```text
 operator_id,sampling_operator_id,derivative_operator_id,mode_index,representative_component,sampling_residual_normalized,derivative_max_per_s,derivative_rms_per_s,derivative_roundoff_bound_per_s,visibility_ratio,gradient_visible,accepted,pass,promotion_eligible
 ```
+
+Candidate A passes only with a nonempty emitted gauge basis and `pass=true` on
+every row for every registered phase. Candidate B/C/D rank aggregation applies
+only to decision-driving rows and requires analyzed unambiguous rank, complete
+basis, rigid containment, all four aggregate residuals within the registered
+bound, and `pass=true` on every applicable complete-kernel and non-rigid metric
+row. `decisive_rank_rows_all_unambiguous` also includes the independent exact-
+reference agreement; the latter remains separately reported rather than being
+hidden inside the aggregate.
 
 `exact_reference.csv`
 
@@ -284,9 +294,13 @@ missing, or extra checkpoint row makes the bundle invalid.
 
 The D inventory is global and exact. The exact enriched-square D operator is
 always built. Otherwise, the validator derives the trigger from independently
-ranked `generic_solid_gate=true` C rows. With no resolved generic C non-rigid
-mode, every non-exact D status is `not_triggered` and no non-exact volume tuple
-is present. If any generic C row triggers D, every non-exact configuration
+ranked `generic_solid_gate=true` C rows. Every such non-exact C must first have
+a built/normalized operator, analyzed unambiguous rank, complete accepted null
+basis, rigid containment, resolved quotient, and all registered residual gates
+passing. Any invalid generic C blocks D and forces the implementation stop.
+With no accepted resolved generic C non-rigid mode, every non-exact D status is
+`not_triggered` and no non-exact volume tuple is present. If an accepted
+generic C row triggers D, every non-exact configuration
 inherits the selector result frozen on its original/base geometry, and every
 metamorphic variant retains those physical relation IDs. D is built exactly
 when that selected tuple set is nonempty; an empty set remains

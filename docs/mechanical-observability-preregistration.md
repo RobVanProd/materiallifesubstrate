@@ -23,7 +23,13 @@ dirty/provisional and cannot be sealed.
   actual rigidity matrix. The graph is physical input.
 - **D — objective volume enrichment.** This type is frozen now but is included
   in the final candidate sweep only if a `generic_solid_gate=true` C row has a
-  resolved non-rigid null mode. That trigger is global: if it fires, D is
+  resolved non-rigid null mode and every independently generic non-exact C row
+  has first passed its complete local contract. That contract requires a built
+  and normalized C operator, analyzed/unambiguous rank, a complete kernel
+  basis, rigid-subspace containment, a resolved non-rigid quotient, and every
+  registered null/rigid/quotient/orthogonality residual within tolerance. Any
+  invalid generic C row blocks enrichment and forces the implementation stop.
+  That trigger is global: if it fires, D is
   instantiated across every non-exact configuration using the selector frozen
   on that configuration's original/base geometry; metamorphic variants retain
   those physical relation IDs. A D operator is built exactly when the selected
@@ -338,8 +344,11 @@ is invalid. The frozen enum is
 
 Candidate-A `S`-null acceptance and derivative visibility reuse the sealed
 Projection Exactness + Nullspace formulas. The negative control passes this
-lab only by reproducing at least one accepted `S_A` null mode whose symmetric
-`D_A` image exceeds `max(1e-10 1/s,10^4*roundoff_bound)`.
+lab only when its emitted null basis is nonempty and **every** emitted `S_A`
+null mode passes the sampling residual gate and has a symmetric `D_A` image
+exceeding `max(1e-10 1/s,10^4*roundoff_bound)`. One passing mode can never hide
+another mode's failed residual or visibility contract, and every registered A
+phase must pass the same aggregate.
 
 ## 9. Independent exact and high-precision checks
 
@@ -360,6 +369,14 @@ precision findings are labeled numerical, never certified.
    failure, incomplete basis, ambiguous decisive rank, independent mismatch,
    or nondeterminism:
    `stop_inconclusive_or_implementation_failure`.
+
+For each decision-driving B/C/D operator, the decisive-rank aggregate requires
+the analyzed/unambiguous disposition, complete accepted kernel basis, rigid
+containment, registered aggregate null/rigid/non-rigid/orthogonality residuals,
+and every emitted complete-kernel/non-rigid per-mode residual/projection gate.
+Independent exact-reference agreement is also part of this aggregate as well
+as its separately reported gate. Diagnostic non-decision B/D rows remain
+exported without driving the aggregate.
 2. If B has any resolved non-rigid mode on a B-eligible ordinary 3D bulk row,
    record `reject_averaged_single_gradient_packet_kinematics`.
 3. If C has only the realized rigid kernel across every
@@ -405,7 +422,10 @@ The deterministic bundle contains:
 Every table has a frozen schema and deterministic lexicographic order. Raw
 operators must be exported for every exact/high-precision or decision-driving
 row; an unexported row has `operator_payload_sha256=NA` and no stray entries.
-There is no digest for an empty unexported group.
+There is no digest for an empty unexported group. Any decision-driving
+unexported B/C/D row, including a generic B local-moment failure, clears the
+raw-decision gate and forces the implementation stop even when its closed
+failure witness is otherwise valid.
 Attempted A/C/D construction or row-normalization failure is retained using
 the closed failure fields in the wire contract. A finite pre-normalization
 operator remains completely exported when representable; rank, affine/gauge,

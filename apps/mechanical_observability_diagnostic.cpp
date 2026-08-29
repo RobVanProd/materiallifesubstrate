@@ -2142,6 +2142,57 @@ struct RankEvidenceDisposition final {
     return result;
 }
 
+[[nodiscard]] bool resolved_packet_rank_contract(
+    const mo::LinearizedOperator& linearized,
+    const mo::RowNormalization& normalization,
+    const mo::ObservabilityDiagnostics& diagnostics) {
+    if (!normalization.complete ||
+        diagnostics.status != mo::RankStatus::analyzed) {
+        return false;
+    }
+    const auto disposition = rank_evidence_disposition(diagnostics);
+    const double tolerance = residual_tolerance(
+        linearized.matrix.row_count(), linearized.matrix.column_count());
+    if (disposition.status != "analyzed" || disposition.basis_failure ||
+        !diagnostics.operator_rank.basis_complete ||
+        !diagnostics.rigid_subspace_in_kernel ||
+        diagnostics.nonrigid_nullspace_basis.column_count() !=
+            diagnostics.nonrigid_nullity ||
+        !std::isfinite(diagnostics.normalized_rigid_residual) ||
+        diagnostics.normalized_rigid_residual > tolerance ||
+        !std::isfinite(diagnostics.operator_rank.normalized_null_residual) ||
+        diagnostics.operator_rank.normalized_null_residual > tolerance ||
+        !std::isfinite(diagnostics.normalized_nonrigid_residual) ||
+        diagnostics.normalized_nonrigid_residual > tolerance ||
+        !std::isfinite(diagnostics.rigid_orthogonality_residual) ||
+        diagnostics.rigid_orthogonality_residual > tolerance) {
+        return false;
+    }
+    const auto modes_pass = [&](const mo::DenseMatrix& basis,
+                                bool require_rigid_orthogonality) {
+        for (std::size_t mode = 0U; mode < basis.column_count(); ++mode) {
+            const auto vector = matrix_column(basis, mode);
+            double image_norm = 0.0;
+            double denominator = 0.0;
+            const double normalized = normalized_image_residual(
+                normalization.normalized, vector, image_norm, denominator);
+            const double projection = require_rigid_orthogonality
+                ? rigid_projection_norm(
+                    diagnostics.rigid.orthonormal_basis, vector)
+                : 0.0;
+            if (!std::isfinite(normalized) || normalized > tolerance ||
+                !std::isfinite(projection) ||
+                (require_rigid_orthogonality && projection > tolerance)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    return modes_pass(
+               diagnostics.operator_rank.nullspace_basis, false) &&
+        modes_pass(diagnostics.nonrigid_nullspace_basis, true);
+}
+
 void emit_rank_evidence(
     BundleTables& tables, const OperatorSnapshot& snapshot) {
     const auto& diagnostics = snapshot.diagnostics;
@@ -2767,10 +2818,8 @@ struct EmissionState final {
         }
         if (candidate == "C" || snapshot.decision_driving) {
             emission.decisive_ranks_unambiguous =
-                rank_evidence_disposition(snapshot.diagnostics).status ==
-                    "analyzed" &&
-                snapshot.diagnostics.operator_rank.basis_complete &&
-                snapshot.diagnostics.rigid_subspace_in_kernel &&
+                resolved_packet_rank_contract(snapshot.linearized,
+                    snapshot.normalization, snapshot.diagnostics) &&
                 emission.decisive_ranks_unambiguous;
         }
     } else if (candidate == "C" || snapshot.decision_driving) {
@@ -2779,8 +2828,7 @@ struct EmissionState final {
     if (candidate == "B" && corrected != nullptr) {
         emit_moment_evidence(tables, snapshot.id, *corrected);
     }
-    if (snapshot.decision_driving && !snapshot.raw_exported &&
-        candidate != "B") {
+    if (snapshot.decision_driving && !snapshot.raw_exported) {
         emission.raw_decision_all_exported = false;
     }
     const std::string digest = snapshot.raw_exported
@@ -3134,6 +3182,21 @@ struct CandidateAResult final {
     std::vector<std::string> operator_ids{};
 };
 
+struct CandidateAGaugeContract final {
+    bool has_mode{false};
+    bool all_modes_pass{true};
+
+    void observe(bool sampling_accepted, bool derivative_visible) noexcept {
+        has_mode = true;
+        all_modes_pass = all_modes_pass && sampling_accepted &&
+            derivative_visible;
+    }
+
+    [[nodiscard]] bool pass() const noexcept {
+        return has_mode && all_modes_pass;
+    }
+};
+
 struct CandidateAPreparedOperator final {
     std::vector<Row> entries{};
     mo::RowNormalization normalization{};
@@ -3257,7 +3320,9 @@ struct CandidateAPreparedOperator final {
     const double null_residual = basis_residual(operators.sampling, lifted);
     const double rank_tolerance = residual_tolerance(
         operators.sampling.row_count(), operators.sampling.column_count());
-    const bool rank_ambiguous = full_rank.status == mo::RankStatus::ambiguous;
+    const bool rank_ambiguous =
+        full_rank.status == mo::RankStatus::ambiguous ||
+        scalar_rank.status == mo::RankStatus::ambiguous;
     const bool rank_basis_nonfinite =
         !finite_matrix(full_rank.nullspace_basis) ||
         !finite_matrix(scalar_rank.nullspace_basis) ||
@@ -3315,6 +3380,7 @@ struct CandidateAPreparedOperator final {
         result.ranks_unambiguous = false;
         return result;
     }
+    CandidateAGaugeContract gauge_contract{};
     for (std::size_t mode = 0U; mode < vector_nullity; ++mode) {
         const auto vector = matrix_column(lifted, mode);
         const auto image = matrix_vector(operators.sampling, vector);
@@ -3349,31 +3415,79 @@ struct CandidateAPreparedOperator final {
         const double ratio = derivative_max / bound;
         const bool visible = derivative_max > std::max(1.0e-10, 1.0e4 * bound);
         const bool pass = accepted && visible;
-        result.negative_control_reproduced =
-            result.negative_control_reproduced || pass;
+        gauge_contract.observe(accepted, visible);
         tables.grid_gauge.row({operators.sampling_id, operators.sampling_id,
             operators.derivative_id, std::to_string(mode),
             axis_name(mode % 3U), hex64(normalized), hex64(derivative_max),
             hex64(derivative_rms), hex64(bound), hex64(ratio),
             bool_text(visible), bool_text(accepted), bool_text(pass), "false"});
     }
-    result.ranks_unambiguous = !rank_ambiguous && rank_compatible &&
-        full_rank.status == mo::RankStatus::analyzed;
+    const bool aggregate_null_residual_pass =
+        std::isfinite(null_residual) && null_residual <= rank_tolerance;
+    const bool complete_rank_contract = !rank_ambiguous && rank_compatible &&
+        full_rank.status == mo::RankStatus::analyzed &&
+        scalar_rank.status == mo::RankStatus::analyzed &&
+        aggregate_null_residual_pass && gauge_contract.pass();
+    result.negative_control_reproduced = complete_rank_contract;
+    result.ranks_unambiguous = complete_rank_contract;
     return result;
 }
 
-[[nodiscard]] bool c_requires_volume_enrichment(
-    const Configuration& configuration) {
-    const auto facts = topology_facts(configuration);
-    if (!facts.generic_solid_gate) {
-        return false;
+[[nodiscard]] bool accepted_resolved_c_contract(
+    const mo::LinearizedOperator& linearized,
+    const mo::ObservabilityDiagnostics& diagnostics) {
+    const auto normalization =
+        mo::normalize_operator_rows(linearized.matrix);
+    return resolved_packet_rank_contract(
+        linearized, normalization, diagnostics);
+}
+
+struct GlobalDTriggerAssessment final {
+    bool has_generic_c{false};
+    bool all_generic_c_contracts_accepted{true};
+    bool any_resolved_nonrigid_c{false};
+
+    [[nodiscard]] bool trigger() const noexcept {
+        return has_generic_c && all_generic_c_contracts_accepted &&
+            any_resolved_nonrigid_c;
     }
-    const auto bonds = mo::build_bond_rigidity_operator(
-        configuration.packets, retained_bonds(configuration));
-    const auto diagnostics = mo::diagnose_mechanical_observability(
-        bonds.linearized, configuration.packets);
-    return diagnostics.status == mo::RankStatus::analyzed &&
-        diagnostics.nonrigid_nullity > 0U;
+};
+
+struct CTriggerObservation final {
+    bool accepted{false};
+    std::size_t nonrigid_nullity{0U};
+};
+
+[[nodiscard]] GlobalDTriggerAssessment reduce_global_d_trigger(
+    std::span<const CTriggerObservation> observations) {
+    GlobalDTriggerAssessment result{};
+    result.has_generic_c = !observations.empty();
+    for (const auto& observation : observations) {
+        result.all_generic_c_contracts_accepted =
+            result.all_generic_c_contracts_accepted && observation.accepted;
+        result.any_resolved_nonrigid_c = result.any_resolved_nonrigid_c ||
+            (observation.accepted && observation.nonrigid_nullity > 0U);
+    }
+    return result;
+}
+
+[[nodiscard]] GlobalDTriggerAssessment assess_global_d_trigger(
+    std::span<const Configuration> configurations_value) {
+    std::vector<CTriggerObservation> observations;
+    for (const auto& configuration : configurations_value) {
+        const auto facts = topology_facts(configuration);
+        if (configuration.exact_control || !facts.generic_solid_gate) {
+            continue;
+        }
+        const auto bonds = mo::build_bond_rigidity_operator(
+            configuration.packets, retained_bonds(configuration));
+        const auto diagnostics = mo::diagnose_mechanical_observability(
+            bonds.linearized, configuration.packets);
+        const bool accepted =
+            accepted_resolved_c_contract(bonds.linearized, diagnostics);
+        observations.push_back({accepted, diagnostics.nonrigid_nullity});
+    }
+    return reduce_global_d_trigger(observations);
 }
 
 [[nodiscard]] std::vector<std::uint64_t> frozen_packet_permutation(
@@ -4070,7 +4184,7 @@ void emit_exact_references(BundleTables& tables,
     }
     for (const auto& configuration : configurations_value) {
         const auto found = emission.snapshots.find(configuration.id + ".C");
-        if (found != emission.snapshots.end() && found->second.built) {
+        if (found != emission.snapshots.end()) {
             emit("lookup_phase." + configuration.id, found->second,
                 found->second, "lookup_phase", 1.0,
                 "p000_to_p037_011_029", false, false);
@@ -4582,6 +4696,69 @@ void logic_audit() {
         d.status != mo::RankStatus::analyzed || d.nonrigid_nullity != 0U) {
         throw std::logic_error("logic audit exact rank decision failed");
     }
+    if (!accepted_resolved_c_contract(bonds.linearized, c)) {
+        throw std::logic_error(
+            "logic audit accepted C contract was rejected");
+    }
+    auto incomplete_c = c;
+    incomplete_c.operator_rank.basis_complete = false;
+    if (accepted_resolved_c_contract(bonds.linearized, incomplete_c)) {
+        throw std::logic_error(
+            "logic audit incomplete C basis triggered enrichment");
+    }
+    auto failed_residual_c = c;
+    failed_residual_c.normalized_nonrigid_residual =
+        2.0 * residual_tolerance(bonds.linearized.matrix.row_count(),
+            bonds.linearized.matrix.column_count());
+    if (accepted_resolved_c_contract(
+            bonds.linearized, failed_residual_c)) {
+        throw std::logic_error(
+            "logic audit failed C residual triggered enrichment");
+    }
+    auto failed_orthogonality_c = c;
+    failed_orthogonality_c.rigid_orthogonality_residual =
+        2.0 * residual_tolerance(bonds.linearized.matrix.row_count(),
+            bonds.linearized.matrix.column_count());
+    if (accepted_resolved_c_contract(
+            bonds.linearized, failed_orthogonality_c)) {
+        throw std::logic_error(
+            "logic audit failed C orthogonality triggered enrichment");
+    }
+    auto failed_mode_c = c;
+    if (failed_mode_c.operator_rank.nullspace_basis.column_count() == 0U) {
+        throw std::logic_error(
+            "logic audit C control lacks a complete-kernel mode");
+    }
+    failed_mode_c.operator_rank.nullspace_basis(0U, 0U) += 1.0;
+    if (accepted_resolved_c_contract(bonds.linearized, failed_mode_c)) {
+        throw std::logic_error(
+            "logic audit failed C per-mode residual triggered enrichment");
+    }
+    CandidateAGaugeContract valid_a_contract{};
+    valid_a_contract.observe(true, true);
+    if (!valid_a_contract.pass()) {
+        throw std::logic_error(
+            "logic audit valid A gauge contract was rejected");
+    }
+    CandidateAGaugeContract failed_a_contract{};
+    failed_a_contract.observe(true, true);
+    failed_a_contract.observe(true, false);
+    if (failed_a_contract.pass()) {
+        throw std::logic_error(
+            "logic audit one passing A mode hid a failed mode");
+    }
+    const std::array<CTriggerObservation, 1> accepted_nonrigid{{
+        {true, 1U}}};
+    if (!reduce_global_d_trigger(accepted_nonrigid).trigger()) {
+        throw std::logic_error(
+            "logic audit accepted nonrigid C did not trigger enrichment");
+    }
+    const std::array<CTriggerObservation, 2> mixed_c_contracts{{
+        {true, 1U}, {false, 0U}}};
+    if (reduce_global_d_trigger(mixed_c_contracts).trigger()) {
+        throw std::logic_error(
+            "logic audit invalid C failed to block global enrichment");
+    }
     auto d_relation_ids = bond_relation_ids(*square);
     const auto exact_volume_ids = volume_relation_ids(*square);
     d_relation_ids.insert(d_relation_ids.end(), exact_volume_ids.begin(),
@@ -4709,9 +4886,10 @@ void logic_audit() {
         std::string(mo::status_name(filament_corrected.status)),
         filament_corrected.symmetric_gradient, {}, 0U, &filament_corrected);
     if (!generic_b_snapshot.decision_driving ||
-        generic_b_emission.decisive_ranks_unambiguous) {
+        generic_b_emission.decisive_ranks_unambiguous ||
+        generic_b_emission.raw_decision_all_exported) {
         throw std::logic_error(
-            "logic audit generic singular B failure did not force stop");
+            "logic audit generic singular B failure did not close gates");
     }
     OperatorSnapshot failed_first{};
     failed_first.build_status = "singular_local_moment";
@@ -4726,6 +4904,35 @@ void logic_audit() {
     if (build_status_parity(failed_first, failed_second)) {
         throw std::logic_error(
             "logic audit mismatched failure witness class passed parity");
+    }
+    OperatorSnapshot unavailable_c{};
+    unavailable_c.id = filament->id + ".C";
+    unavailable_c.configuration_id = filament->id;
+    unavailable_c.candidate = "C";
+    unavailable_c.build_status = "numerical_failure";
+    unavailable_c.decision_driving = true;
+    unavailable_c.failure = {"row_normalization", "zero_row_norm", "0",
+        "NA", "0x0.0p+0", "0000000000000000", "finite_zero"};
+    for (const auto& packet : filament->packets) {
+        unavailable_c.linearized.packet_ids.push_back(packet.id);
+    }
+    std::sort(unavailable_c.linearized.packet_ids.begin(),
+        unavailable_c.linearized.packet_ids.end());
+    EmissionState unavailable_c_emission{};
+    unavailable_c_emission.snapshots.emplace(
+        unavailable_c.id, unavailable_c);
+    BundleTables unavailable_c_tables{};
+    const std::array<Configuration, 1> unavailable_c_configurations{
+        *filament};
+    if (emit_invariance_evidence(unavailable_c_tables,
+            unavailable_c_emission, unavailable_c_configurations) ||
+        unavailable_c_tables.invariance.size() != 1U ||
+        unavailable_c_tables.invariance.rows().front()[0] !=
+            "lookup_phase." + filament->id ||
+        unavailable_c_tables.invariance.rows().front()[13] != "false" ||
+        unavailable_c_tables.invariance.rows().front()[18] != "true") {
+        throw std::logic_error(
+            "logic audit unavailable C lookup parity did not force stop");
     }
     mo::DenseMatrix zero_row(1U, 3U);
     const auto zero_normalization = mo::normalize_operator_rows(zero_row);
@@ -4947,17 +5154,42 @@ void logic_audit() {
         throw std::logic_error(
             "logic audit checkpoint mismatch did not force stop");
     }
+    SummaryInputs a_contract_failure_inputs{};
+    a_contract_failure_inputs.negative_control = false;
+    const std::string a_contract_failure_summary = make_summary(
+        checkpoint_failure_tables, checkpoint_failure_emission,
+        a_contract_failure_inputs);
+    if (a_contract_failure_summary.find(
+            "\"negative_control_reproduced\": false") ==
+            std::string::npos ||
+        a_contract_failure_summary.find(
+            "\"decision\": \"stop_inconclusive_or_implementation_failure\"") ==
+            std::string::npos) {
+        throw std::logic_error(
+            "logic audit A mode-contract failure did not force stop");
+    }
+    SummaryInputs rank_contract_failure_inputs{};
+    rank_contract_failure_inputs.negative_control = true;
+    rank_contract_failure_inputs.ranks_all = false;
+    const std::string rank_contract_failure_summary = make_summary(
+        checkpoint_failure_tables, checkpoint_failure_emission,
+        rank_contract_failure_inputs);
+    if (rank_contract_failure_summary.find(
+            "\"decisive_rank_rows_all_unambiguous\": false") ==
+            std::string::npos ||
+        rank_contract_failure_summary.find(
+            "\"decision\": \"stop_inconclusive_or_implementation_failure\"") ==
+            std::string::npos) {
+        throw std::logic_error(
+            "logic audit C rank-contract failure did not force stop");
+    }
     std::cout << "Mechanical Observability logic audit: PASS\n";
 }
 
 void run_producer(bool smoke, const std::filesystem::path& output_directory) {
     auto configurations_value = configurations(smoke);
-    const bool d_trigger = std::ranges::any_of(
-        configurations_value, [](const auto& configuration) {
-            return !configuration.exact_control &&
-                c_requires_volume_enrichment(configuration);
-        });
-    if (d_trigger) {
+    const auto d_trigger = assess_global_d_trigger(configurations_value);
+    if (d_trigger.trigger()) {
         assign_volume_relations(configurations_value);
     }
 
@@ -4965,6 +5197,8 @@ void run_producer(bool smoke, const std::filesystem::path& output_directory) {
     EmissionState emission{};
     SummaryInputs summary{};
     summary.smoke = smoke;
+    bool candidate_a_seen = false;
+    bool candidate_a_all_pass = true;
     for (const auto& configuration : configurations_value) {
         const auto input = emit_configuration_inputs(tables, configuration);
         summary.checkpoint_all = summary.checkpoint_all &&
@@ -4976,7 +5210,8 @@ void run_producer(bool smoke, const std::filesystem::path& output_directory) {
             for (const auto& phase : lookup_phases) {
                 const auto a = emit_candidate_a_pair(
                     tables, configuration, phase);
-                summary.negative_control = summary.negative_control ||
+                candidate_a_seen = true;
+                candidate_a_all_pass = candidate_a_all_pass &&
                     a.negative_control_reproduced;
                 emission.decisive_ranks_unambiguous =
                     emission.decisive_ranks_unambiguous &&
@@ -4997,16 +5232,18 @@ void run_producer(bool smoke, const std::filesystem::path& output_directory) {
         summary.read_only_all = summary.read_only_all && read_only;
         emit_configuration_row(tables, configuration, input, after);
     }
+    summary.negative_control = candidate_a_seen && candidate_a_all_pass;
     emit_exact_references(tables, configurations_value);
     summary.invariance_all = emit_invariance_evidence(
         tables, emission, configurations_value);
     summary.affine_all = emission.affine_all_pass;
     summary.finite_all = emission.finite_all_pass;
-    summary.ranks_all = emission.decisive_ranks_unambiguous;
     summary.raw_all = emission.raw_decision_all_exported;
     summary.exact_all = !tables.exact_reference.rows().empty() &&
         std::ranges::all_of(tables.exact_reference.rows(),
             [](const Row& row) { return row[15] == "true"; });
+    summary.ranks_all = emission.decisive_ranks_unambiguous &&
+        summary.exact_all;
     sort_tables(tables);
     const std::string summary_text = make_summary(tables, emission, summary);
     write_bundle(output_directory, tables, summary_text);
