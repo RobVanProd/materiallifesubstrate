@@ -18,6 +18,7 @@
 #include <numbers>
 #include <optional>
 #include <ranges>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -96,6 +97,7 @@ enum class FieldKind : std::uint8_t {
 
 struct Options final {
     bool smoke{false};
+    bool schema_audit{false};
     std::size_t jobs{1};
     std::filesystem::path output{"evidence/projection-foundation"};
 };
@@ -169,11 +171,11 @@ struct RawRow final {
     std::int64_t exact_mass_after{0};
     bool exact_mass_ok{false};
     bool exact_clock_ok{false};
-    double material_velocity_error{0.0};
-    double trajectory_error{0.0};
-    double linear_momentum_error{0.0};
-    double orbital_angular_error{0.0};
-    double center_kinetic_relative_change{0.0};
+    std::optional<double> material_velocity_error{};
+    std::optional<double> trajectory_error{};
+    std::optional<double> linear_momentum_error{};
+    std::optional<double> orbital_angular_error{};
+    std::optional<double> center_kinetic_relative_change{};
     bool checkpoint_roundtrip_ok{false};
     bool checkpoint_replay_ok{false};
     std::string initial_checkpoint_sha256{};
@@ -427,20 +429,43 @@ struct GateRow final {
     return result;
 }
 
-[[nodiscard]] double particle_vector_rms(
+[[nodiscard]] std::uint64_t identity_error_count(
+    std::span<const pf::CenterParticle> expected,
+    std::span<const pf::CenterParticle> observed) {
+    std::uint64_t errors = 0;
+    std::map<std::uint64_t, std::int64_t> balance;
+    for (const auto& particle : expected) {
+        ++balance[particle.id];
+    }
+    for (const auto& particle : observed) {
+        --balance[particle.id];
+    }
+    for (const auto& [id, count] : balance) {
+        static_cast<void>(id);
+        const auto magnitude = count < 0 ? -count : count;
+        const auto increment = static_cast<std::uint64_t>(magnitude);
+        if (increment > std::numeric_limits<std::uint64_t>::max() - errors) {
+            return std::numeric_limits<std::uint64_t>::max();
+        }
+        errors += increment;
+    }
+    return errors;
+}
+
+[[nodiscard]] std::optional<double> particle_vector_rms(
     std::span<const pf::CenterParticle> actual,
     std::span<const pf::CenterParticle> initial,
     bool position,
     double elapsed_s) {
     if (actual.size() != initial.size()) {
-        throw std::logic_error("particle RMS size mismatch");
+        return std::nullopt;
     }
     long double error = 0.0L;
     long double reference = 0.0L;
     long double mass_sum = 0.0L;
     for (std::size_t index = 0; index < actual.size(); ++index) {
         if (actual[index].id != initial[index].id) {
-            throw std::logic_error("particle RMS ID mismatch");
+            return std::nullopt;
         }
         const auto expected = position
             ? initial[index].position_m + elapsed_s * initial[index].velocity_m_per_s
@@ -455,7 +480,7 @@ struct GateRow final {
         mass_sum += mass;
     }
     if (!(mass_sum > 0.0L)) {
-        throw std::logic_error("particle RMS zero mass");
+        return std::nullopt;
     }
     const auto numerator = std::sqrt(static_cast<double>(error / mass_sum));
     const auto denominator = std::max(
@@ -764,16 +789,20 @@ void observe_solve_residual(
     return status == pf::ProjectionStatus::solved || status == pf::ProjectionStatus::empty;
 }
 
-[[nodiscard]] double projection_particle_error(
+[[nodiscard]] std::optional<double> projection_particle_error(
     std::span<const pf::CenterParticle> projected,
     std::span<const pf::CenterParticle> material_reference) {
     if (projected.size() != material_reference.size()) {
-        throw std::logic_error("projection particle reference size mismatch");
+        return std::nullopt;
     }
     long double error = 0.0L;
     long double reference = 0.0L;
     long double total_mass = 0.0L;
     for (std::size_t index = 0; index < projected.size(); ++index) {
+        if (projected[index].id != material_reference[index].id ||
+            projected[index].mass_quanta != material_reference[index].mass_quanta) {
+            return std::nullopt;
+        }
         const auto difference = projected[index].velocity_m_per_s -
             material_reference[index].velocity_m_per_s;
         const auto mass = static_cast<long double>(projected[index].mass_quanta) *
@@ -783,6 +812,9 @@ void observe_solve_residual(
             material_reference[index].velocity_m_per_s,
             material_reference[index].velocity_m_per_s));
         total_mass += mass;
+    }
+    if (!(total_mass > 0.0L)) {
+        return std::nullopt;
     }
     return std::sqrt(static_cast<double>(error / total_mass)) /
         std::max(1.0, std::sqrt(static_cast<double>(reference / total_mass)));
@@ -836,9 +868,12 @@ void observe_solve_residual(
         }
 
         if (solved(step.projection.status)) {
-            trace.particle_reconstruction_error = std::max(
-                trace.particle_reconstruction_error,
-                projection_particle_error(step.projection.particles, initial.particles));
+            const auto reconstruction = projection_particle_error(
+                step.projection.particles, initial.particles);
+            if (reconstruction.has_value()) {
+                trace.particle_reconstruction_error = std::max(
+                    trace.particle_reconstruction_error, *reconstruction);
+            }
         }
         if (solved(full.status) && solved(step.projection.status)) {
             const auto grid_error = grid_distance(
@@ -885,11 +920,9 @@ void observe_solve_residual(
     trace.affine_grid_representation_error = max_affine_grid;
     trace.pic_identity_error = max_pic_identity;
 
-    std::map<std::uint64_t, std::size_t> ids;
+    trace.id_error_count = identity_error_count(
+        initial.particles, trace.terminal.particles);
     for (const auto& particle : trace.terminal.particles) {
-        if (!ids.emplace(particle.id, 1U).second) {
-            ++trace.id_error_count;
-        }
         if (!finite(particle.position_m) || !finite(particle.velocity_m_per_s)) {
             ++trace.nonfinite_count;
         }
@@ -1013,16 +1046,18 @@ void observe_solve_residual(
         row.exact_mass_after == expected_mass_quanta;
     row.exact_clock_ok =
         row.trace.terminal.elapsed_time_quanta == horizon_quanta;
-    row.material_velocity_error = particle_vector_rms(
-        row.trace.terminal.particles, initial.particles, false, horizon_s);
-    row.trajectory_error = particle_vector_rms(
-        row.trace.terminal.particles, initial.particles, true, horizon_s);
-    const auto before = totals(initial.particles);
-    const auto after = totals(row.trace.terminal.particles);
-    row.linear_momentum_error = symmetric_relative(after.linear, before.linear);
-    row.orbital_angular_error = symmetric_relative(after.orbital, before.orbital);
-    row.center_kinetic_relative_change =
-        symmetric_relative(after.kinetic_j, before.kinetic_j);
+    if (row.trace.id_error_count == 0U) {
+        row.material_velocity_error = particle_vector_rms(
+            row.trace.terminal.particles, initial.particles, false, horizon_s);
+        row.trajectory_error = particle_vector_rms(
+            row.trace.terminal.particles, initial.particles, true, horizon_s);
+        const auto before = totals(initial.particles);
+        const auto after = totals(row.trace.terminal.particles);
+        row.linear_momentum_error = symmetric_relative(after.linear, before.linear);
+        row.orbital_angular_error = symmetric_relative(after.orbital, before.orbital);
+        row.center_kinetic_relative_change =
+            symmetric_relative(after.kinetic_j, before.kinetic_j);
+    }
     row.terminal_particles = row.trace.terminal.particles;
     return row;
 }
@@ -1217,11 +1252,11 @@ void write_raw_row(Csv& csv, const RawRow& row, bool smoke) {
         format_optional(trace.full_reference_max_projection_residual),
         bool_text(trace.max_fmpm_residual_identity.has_value()),
         format_optional(trace.max_fmpm_residual_identity),
-        format_double(row.material_velocity_error),
-        format_double(row.trajectory_error),
-        format_double(row.linear_momentum_error),
-        format_double(row.orbital_angular_error),
-        format_double(row.center_kinetic_relative_change),
+        format_optional(row.material_velocity_error),
+        format_optional(row.trajectory_error),
+        format_optional(row.linear_momentum_error),
+        format_optional(row.orbital_angular_error),
+        format_optional(row.center_kinetic_relative_change),
         bool_text(trace.terminal_consistent_grid_energy_j.has_value()),
         format_optional(trace.terminal_consistent_grid_energy_j),
         bool_text(trace.max_abs_numerical_projection_energy_residual_j.has_value()),
@@ -1242,6 +1277,9 @@ void write_raw_row(Csv& csv, const RawRow& row, bool smoke) {
     });
 }
 
+[[nodiscard]] std::optional<double> raw_metric(
+    const RawRow& row, std::string_view metric);
+
 [[nodiscard]] std::vector<SensitivityRow> phase_sensitivity(
     const std::vector<RawRow>& rows, bool smoke) {
     std::vector<SensitivityRow> result;
@@ -1257,7 +1295,9 @@ void write_raw_row(Csv& csv, const RawRow& row, bool smoke) {
                     const auto& second = find_raw(
                         rows, "main", candidate, field, "p049_001_083",
                         orientation.name, level);
-                    const auto applicable = solved(first.trace.status) && solved(second.trace.status);
+                    const auto applicable = solved(first.trace.status) &&
+                        solved(second.trace.status) && first.trace.id_error_count == 0U &&
+                        second.trace.id_error_count == 0U;
                     for (const auto position : {false, true}) {
                         result.push_back({
                             "phase", std::string(pf::candidate_name(candidate)),
@@ -1267,6 +1307,25 @@ void write_raw_row(Csv& csv, const RawRow& row, bool smoke) {
                                 first.terminal_particles, second.terminal_particles,
                                 position)} : std::nullopt,
                             5.0e-10, 5.0e-3, applicable});
+                    }
+                    if (fmpm(candidate)) {
+                        for (const auto metric : {
+                                 std::string_view{"grid_distance_full"},
+                                 std::string_view{"particle_distance_full"}}) {
+                            const auto first_value = raw_metric(first, metric);
+                            const auto second_value = raw_metric(second, metric);
+                            const auto distance_applicable = applicable &&
+                                first_value.has_value() && second_value.has_value();
+                            result.push_back({
+                                "phase", std::string(pf::candidate_name(candidate)),
+                                std::string(field_name(field)), orientation.name, level,
+                                std::string(metric),
+                                distance_applicable
+                                    ? std::optional<double>{std::abs(
+                                          *first_value - *second_value)}
+                                    : std::nullopt,
+                                5.0e-10, 5.0e-3, distance_applicable});
+                        }
                     }
                 }
             }
@@ -1292,7 +1351,9 @@ void write_raw_row(Csv& csv, const RawRow& row, bool smoke) {
                     const auto& second = find_raw(
                         rows, "main", candidate, field, phase.name,
                         orientation_values[1].name, level);
-                    const auto applicable = solved(first.trace.status) && solved(second.trace.status);
+                    const auto applicable = solved(first.trace.status) &&
+                        solved(second.trace.status) && first.trace.id_error_count == 0U &&
+                        second.trace.id_error_count == 0U;
                     for (const auto position : {false, true}) {
                         result.push_back({
                             "orientation", std::string(pf::candidate_name(candidate)),
@@ -1302,6 +1363,26 @@ void write_raw_row(Csv& csv, const RawRow& row, bool smoke) {
                                 first.terminal_particles, second.terminal_particles, position,
                                 &orientation_values[0], &orientation_values[1])} : std::nullopt,
                             5.0e-10, 5.0e-3, applicable});
+                    }
+                    if (fmpm(candidate)) {
+                        for (const auto metric : {
+                                 std::string_view{"grid_distance_full"},
+                                 std::string_view{"particle_distance_full"}}) {
+                            const auto first_value = raw_metric(first, metric);
+                            const auto second_value = raw_metric(second, metric);
+                            const auto distance_applicable = applicable &&
+                                first_value.has_value() && second_value.has_value();
+                            result.push_back({
+                                "orientation",
+                                std::string(pf::candidate_name(candidate)),
+                                std::string(field_name(field)), phase.name, level,
+                                std::string(metric),
+                                distance_applicable
+                                    ? std::optional<double>{std::abs(
+                                          *first_value - *second_value)}
+                                    : std::nullopt,
+                                5.0e-10, 5.0e-3, distance_applicable});
+                        }
                     }
                 }
             }
@@ -1645,7 +1726,7 @@ void add_gate(std::vector<GateRow>& result,
 
 [[nodiscard]] std::vector<GateRow> hard_gates(const std::vector<RawRow>& rows) {
     std::vector<GateRow> result;
-    result.reserve(rows.size() * 19U);
+    result.reserve(rows.size() * 20U);
     for (const auto& row : rows) {
         const auto& diagnostics = row.trace.full_reference_diagnostics;
         const auto is_full =
@@ -1689,8 +1770,9 @@ void add_gate(std::vector<GateRow>& result,
                      diagnostics.grid_mass_relative_error <= grid_mass_tolerance);
         add_gate(result, row, "linear_momentum", true,
                  row.linear_momentum_error, linear_tolerance,
-                 std::isfinite(row.linear_momentum_error) &&
-                     row.linear_momentum_error <= linear_tolerance);
+                 row.linear_momentum_error.has_value() &&
+                     std::isfinite(*row.linear_momentum_error) &&
+                     *row.linear_momentum_error <= linear_tolerance);
         add_gate(result, row, "full_solve_residual", is_full,
                  is_full ? row.trace.max_projection_residual : std::nullopt,
                  is_full ? std::optional<double>{solve_tolerance} : std::nullopt,
@@ -1714,23 +1796,36 @@ void add_gate(std::vector<GateRow>& result,
                          preconditioned_condition_tolerance);
         add_gate(result, row, "full_affine_particle_reconstruction",
                  is_full && is_affine,
-                 full_solved && is_affine
+                 full_solved && is_affine && row.trace.id_error_count == 0U
                      ? std::optional<double>{row.trace.particle_reconstruction_error}
                      : std::nullopt,
                  is_full && is_affine
                      ? std::optional<double>{affine_reconstruction_tolerance}
                      : std::nullopt,
-                 full_solved && row.trace.particle_reconstruction_error <=
+                 full_solved && row.trace.id_error_count == 0U &&
+                     row.trace.particle_reconstruction_error <=
                      affine_reconstruction_tolerance);
-        add_gate(result, row, "full_affine_orbital", is_full && is_affine,
+        add_gate(result, row, "full_affine_grid_representation",
+                 is_full && is_affine,
                  full_solved && is_affine
-                     ? std::optional<double>{row.orbital_angular_error}
+                     ? row.trace.affine_grid_representation_error
                      : std::nullopt,
+                 is_full && is_affine
+                     ? std::optional<double>{affine_reconstruction_tolerance}
+                     : std::nullopt,
+                 full_solved &&
+                     row.trace.affine_grid_representation_error.has_value() &&
+                     std::isfinite(*row.trace.affine_grid_representation_error) &&
+                     *row.trace.affine_grid_representation_error <=
+                         affine_reconstruction_tolerance);
+        add_gate(result, row, "full_affine_orbital", is_full && is_affine,
+                 full_solved && is_affine ? row.orbital_angular_error : std::nullopt,
                  is_full && is_affine
                      ? std::optional<double>{affine_orbital_tolerance}
                      : std::nullopt,
-                 full_solved &&
-                     row.orbital_angular_error <= affine_orbital_tolerance);
+                 full_solved && row.orbital_angular_error.has_value() &&
+                     std::isfinite(*row.orbital_angular_error) &&
+                     *row.orbital_angular_error <= affine_orbital_tolerance);
         add_gate(result, row, "fmpm_residual_identity", is_fmpm,
                  is_fmpm ? row.trace.max_fmpm_residual_identity : std::nullopt,
                  is_fmpm ? std::optional<double>{fmpm_residual_tolerance}
@@ -1750,13 +1845,14 @@ void add_gate(std::vector<GateRow>& result,
         add_gate(result, row, "represented_affine_energy_diagnostic",
                  is_full && is_affine,
                  full_solved && is_affine
-                     ? std::optional<double>{row.center_kinetic_relative_change}
-                     : std::nullopt,
+                     ? row.center_kinetic_relative_change : std::nullopt,
                  is_full && is_affine
                      ? std::optional<double>{affine_energy_diagnostic_tolerance}
                      : std::nullopt,
-                 full_solved && row.center_kinetic_relative_change <=
-                     affine_energy_diagnostic_tolerance);
+                 full_solved && row.center_kinetic_relative_change.has_value() &&
+                     std::isfinite(*row.center_kinetic_relative_change) &&
+                     *row.center_kinetic_relative_change <=
+                         affine_energy_diagnostic_tolerance);
     }
     return result;
 }
@@ -2095,6 +2191,8 @@ void write_manifest(const std::filesystem::path& output_directory,
         const std::string_view argument{argv[index]};
         if (argument == "--smoke") {
             result.smoke = true;
+        } else if (argument == "--schema-audit") {
+            result.schema_audit = true;
         } else if (argument == "--output") {
             if (index + 1 >= argc) {
                 throw std::invalid_argument("--output requires a directory");
@@ -2113,7 +2211,8 @@ void write_manifest(const std::filesystem::path& output_directory,
             result.jobs = static_cast<std::size_t>(jobs);
         } else if (argument == "--help") {
             std::cout << "Usage: mls_projection_foundation_diagnostic "
-                         "[--smoke] [--jobs N] [--output DIRECTORY]\n";
+                         "[--smoke | --schema-audit] [--jobs N] "
+                         "[--output DIRECTORY]\n";
             std::exit(EXIT_SUCCESS);
         } else {
             throw std::invalid_argument("unknown argument: " + std::string(argument));
@@ -2122,7 +2221,117 @@ void write_manifest(const std::filesystem::path& output_directory,
     return result;
 }
 
+[[nodiscard]] int run_schema_audit() {
+    std::vector<RawRow> rows;
+    const auto configs = configurations(false);
+    rows.reserve(configs.size());
+    for (const auto& config : configs) {
+        RawRow row{};
+        row.config = config;
+        row.trace.status = pf::ProjectionStatus::solved;
+        row.trace.full_reference_status = pf::ProjectionStatus::solved;
+        row.trace.full_reference_available = true;
+        row.trace.grid_distance_full = 0.0;
+        row.trace.particle_distance_full = 0.0;
+        row.trace.affine_grid_representation_error = 0.0;
+        row.trace.pic_identity_error = 0.0;
+        row.trace.max_projection_residual = 0.0;
+        row.trace.max_fmpm_residual_identity = 0.0;
+        row.trace.terminal.particles = {{1U, expected_mass_quanta, {}, {}}};
+        row.terminal_particles = row.trace.terminal.particles;
+        row.material_velocity_error = 0.0;
+        row.trajectory_error = 0.0;
+        row.linear_momentum_error = 0.0;
+        row.orbital_angular_error = 0.0;
+        row.center_kinetic_relative_change = 0.0;
+        row.exact_mass_ok = true;
+        row.exact_clock_ok = true;
+        row.checkpoint_roundtrip_ok = true;
+        row.checkpoint_replay_ok = true;
+        rows.push_back(std::move(row));
+    }
+    const auto phase_rows = phase_sensitivity(rows, false);
+    const auto orientation_rows = orientation_sensitivity(rows, false);
+    const auto convergence = convergence_rows(
+        rows, phase_rows, orientation_rows, false);
+    const auto orders = order_rows(rows, false);
+    const auto gates = hard_gates(rows);
+    const auto require_count = [](std::size_t observed, std::size_t expected,
+                                  std::string_view table) {
+        if (observed != expected) {
+            throw std::runtime_error(
+                "schema audit count mismatch for " + std::string(table) + ": " +
+                std::to_string(observed) + " != " + std::to_string(expected));
+        }
+    };
+    require_count(rows.size(), 324U, "raw");
+    require_count(phase_rows.size(), 480U, "phase sensitivity");
+    require_count(orientation_rows.size(), 480U, "orientation sensitivity");
+    const auto convergence_scope_count = [&](std::string_view scope) {
+        return static_cast<std::size_t>(std::ranges::count_if(
+            convergence, [&](const ConvergenceRow& row) { return row.scope == scope; }));
+    };
+    const auto main_distance_count = static_cast<std::size_t>(std::ranges::count_if(
+        convergence, [](const ConvergenceRow& row) {
+            return row.scope == "main" &&
+                (row.metric == "grid_distance_full" ||
+                 row.metric == "particle_distance_full");
+        }));
+    require_count(main_distance_count, 128U, "main distance convergence");
+    require_count(convergence_scope_count("main"), 512U, "main convergence");
+    require_count(convergence_scope_count("ppc"), 64U, "ppc convergence");
+    require_count(convergence_scope_count("phase"), 160U, "phase convergence");
+    require_count(
+        convergence_scope_count("orientation"), 160U, "orientation convergence");
+    require_count(convergence.size(), 896U, "convergence");
+    require_count(orders.size(), 108U, "order");
+    require_count(gates.size(), 6480U, "hard gates");
+
+    std::set<std::string> convergence_keys;
+    std::size_t phase_distance_families = 0;
+    std::size_t orientation_distance_families = 0;
+    for (const auto& row : convergence) {
+        const auto key = row.scope + "\x1f" + row.candidate + "\x1f" + row.field +
+            "\x1f" + row.phase + "\x1f" + row.orientation + "\x1f" + row.metric;
+        if (!convergence_keys.insert(key).second) {
+            throw std::runtime_error("schema audit duplicate convergence key");
+        }
+        if (row.metric == "grid_distance_full" ||
+            row.metric == "particle_distance_full") {
+            phase_distance_families += row.scope == "phase" ? 1U : 0U;
+            orientation_distance_families += row.scope == "orientation" ? 1U : 0U;
+        }
+    }
+    require_count(phase_distance_families, 64U, "phase distance convergence");
+    require_count(
+        orientation_distance_families, 64U, "orientation distance convergence");
+
+    const std::vector<pf::CenterParticle> identity_reference{
+        {1U, 1, {}, {}}, {2U, 1, {}, {}}};
+    const std::vector<pf::CenterParticle> identity_missing{{1U, 1, {}, {}}};
+    const std::vector<pf::CenterParticle> identity_replaced{
+        {1U, 1, {}, {}}, {3U, 1, {}, {}}};
+    const std::vector<pf::CenterParticle> identity_duplicate{
+        {1U, 1, {}, {}}, {1U, 1, {}, {}}};
+    const std::vector<pf::CenterParticle> identity_extra{
+        {1U, 1, {}, {}}, {2U, 1, {}, {}}, {3U, 1, {}, {}}};
+    if (identity_error_count(identity_reference, identity_reference) != 0U ||
+        identity_error_count(identity_reference, identity_missing) != 1U ||
+        identity_error_count(identity_reference, identity_replaced) != 2U ||
+        identity_error_count(identity_reference, identity_duplicate) != 2U ||
+        identity_error_count(identity_reference, identity_extra) != 1U) {
+        throw std::runtime_error("schema audit identity accounting regression");
+    }
+    std::cout << "Projection Foundation full schema audit: PASS "
+                 "(324 raw, 896 convergence, 480+480 sensitivity, "
+                 "6480 gates; identity controls)\n";
+    return EXIT_SUCCESS;
+}
+
 [[nodiscard]] int run(const Options& options) {
+    if (options.schema_audit) {
+        return run_schema_audit();
+    }
     std::filesystem::create_directories(options.output);
     const auto configs = configurations(options.smoke);
     std::vector<std::optional<RawRow>> slots(configs.size());
@@ -2221,8 +2430,8 @@ void write_manifest(const std::filesystem::path& output_directory,
         orientation_csv.rows(), gate_csv.rows(), solver_csv.rows(),
         checkpoint_csv.rows()};
     const Counts expected = options.smoke
-        ? Counts{6, 0, 6, 12, 0, 2, 0, 0, 114, 6, 6}
-        : Counts{288, 36, 6, 330, 896, 108, 288, 288, 6156, 324, 324};
+        ? Counts{6, 0, 6, 12, 0, 2, 0, 0, 120, 6, 6}
+        : Counts{288, 36, 6, 330, 896, 108, 480, 480, 6480, 324, 324};
     if (actual.main_raw != expected.main_raw || actual.ppc_raw != expected.ppc_raw ||
         actual.exact_control != expected.exact_control ||
         actual.primary_total != expected.primary_total ||

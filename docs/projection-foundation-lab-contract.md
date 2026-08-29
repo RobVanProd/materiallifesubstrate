@@ -262,7 +262,8 @@ close a ledger. Generic kinetic-energy conservation is not a candidate gate.
 ## 10. Failure preservation and interpretation
 
 Evidence preserves invalid configuration, integer/count/index overflow,
-duplicate ID, empty/zero state, zero lumped mass, singularity, ill
+missing, unexpected, or duplicate IDs, particle-count drift, empty/zero
+state, zero lumped mass, singularity, ill
 conditioning, nonconvergence, solver breakdown, nonfinite output, residual
 failure, input-order dependence, phase/orientation sensitivity, timestep
 sensitivity, particle-quadrature sensitivity, checkpoint/replay disagreement,

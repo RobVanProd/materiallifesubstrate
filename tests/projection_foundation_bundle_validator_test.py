@@ -226,6 +226,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             mutate_csv(bundle / "hard_gates.csv", change)
 
+        def break_identity_na_contract(bundle: Path) -> None:
+            def change(rows: list[dict[str, str]]) -> None:
+                if not rows:
+                    raise AssertionError("main_raw fixture unexpectedly empty")
+                rows[0]["id_error_count"] = "1"
+                if rows[0]["material_velocity_error"] == "NA":
+                    raise AssertionError("positive fixture unexpectedly has NA metric")
+
+            mutate_csv(bundle / "main_raw.csv", change)
+
         def flip_order_decision(bundle: Path) -> None:
             def change(rows: list[dict[str, str]]) -> None:
                 if not rows:
@@ -267,6 +277,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ("duplicate-primary-key", duplicate_primary_key),
             ("registered-config-drift", drift_registered_configuration),
             ("hard-gate-flip", flip_hard_gate),
+            ("identity-na-contract", break_identity_na_contract),
             ("order-decision-flip", flip_order_decision),
             ("solver-status-mismatch", mismatch_solver_status),
             ("checkpoint-decision-flip", flip_checkpoint_decision),

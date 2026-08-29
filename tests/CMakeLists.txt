@@ -115,6 +115,16 @@ set_tests_properties(
     PASS_REGULAR_EXPRESSION "Projection Foundation smoke evidence written"
     TIMEOUT 180)
 
+add_test(
+  NAME mls.projection_foundation.schema.audit
+  COMMAND mls_projection_foundation_diagnostic --schema-audit)
+set_tests_properties(
+  mls.projection_foundation.schema.audit
+  PROPERTIES
+    LABELS "deterministic;projection-foundation;schema"
+    PASS_REGULAR_EXPRESSION "Projection Foundation full schema audit: PASS"
+    TIMEOUT 30)
+
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
   add_test(
@@ -291,6 +301,20 @@ if(Python3_Interpreter_FOUND)
       DEPENDS "mls.projection_foundation.smoke.a"
       LABELS "deterministic;projection-foundation;validator;independent"
       PASS_REGULAR_EXPRESSION "Projection foundation bundle validator regression: PASS"
+      TIMEOUT 180)
+
+  add_test(
+    NAME mls.projection_foundation.seal.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/projection_foundation_seal_test.py"
+      --tool
+      "${PROJECT_SOURCE_DIR}/tools/seal_projection_foundation_evidence.py")
+  set_tests_properties(
+    mls.projection_foundation.seal.regression
+    PROPERTIES
+      LABELS "deterministic;projection-foundation;seal;independent"
+      PASS_REGULAR_EXPRESSION "projection foundation outer seal mutation regression PASS"
       TIMEOUT 180)
 
   add_test(

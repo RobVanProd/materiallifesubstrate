@@ -5,7 +5,9 @@ The producer is C++; this validator deliberately shares no implementation
 code with it.  It reconstructs the frozen 330-row matrix, derived-table keys,
 registered decisions, failure rows, checkpoint evidence, and manifest hashes.
 Passing validates bundle consistency only.  It is not a mechanics result and
-cannot promote a transfer candidate.
+cannot promote a transfer candidate.  In particular, it does not recompute
+floating trajectories from checkpoints; it checks the registered matrix and
+cross-table decisions.  The exact-rational oracle is a separate implementation.
 """
 from __future__ import annotations
 
@@ -118,7 +120,8 @@ GATES = (
     "partition_unity", "linear_reproduction", "matrix_symmetry", "row_sum_identity",
     "grid_mass", "linear_momentum", "full_solve_residual", "full_raw_condition",
     "full_preconditioned_condition", "full_affine_particle_reconstruction",
-    "full_affine_orbital", "fmpm_residual_identity", "fmpm1_pic_identity",
+    "full_affine_grid_representation", "full_affine_orbital",
+    "fmpm_residual_identity", "fmpm1_pic_identity",
     "checkpoint_roundtrip_replay", "represented_affine_energy_diagnostic",
 )
 
@@ -293,6 +296,8 @@ def validate_raw(rows: list[dict[str, str]], scope: str, mode: str,
             "max_abs_numerical_projection_energy_residual_j",
             "affine_grid_representation_error", "grid_distance_full",
             "particle_distance_full", "pic_identity_error",
+            "material_velocity_error", "trajectory_error", "linear_momentum_error",
+            "orbital_angular_error", "center_kinetic_relative_change",
         }
         numeric_diagnostics = (
             "smallest_spectral_or_pivot_value", "largest_spectral_or_pivot_value",
@@ -331,6 +336,11 @@ def validate_raw(rows: list[dict[str, str]], scope: str, mode: str,
         for flag, value in applicability_pairs:
             require(boolean(row[flag], where) == (row[value] != "NA"),
                     f"{where}: {flag}/{value} applicability mismatch")
+        identity_clean = integer(row["id_error_count"], where) == 0
+        for name in ("material_velocity_error", "trajectory_error", "linear_momentum_error",
+                     "orbital_angular_error", "center_kinetic_relative_change"):
+            require((row[name] != "NA") == identity_clean,
+                    f"{where}: {name} must be NA exactly when identity is invalid")
         require(row["candidate_termination_reason"] != "" and
                 row["full_reference_termination_reason"] != "", f"{where}: missing termination trace")
         require(SHA_RE.fullmatch(row["initial_checkpoint_sha256"]) is not None, f"{where}: initial SHA")
@@ -373,14 +383,18 @@ def sensitivity_keys(kind: str) -> set[tuple[str, str, str, int, str]]:
             for field in FIELDS:
                 for fixed in ORIENTATIONS:
                     for level in range(3):
-                        for metric in ("material_velocity", "trajectory"):
+                        metrics = ("material_velocity", "trajectory") + (
+                            DISTANCE_METRICS if candidate in FMPM else ())
+                        for metric in metrics:
                             result.add((candidate, field, fixed, level, metric))
     else:
         for candidate in CANDIDATES:
             for field in FIELDS:
                 for fixed in PHASES:
                     for level in range(3):
-                        for metric in ("material_velocity", "trajectory"):
+                        metrics = ("material_velocity", "trajectory") + (
+                            DISTANCE_METRICS if candidate in FMPM else ())
+                        for metric in metrics:
                             result.add((candidate, field, fixed, level, metric))
     return result
 
@@ -406,12 +420,25 @@ def validate_sensitivity(rows: list[dict[str, str]], kind: str, mode: str,
         else:
             lhs = raw[("main", candidate, field, fixed, "p012_sppp", level)]
             rhs = raw[("main", candidate, field, fixed, "p210_sppm", level)]
-        applicable = lhs["status"] in SOLVED and rhs["status"] in SOLVED
+        applicable = (lhs["status"] in SOLVED and rhs["status"] in SOLVED and
+                      integer(lhs["id_error_count"], where) == 0 and
+                      integer(rhs["id_error_count"], where) == 0)
+        expected_distance_value: float | None = None
+        if row["metric"] in DISTANCE_METRICS:
+            column = row["metric"]
+            lhs_value = number(lhs[column], where, optional=True)
+            rhs_value = number(rhs[column], where, optional=True)
+            applicable = applicable and lhs_value is not None and rhs_value is not None
+            if applicable:
+                expected_distance_value = abs(float(lhs_value) - float(rhs_value))
         require(boolean(row["applicable"], where) == applicable, f"{where}: applicability")
         require((row["value"] != "NA") == applicable, f"{where}: explicit NA")
         require(number(row["hard_floor"], where) == 5.0e-10, f"{where}: floor")
         require(number(row["finest_ceiling"], where) == 5.0e-3, f"{where}: ceiling")
-        number(row["value"], where, optional=True)
+        observed_value = number(row["value"], where, optional=True)
+        if row["metric"] in DISTANCE_METRICS:
+            require(observed_value == expected_distance_value,
+                    f"{where}: distance sensitivity source mismatch")
     require(set(indexed) == sensitivity_keys(kind), f"{kind} sensitivity: family matrix mismatch")
     return indexed
 
@@ -571,6 +598,9 @@ def gate_expectation(raw: Mapping[str, str], gate: str) -> tuple[bool, float | N
     def observed(column: str) -> float | None:
         return number(raw[column], f"gate source {gate}", optional=True)
 
+    def within(value: float | None, tolerance: float) -> bool:
+        return value is not None and math.isfinite(value) and value <= tolerance
+
     simple = {
         "exact_mass": (0.0 if boolean(raw["exact_mass_ok"], "raw") else 1.0, 0.0,
                        boolean(raw["exact_mass_ok"], "raw")),
@@ -581,17 +611,17 @@ def gate_expectation(raw: Mapping[str, str], gate: str) -> tuple[bool, float | N
         "nonfinite_physical_output": (float(integer(raw["nonfinite_count"], "raw")), 0.0,
                                       integer(raw["nonfinite_count"], "raw") == 0),
         "partition_unity": (observed("partition_unity_max_residual"), 5.0e-14,
-                            observed("partition_unity_max_residual") <= 5.0e-14),
+                            within(observed("partition_unity_max_residual"), 5.0e-14)),
         "linear_reproduction": (observed("linear_reproduction_max_residual_m"), 5.0e-13,
-                                observed("linear_reproduction_max_residual_m") <= 5.0e-13),
+                                within(observed("linear_reproduction_max_residual_m"), 5.0e-13)),
         "matrix_symmetry": (observed("matrix_symmetry_relative_residual"), 5.0e-15,
-                            observed("matrix_symmetry_relative_residual") <= 5.0e-15),
+                            within(observed("matrix_symmetry_relative_residual"), 5.0e-15)),
         "row_sum_identity": (observed("row_sum_relative_residual"), 5.0e-13,
-                             observed("row_sum_relative_residual") <= 5.0e-13),
+                             within(observed("row_sum_relative_residual"), 5.0e-13)),
         "grid_mass": (observed("grid_mass_relative_error"), 2.0e-13,
-                      observed("grid_mass_relative_error") <= 2.0e-13),
+                      within(observed("grid_mass_relative_error"), 2.0e-13)),
         "linear_momentum": (observed("linear_momentum_error"), 2.0e-11,
-                            observed("linear_momentum_error") <= 2.0e-11),
+                            within(observed("linear_momentum_error"), 2.0e-11)),
     }
     if gate in simple:
         value, tolerance, passed = simple[gate]
@@ -606,15 +636,20 @@ def gate_expectation(raw: Mapping[str, str], gate: str) -> tuple[bool, float | N
         value = observed(column) if is_full else None
         passed = bool(full_solved and value is not None and value <= tolerance)
         return is_full, value, tolerance if is_full else None, passed if is_full else True
-    if gate in {"full_affine_particle_reconstruction", "full_affine_orbital",
+    if gate in {"full_affine_particle_reconstruction", "full_affine_grid_representation",
+                "full_affine_orbital",
                 "represented_affine_energy_diagnostic"}:
         column, tolerance = {
             "full_affine_particle_reconstruction": ("particle_reconstruction_error", 5.0e-10),
+            "full_affine_grid_representation": ("affine_grid_representation_error", 5.0e-10),
             "full_affine_orbital": ("orbital_angular_error", 5.0e-10),
             "represented_affine_energy_diagnostic": ("center_kinetic_relative_change", 5.0e-9),
         }[gate]
         applicable = is_full and affine
-        value = observed(column) if full_solved and affine else None
+        identity_required = gate != "full_affine_grid_representation"
+        identity_clean = integer(raw["id_error_count"], "gate") == 0
+        value = observed(column) if (
+            full_solved and affine and (identity_clean or not identity_required)) else None
         passed = bool(full_solved and value is not None and value <= tolerance)
         return applicable, value, tolerance if applicable else None, passed if applicable else True
     if gate == "fmpm_residual_identity":
@@ -716,13 +751,13 @@ def validate_manifest(bundle: Path) -> None:
 
 
 def expected_counts(mode: str) -> dict[str, int]:
-    return ({"checkpoint": 6, "convergence": 0, "exact_control": 6, "hard_gates": 114,
+    return ({"checkpoint": 6, "convergence": 0, "exact_control": 6, "hard_gates": 120,
              "main_raw": 6, "order_to_full": 2, "orientation_sensitivity": 0,
              "phase_sensitivity": 0, "ppc_raw": 0, "primary_total": 12,
              "solver_failures": 6} if mode == "smoke" else
-            {"checkpoint": 324, "convergence": 896, "exact_control": 6, "hard_gates": 6156,
-             "main_raw": 288, "order_to_full": 108, "orientation_sensitivity": 288,
-             "phase_sensitivity": 288, "ppc_raw": 36, "primary_total": 330,
+            {"checkpoint": 324, "convergence": 896, "exact_control": 6, "hard_gates": 6480,
+             "main_raw": 288, "order_to_full": 108, "orientation_sensitivity": 480,
+             "phase_sensitivity": 480, "ppc_raw": 36, "primary_total": 330,
              "solver_failures": 324})
 
 
@@ -769,12 +804,21 @@ def validate_summary(summary: Mapping[str, Any], mode: str, counts: Mapping[str,
     require(summary.get("order_unavailable") == sum(not boolean(row["applicable"], "summary") for row in orders.values()), "summary unavailable orders")
     require(summary.get("hard_gate_failures") == sum(boolean(row["applicable"], "summary") and not boolean(row["pass"], "summary") for row in gates.values()), "summary gate failures")
     require(summary.get("bounded_decision") == bounded_decision(mode, raw, convergence, orders, gates), "summary bounded decision")
-    require(summary.get("tool_language") == "C++20" and isinstance(summary.get("compiler_id"), str) and
-            isinstance(summary.get("compiler_version"), str), "summary tool provenance")
+    require(summary.get("tool_language") == "C++20" and
+            isinstance(summary.get("compiler_id"), str) and summary.get("compiler_id") not in {"", "unknown"} and
+            isinstance(summary.get("compiler_version"), str) and summary.get("compiler_version") not in {"", "unknown"},
+            "summary tool provenance")
     require(summary.get("time_quantum_s") == 1.0 / 160.0 and summary.get("u_ref_m_per_s") == 2.5,
             "summary physical scales")
     require(isinstance(summary.get("source_sha"), str) and isinstance(summary.get("source_branch"), str) and
             isinstance(summary.get("source_dirty"), bool), "summary source provenance")
+    if mode == "full":
+        require(re.fullmatch(r"[0-9a-f]{40}", str(summary.get("source_sha"))) is not None,
+                "full summary requires an exact 40-hex source SHA")
+        require(summary.get("source_branch") == "projection-foundation-lab",
+                "full summary branch mismatch")
+        require(summary.get("source_dirty") is False,
+                "full summary must be built from a clean source tree")
 
 
 def validate_bundle(bundle: Path, smoke_provisional: bool) -> str:

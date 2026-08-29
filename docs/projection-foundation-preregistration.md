@@ -184,7 +184,7 @@ Every raw row emits all gates with explicit applicability.
 |---|---:|
 | exact mass | exactly 4096 quanta before/after |
 | exact clock | exactly registered quanta |
-| duplicate/missing IDs | zero |
+| missing/unexpected/duplicate IDs or particle-count drift | zero |
 | nonfinite values | zero |
 | partition of unity | `<=5e-14` |
 | linear reproduction | `<=5e-13` m |
@@ -196,6 +196,7 @@ Every raw row emits all gates with explicit applicability.
 | full raw condition estimate | `<=1e10` |
 | full preconditioned condition estimate | `<=1e8` |
 | full affine particle reconstruction | `<=5e-10` |
+| full affine grid representation | `<=5e-10` |
 | full affine orbital angular error | `<=5e-10` |
 | FMPM residual identity | `<=5e-11` |
 | FMPM(1)/PIC identity | `<=5e-13` |
@@ -255,9 +256,9 @@ override those gates.
 | all primary rows | 330 |
 | convergence decisions | 896 |
 | order-to-full decisions | 108 |
-| phase-sensitivity rows | 288 |
-| orientation-sensitivity rows | 288 |
-| hard-gate rows | 6,156 |
+| phase-sensitivity rows | 480 |
+| orientation-sensitivity rows | 480 |
+| hard-gate rows | 6,480 |
 | solver/checkpoint rows | 324 each |
 
 Derived convergence, order, phase, orientation, hard-gate, solver-failure, and
@@ -265,7 +266,9 @@ per-metric tables must enumerate every expected family from these raw rows.
 The derived counts above are the complete Cartesian family counts; the earlier
 provisional arithmetic value `768` was rejected because it omitted 128
 registered phase/orientation-derived families. No rows were removed to fit the
-provisional value. Every count is independently reconstructed by the Python
+provisional value. The sensitivity tables include 192 additional FMPM-to-full
+distance rows each (64 three-level families per phase/orientation table).
+Every count is independently reconstructed by the Python
 validator. Smoke output is
 provisional and cannot satisfy full counts.
 
