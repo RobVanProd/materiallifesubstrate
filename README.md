@@ -44,6 +44,10 @@ or `reward`. Those may exist only as observer interpretations.
 - [Affine Advection Lab preregistration](docs/affine-advection-preregistration.md)
 - [Moving APIC limit diagnostic contract](docs/moving-apic-limit-contract.md)
 - [Moving APIC limit preregistration](docs/moving-apic-limit-preregistration.md)
+- [Projection Foundation Lab contract](docs/projection-foundation-lab-contract.md)
+- [Projection Foundation Lab preregistration](docs/projection-foundation-preregistration.md)
+- [Projection Exactness + Nullspace Lab contract](docs/projection-exactness-nullspace-contract.md)
+- [Projection Exactness + Nullspace Lab preregistration](docs/projection-exactness-nullspace-preregistration.md)
 - [Forbidden-semantics contract](docs/forbidden-semantics.md)
 - [Accounting invariants](docs/accounting-invariants.md)
 - [Research roadmap and gates](docs/roadmap.md)
@@ -59,10 +63,10 @@ or `reward`. Those may exist only as observer interpretations.
 - [2026-08-28 baseline-hardening evidence](docs/review-evidence-2026-08-28-hardening.md)
 - [Prior-art debts](docs/prior-art.md)
 
-The historical, hardening, affine-advection, and moving-APIC-limit Python
-oracles under `reference/` import no C++ bindings or production implementation
-modules. Their role is independent exact cross-checking, not validation of
-physical behavior.
+The historical, hardening, affine-advection, moving-APIC-limit, projection,
+and nullspace Python oracles under `reference/` import no C++ bindings or
+production implementation modules. Their role is independent exact
+cross-checking, not validation of physical behavior.
 
 ## Intended implementation boundary
 

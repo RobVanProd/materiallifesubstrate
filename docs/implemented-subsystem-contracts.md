@@ -910,7 +910,9 @@ converted into heat, stored energy, or another physical ledger channel.
 
 ### Numerical approximation and failure modes
 
-- binary64 assembly with long-double diagnostic reductions;
+- binary64 assembly; twofold/double-double reductions for the evidence
+  witness, solve, and null-mode metrics, with separate long-double core
+  diagnostic cross-checks;
 - normwise solve backward error
   `||Mv-q||/(||M||_F||v||+||q||)` kept distinct from measured forward error;
 - approximately 106-bit FMA double-double complete-pivot elimination with the
