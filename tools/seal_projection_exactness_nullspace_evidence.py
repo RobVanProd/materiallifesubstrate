@@ -54,6 +54,8 @@ INNER_FILES = (
     "witness.csv",
     "solve_diagnostics.csv",
     "high_precision.csv",
+    "high_precision_pivots.csv",
+    "nullspace_status.csv",
     "nullspace_modes.csv",
     "nullspace_metrics.csv",
     "summary.json",
@@ -559,6 +561,10 @@ def _validate_ci_metadata(
     )
     status_value = _require_nonempty_string(ci["status"], "independent CI status")
     require(status_value in CI_STATUSES, f"invalid independent CI status: {status_value!r}")
+    require(
+        status_value == "success",
+        f"independent CI run is not successful: {status_value!r}",
+    )
 
     jobs_value = ci["jobs"]
     require(
@@ -588,6 +594,10 @@ def _validate_ci_metadata(
             item["status"], f"independent CI jobs[{index}].status"
         )
         require(job_status in CI_STATUSES, f"invalid CI job status: {job_status!r}")
+        require(
+            job_status == "success",
+            f"independent CI job {job_id!r} is not successful: {job_status!r}",
+        )
         url = _require_nonempty_string(
             item["url"], f"independent CI jobs[{index}].url"
         )
@@ -756,10 +766,10 @@ def validate_metadata(
             ),
             f"invalid local exit code for {name!r}",
         )
-        if status_value == "pass":
-            require(exit_code == 0, f"passing local result {name!r} needs exit code 0")
-        if status_value == "not_run":
-            require(exit_code is None, f"not-run local result {name!r} needs null exit code")
+        require(
+            status_value == "pass" and exit_code == 0,
+            f"required local result {name!r} is not a zero-exit PASS",
+        )
         _require_nonempty_string(summary["summary"], f"result summary {name!r}.summary")
         paths = _validate_evidence_paths(
             summary["evidence_paths"],

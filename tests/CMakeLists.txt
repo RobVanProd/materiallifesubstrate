@@ -162,8 +162,58 @@ set_tests_properties(
       "Projection Exactness \\+ Nullspace schema audit: PASS"
     TIMEOUT 30)
 
+add_test(
+  NAME mls.projection_exactness_nullspace.logic.audit
+  COMMAND mls_projection_exactness_nullspace_diagnostic --logic-audit)
+set_tests_properties(
+  mls.projection_exactness_nullspace.logic.audit
+  PROPERTIES
+    LABELS "deterministic;projection-nullspace;logic"
+    PASS_REGULAR_EXPRESSION
+      "Projection Exactness \\+ Nullspace logic audit: PASS"
+    TIMEOUT 30)
+
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
+  add_test(
+    NAME mls.projection_exactness_nullspace.smoke.byte_compare
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/compare_evidence_directories.py"
+      --first
+      "${CMAKE_CURRENT_BINARY_DIR}/projection-exactness-nullspace-smoke-a"
+      --second
+      "${CMAKE_CURRENT_BINARY_DIR}/projection-exactness-nullspace-smoke-b")
+  set_tests_properties(
+    mls.projection_exactness_nullspace.smoke.byte_compare
+    PROPERTIES
+      DEPENDS
+        "mls.projection_exactness_nullspace.smoke.a;mls.projection_exactness_nullspace.smoke.b"
+      LABELS "deterministic;projection-nullspace;smoke;independent"
+      PASS_REGULAR_EXPRESSION
+        "Projection exactness/nullspace smoke byte comparison: PASS"
+      TIMEOUT 30)
+
+  add_test(
+    NAME mls.projection_exactness_nullspace.smoke.verify
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/reference/validate_projection_exactness_nullspace_bundle.py"
+      --bundle
+      "${CMAKE_CURRENT_BINARY_DIR}/projection-exactness-nullspace-smoke-a"
+      --compare
+      "${CMAKE_CURRENT_BINARY_DIR}/projection-exactness-nullspace-smoke-b"
+      --smoke-provisional)
+  set_tests_properties(
+    mls.projection_exactness_nullspace.smoke.verify
+    PROPERTIES
+      DEPENDS
+        "mls.projection_exactness_nullspace.smoke.a;mls.projection_exactness_nullspace.smoke.b"
+      LABELS "deterministic;projection-nullspace;smoke;independent"
+      PASS_REGULAR_EXPRESSION
+        "PROJECTION EXACTNESS NULLSPACE BUNDLE VALID"
+      TIMEOUT 300)
+
   add_test(
     NAME mls.formal.source.scan
     COMMAND

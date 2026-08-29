@@ -50,6 +50,8 @@ INNER_FILES = (
     "witness.csv",
     "solve_diagnostics.csv",
     "high_precision.csv",
+    "high_precision_pivots.csv",
+    "nullspace_status.csv",
     "nullspace_modes.csv",
     "nullspace_metrics.csv",
     "summary.json",
@@ -171,31 +173,31 @@ def make_provenance(root: Path) -> None:
         {
             "id": "linux_gcc",
             "name": "C++ / Linux GCC",
-            "status": "queued",
+            "status": "success",
             "url": RUN_URL + "/job/701",
         },
         {
             "id": "linux_clang",
             "name": "C++ / Linux Clang",
-            "status": "queued",
+            "status": "success",
             "url": RUN_URL + "/job/702",
         },
         {
             "id": "windows_msvc",
             "name": "C++ / Windows MSVC",
-            "status": "queued",
+            "status": "success",
             "url": RUN_URL + "/job/703",
         },
         {
             "id": "python_oracle",
             "name": "Python exact oracle",
-            "status": "queued",
+            "status": "success",
             "url": RUN_URL + "/job/704",
         },
         {
             "id": "lean",
             "name": "Pinned Lean build and axiom output",
-            "status": "queued",
+            "status": "success",
             "url": RUN_URL + "/job/705",
         },
     ]
@@ -209,7 +211,7 @@ def make_provenance(root: Path) -> None:
             "run_url": RUN_URL,
             "schema": CI_SCHEMA,
             "source_sha": SOURCE_SHA,
-            "status": "queued",
+            "status": "success",
         },
     )
 
@@ -491,9 +493,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         copied_ci = json.loads(
             (baseline / "ci/metadata.json").read_text(encoding="utf-8")
         )
-        if copied_ci["status"] != "queued":
+        if copied_ci["status"] != "success":
             raise AssertionError(
-                "create inferred independent CI success from local PASS data"
+                "create altered the captured independent CI success status"
             )
 
         mutation_count = 0
@@ -597,6 +599,20 @@ def main(arguments: Sequence[str] | None = None) -> int:
             failed_validator_result,
             refresh=True,
         )
+
+        def failed_build_result(root: Path) -> None:
+            def change(value: dict[str, Any]) -> None:
+                result = value["local"]["result_summaries"]["build"]
+                result["status"] = "fail"
+                result["exit_code"] = 1
+
+            mutate_json(root, "metadata.json", change)
+
+        mutation(
+            "refreshed-build-not-pass",
+            failed_build_result,
+            refresh=True,
+        )
         mutation(
             "refreshed-validator-marker",
             lambda root: (
@@ -652,6 +668,27 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     "source_sha", "0" * 40
                 ),
             ),
+            refresh=True,
+        )
+        mutation(
+            "refreshed-ci-run-failure",
+            lambda root: mutate_json(
+                root,
+                "ci/metadata.json",
+                lambda value: value.__setitem__("status", "failure"),
+            ),
+            refresh=True,
+        )
+
+        def failed_ci_job(root: Path) -> None:
+            def change(value: dict[str, Any]) -> None:
+                value["jobs"][0]["status"] = "failure"
+
+            mutate_json(root, "ci/metadata.json", change)
+
+        mutation(
+            "refreshed-ci-job-failure",
+            failed_ci_job,
             refresh=True,
         )
         mutation(
