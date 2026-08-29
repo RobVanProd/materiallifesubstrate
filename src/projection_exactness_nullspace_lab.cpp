@@ -117,15 +117,18 @@ void set_component(Vec3d& value, std::size_t index, double scalar) noexcept {
     ErrorNorms result{};
     long double error_squared = 0.0L;
     long double reference_squared = 0.0L;
+    long double total_mass = 0.0L;
     for (std::size_t node = 0; node < error.size(); ++node) {
         const auto mass = system.lumped_mass_kg()[node];
         error_squared += static_cast<long double>(mass) * dot(error[node], error[node]);
         reference_squared += static_cast<long double>(mass) *
             dot(reference[node], reference[node]);
+        total_mass += static_cast<long double>(mass);
     }
     result.absolute_l2 = std::sqrt(static_cast<double>(error_squared));
     result.absolute_max = vec_max_norm(error);
-    result.reference_l2 = std::sqrt(static_cast<double>(reference_squared));
+    result.reference_l2 = std::sqrt(static_cast<double>(
+        std::max(reference_squared, total_mass)));
     result.relative_l2 = result.reference_l2 > 0.0
         ? result.absolute_l2 / result.reference_l2
         : result.absolute_l2;
@@ -145,12 +148,14 @@ void set_component(Vec3d& value, std::size_t index, double scalar) noexcept {
     long double error_squared = 0.0L;
     long double reference_squared = 0.0L;
     long double roundoff_squared = 0.0L;
+    long double total_mass = 0.0L;
     for (std::size_t particle = 0; particle < error.size(); ++particle) {
         const auto mass = system.particle_mass_kg()[particle];
         error_squared += static_cast<long double>(mass) *
             dot(error[particle], error[particle]);
         reference_squared += static_cast<long double>(mass) *
             dot(reference[particle], reference[particle]);
+        total_mass += static_cast<long double>(mass);
         if (!roundoff_scales.empty()) {
             for (std::size_t axis = 0; axis < 3U; ++axis) {
                 const auto scale = roundoff_scales[3U * particle + axis];
@@ -160,7 +165,8 @@ void set_component(Vec3d& value, std::size_t index, double scalar) noexcept {
     }
     result.absolute_l2 = std::sqrt(static_cast<double>(error_squared));
     result.absolute_max = vec_max_norm(error);
-    result.reference_l2 = std::sqrt(static_cast<double>(reference_squared));
+    result.reference_l2 = std::sqrt(static_cast<double>(
+        std::max(reference_squared, total_mass)));
     result.relative_l2 = result.reference_l2 > 0.0
         ? result.absolute_l2 / result.reference_l2
         : result.absolute_l2;
@@ -502,6 +508,7 @@ struct DdErrorAccumulator final {
     DoubleDouble squared{};
     DoubleDouble maximum{};
     DoubleDouble reference_squared{};
+    DoubleDouble weight_sum{};
 
     void add(
         DoubleDouble error,
@@ -513,14 +520,21 @@ struct DdErrorAccumulator final {
         }
         squared += weight * error * error;
         reference_squared += weight * reference * reference;
+        weight_sum += weight;
     }
 };
 
-[[nodiscard]] ErrorNorms finish(const DdErrorAccumulator& accumulator) noexcept {
+[[nodiscard]] ErrorNorms finish(
+    const DdErrorAccumulator& accumulator,
+    bool apply_unit_reference_floor = false) noexcept {
     ErrorNorms result{};
     result.absolute_l2 = approximate(dd_sqrt(accumulator.squared));
     result.absolute_max = approximate(accumulator.maximum);
-    result.reference_l2 = approximate(dd_sqrt(accumulator.reference_squared));
+    const auto reference_squared = apply_unit_reference_floor &&
+            greater(accumulator.weight_sum, accumulator.reference_squared)
+        ? accumulator.weight_sum
+        : accumulator.reference_squared;
+    result.reference_l2 = approximate(dd_sqrt(reference_squared));
     result.relative_l2 = result.reference_l2 > 0.0
         ? result.absolute_l2 / result.reference_l2
         : result.absolute_l2;
@@ -1023,7 +1037,7 @@ AnalyticAffineWitness evaluate_analytic_affine_witness(
     result.assembled_equation_normalization =
         "||M g-q||_2 / || |M||g|+|q| ||_2";
     result.reconstruction_normalization =
-        "sqrt(sum_p m_p |Sg_p-V_p|^2) / sqrt(sum_p m_p |V_p|^2)";
+        "sqrt(sum_p m_p |Sg_p-V_p|^2) / max(sqrt(sum_p m_p |V_p|^2),sqrt(sum_p m_p)*(1 m/s))";
     result.roundoff_model =
         "binary64 Higham gamma_n=sum-operation-count*epsilon/(1-n*epsilon); "
         "scales include actual absolute summands and are diagnostic, not acceptance tolerances";
@@ -1046,9 +1060,9 @@ FullSolveDiagnostics diagnose_affine_full_solve(
     diagnostics.backward_error_normalization =
         "||M v_hat-q||_2 / || |M||v_hat|+|q| ||_2";
     diagnostics.grid_forward_error_normalization =
-        "sqrt(sum_i D_i |v_hat_i-g_i|^2) / sqrt(sum_i D_i |g_i|^2)";
+        "sqrt(sum_i D_i |v_hat_i-g_i|^2) / max(sqrt(sum_i D_i |g_i|^2),sqrt(sum_i D_i)*(1 m/s))";
     diagnostics.reconstruction_error_normalization =
-        "sqrt(sum_p m_p |S v_hat_p-V_p|^2) / sqrt(sum_p m_p |V_p|^2)";
+        "sqrt(sum_p m_p |S v_hat_p-V_p|^2) / max(sqrt(sum_p m_p |V_p|^2),sqrt(sum_p m_p)*(1 m/s))";
     diagnostics.grid_solution_available =
         result.grid_velocity_m_per_s.size() == system.active_nodes().size();
     diagnostics.component_absolute_backward_error.fill(
@@ -1153,9 +1167,9 @@ HighPrecisionSolveResult solve_affine_high_precision(
     result.backward_error_normalization =
         "||M v_hp-q||_2 / || |M||v_hp|+|q| ||_2, evaluated in double-double";
     result.grid_forward_error_normalization =
-        "sqrt(sum_i D_i |v_hp_i-g_i|^2) / sqrt(sum_i D_i |g_i|^2), evaluated in double-double";
+        "sqrt(sum_i D_i |v_hp_i-g_i|^2) / max(sqrt(sum_i D_i |g_i|^2),sqrt(sum_i D_i)*(1 m/s)), evaluated in double-double";
     result.reconstruction_error_normalization =
-        "sqrt(sum_p m_p |S v_hp_p-V_p|^2) / sqrt(sum_p m_p |V_p|^2), evaluated in double-double";
+        "sqrt(sum_p m_p |S v_hp_p-V_p|^2) / max(sqrt(sum_p m_p |V_p|^2),sqrt(sum_p m_p)*(1 m/s)), evaluated in double-double";
     if (result.node_count == 0U) {
         result.status = HighPrecisionStatus::empty;
         return result;
@@ -1354,8 +1368,8 @@ HighPrecisionSolveResult solve_affine_high_precision(
         }
     }
     result.backward_error = finish(backward);
-    result.grid_forward_error = finish(forward);
-    result.particle_reconstruction_error = finish(reconstruction);
+    result.grid_forward_error = finish(forward, true);
+    result.particle_reconstruction_error = finish(reconstruction, true);
     result.backward_error_max_extended = extended(backward.maximum);
     result.grid_forward_error_max_extended = extended(forward.maximum);
     result.particle_reconstruction_error_max_extended =
