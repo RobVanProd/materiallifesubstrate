@@ -564,6 +564,48 @@ def projection_metrics(
     }
 
 
+def decimal_complete_pivot_reference(
+    matrix: Mapping[tuple[int, int], Decimal], rhs: Sequence[Decimal], size: int,
+) -> tuple[list[Decimal], int]:
+    """Independent 100-digit dense solve of the exact exported binary64 system."""
+    work = [[matrix.get((row, column), Decimal(0)) for column in range(size)] for row in range(size)]
+    value = list(rhs)
+    permutation = list(range(size))
+    largest = max(abs(entry) for row in work for entry in row)
+    threshold = largest * Decimal("1e-80")
+    rank = 0
+    for index in range(size):
+        pivot_row, pivot_column = max(
+            ((row, column) for row in range(index, size) for column in range(index, size)),
+            key=lambda item: abs(work[item[0]][item[1]]),
+        )
+        if abs(work[pivot_row][pivot_column]) <= threshold:
+            break
+        work[index], work[pivot_row] = work[pivot_row], work[index]
+        value[index], value[pivot_row] = value[pivot_row], value[index]
+        for row in range(size):
+            work[row][index], work[row][pivot_column] = work[row][pivot_column], work[row][index]
+        permutation[index], permutation[pivot_column] = permutation[pivot_column], permutation[index]
+        pivot = work[index][index]
+        for row in range(index + 1, size):
+            factor = work[row][index] / pivot
+            work[row][index] = Decimal(0)
+            for column in range(index + 1, size):
+                work[row][column] -= factor * work[index][column]
+            value[row] -= factor * value[index]
+        rank += 1
+    if rank != size:
+        return [], rank
+    permuted = [Decimal(0)] * size
+    for row in range(size - 1, -1, -1):
+        tail = sum((work[row][column] * permuted[column] for column in range(row + 1, size)), Decimal(0))
+        permuted[row] = (value[row] - tail) / work[row][row]
+    solution = [Decimal(0)] * size
+    for position, original_column in enumerate(permutation):
+        solution[original_column] = permuted[position]
+    return solution, rank
+
+
 def validate_solve_metrics(
     sid: str, component: int, row: Mapping[str, str], solution: Sequence[Decimal],
     analytic: Sequence[Decimal], particle_velocity: Sequence[Sequence[Decimal]], masses: Sequence[Decimal],
@@ -614,6 +656,21 @@ def validate_high_precision(
     available = all(boolean(node["hp_available"], f"{sid} HP available") for node in nodes)
     all_pass = True
     contradiction = False
+    python_micro_solutions: list[list[Decimal]] | None = None
+    if system["case_class"] == "full_rank_micro":
+        python_micro_solutions = []
+        for component in range(3):
+            rhs = [data["rhs"][(component, node)] for node in range(len(nodes))]
+            solution, rank = decimal_complete_pivot_reference(data["M"], rhs, len(nodes))
+            require(rank == len(nodes), f"{sid}: independent Decimal micro solve is rank deficient {rank}/{len(nodes)}")
+            metrics = projection_metrics(
+                component, solution, data["analytic"][component], data["particles"],
+                data["masses"], data["S"], data["M"], data["rhs"], data["lumped"],
+            )
+            require(metrics["normalized_backward"] <= Decimal("1e-60"), f"{sid}: Decimal micro backward failure")
+            require(metrics["normalized_forward"] <= FORWARD_LIMIT and metrics["normalized_reconstruction"] <= FORWARD_LIMIT,
+                    f"{sid}: independent Decimal micro affine recovery failure")
+            python_micro_solutions.append(solution)
     for component, optional_row in enumerate(rows):
         assert optional_row is not None
         row = optional_row
@@ -630,6 +687,15 @@ def validate_high_precision(
         require(available, f"{sid}: solved HP lacks values")
         solution = [decimal_number(nodes[node][("hp_vhat_x_m_per_s", "hp_vhat_y_m_per_s", "hp_vhat_z_m_per_s")[component]], f"{sid} HP solution") or Decimal(0) for node in range(len(nodes))]
         metrics = validate_solve_metrics(sid, component, row, solution, data["analytic"][component], data["particles"], data["masses"], data["S"], data["M"], data["rhs"], data["lumped"], high_precision=True)
+        if python_micro_solutions is not None:
+            difference = [solution[node] - python_micro_solutions[component][node] for node in range(len(nodes))]
+            difference_norm = sum((data["lumped"][node] * difference[node] ** 2 for node in range(len(nodes))), Decimal(0)).sqrt()
+            reference_norm = max(
+                sum((data["lumped"][node] * python_micro_solutions[component][node] ** 2 for node in range(len(nodes))), Decimal(0)).sqrt(),
+                sum(data["lumped"], Decimal(0)).sqrt(),
+            )
+            require(difference_norm / reference_norm <= FORWARD_LIMIT,
+                    f"{sid}: C++ high precision disagrees with independent Decimal micro solve")
         n_count = len(nodes)
         backward_limit = Decimal(2) ** 12 * Decimal(n_count) * EPS_DD
         component_pass = metrics["normalized_backward"] <= backward_limit and metrics["normalized_forward"] <= FORWARD_LIMIT and metrics["normalized_reconstruction"] <= FORWARD_LIMIT
