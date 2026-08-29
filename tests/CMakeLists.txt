@@ -10,6 +10,7 @@ add_executable(
   physical_support_tests.cpp
   affine_advection_tests.cpp
   moving_apic_limit_tests.cpp
+  projection_exactness_nullspace_tests.cpp
   projection_foundation_tests.cpp
   transfer_lab_tests.cpp
   time_checkpoint_tests.cpp)
@@ -127,6 +128,21 @@ set_tests_properties(
 
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
+  add_test(
+    NAME mls.formal.source.scan
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tools/formal_trust_scan.py"
+      --formal-root
+      "${PROJECT_SOURCE_DIR}/formal")
+  set_tests_properties(
+    mls.formal.source.scan
+    PROPERTIES
+      LABELS "deterministic;formal;trust"
+      PASS_REGULAR_EXPRESSION
+        "PASS: no sorry, admit, sorryAx, project-defined axiom declaration, or unreported theorem"
+      TIMEOUT 30)
+
   add_test(
     NAME mls.transfer.bakeoff.smoke.verify
     COMMAND
