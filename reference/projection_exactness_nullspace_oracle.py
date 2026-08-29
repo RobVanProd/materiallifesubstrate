@@ -18,6 +18,7 @@ import csv
 import hashlib
 import json
 import math
+import sys
 from dataclasses import dataclass
 from decimal import Decimal, getcontext, localcontext
 from fractions import Fraction as Q
@@ -35,6 +36,7 @@ PRECISION_BITS_LOWER_BOUND = 332
 HP_PIVOT_RELATIVE = Decimal("1e-80")
 HP_FORWARD_LIMIT = Decimal("5e-10")
 HP_RECONSTRUCTION_LIMIT = Decimal("5e-10")
+PCG_RESIDUAL_LIMIT = 5.0e-12
 NULL_LIMIT = Q(0)
 GRADIENT_VISIBILITY_FLOOR = Q(1, 10**12)
 
@@ -77,7 +79,8 @@ MATRIX_FIELDS = tuple("system_id,row_node_index,column_node_index,value_kg".spli
 RHS_FIELDS = tuple("system_id,node_index,component,value_kg_m_per_s".split(","))
 WITNESS_FIELDS = tuple(
     "system_id,component,mg_minus_q_l2_kg_m_per_s,mgq_denominator_kg_m_per_s,"
-    "normalized_mg_minus_q,mgq_roundoff_bound,mgq_pass,sg_minus_v_l2_m_per_s,"
+    "normalized_mg_minus_q,mgq_roundoff_bound,mgq_pass,"
+    "sg_minus_v_l2_m_per_s_sqrt_kg,"
     "sgv_denominator_m_per_s_sqrt_kg,normalized_sg_minus_v,"
     "sgv_roundoff_bound,sgv_pass,partition_max_residual,partition_roundoff_bound,"
     "partition_pass,linear_reproduction_max_residual_m,"
@@ -87,7 +90,9 @@ WITNESS_FIELDS = tuple(
     .split(",")
 )
 SOLVE_FIELDS = tuple(
-    "system_id,component,status,solver,iterations,"
+    "system_id,component,status,accuracy_classification,solver,iterations,"
+    "legacy_residual_applicable,legacy_normalized_residual,"
+    "legacy_normalized_residual_threshold,legacy_termination_reason,"
     "backward_residual_l2_kg_m_per_s,backward_denominator_kg_m_per_s,"
     "normalized_backward_residual,grid_forward_lumped_numerator_m_per_s_sqrt_kg,"
     "grid_forward_lumped_denominator_m_per_s_sqrt_kg,normalized_forward_error,"
@@ -109,17 +114,29 @@ HIGH_PRECISION_FIELDS = tuple(
     "reconstruction_mass_denominator_m_per_s_sqrt_kg,"
     "normalized_reconstruction_error,condition_value,condition_kind".split(",")
 )
+HIGH_PRECISION_PIVOT_FIELDS = tuple(
+    "system_id,step,original_row_index,original_column_index,pivot_abs_kg,"
+    "pivot_threshold_kg,status,promotion_eligible".split(",")
+)
 NULLSPACE_MODE_FIELDS = tuple(
-    "system_id,mode_index,node_index,z_value_m_per_s,method,singular_value_kg,"
+    "system_id,mode_index,node_index,z_value_m_per_s,method,singular_value_sqrt_kg,"
     "representative_value_m_per_s,shifted_value_m_per_s".split(",")
+)
+NULLSPACE_STATUS_FIELDS = tuple(
+    "system_id,status,node_count,particle_count,threshold_rank,rank_available,"
+    "rank_method,rank_is_certified,nullity,numerical_rank_threshold_sqrt_kg,"
+    "largest_qr_diagonal_sqrt_kg,smallest_accepted_qr_diagonal_sqrt_kg,"
+    "constructed_mode_count,basis_complete,promotion_eligible".split(",")
 )
 NULLSPACE_METRIC_FIELDS = tuple(
     "system_id,mode_index,rank,rank_method,rank_is_certified,"
     "mz_l2_kg_m_per_s,mz_denominator_kg_m_per_s,mz_normalized,"
     "sz_l2_m_per_s,sz_denominator_m_per_s,sz_normalized,"
     "gradient_max_per_s,gradient_rms_per_s,gradient_roundoff_bound_per_s,"
-    "visibility_ratio,gradient_visible,alpha_m_per_s,representative_component,"
+    "visibility_ratio,gradient_visible,alpha_dimensionless,representative_component,"
     "representative_kind,base_residual_normalized,shifted_residual_normalized,"
+    "residual_change_l2_kg_m_per_s,residual_change_denominator_kg_m_per_s,"
+    "residual_change_normalized,"
     "reconstruction_delta_normalized,phase,orientation,promotion_eligible,pass"
     .split(",")
 )
@@ -134,7 +151,9 @@ CSV_SCHEMAS = {
     "witness.csv": WITNESS_FIELDS,
     "solve_diagnostics.csv": SOLVE_FIELDS,
     "high_precision.csv": HIGH_PRECISION_FIELDS,
+    "high_precision_pivots.csv": HIGH_PRECISION_PIVOT_FIELDS,
     "nullspace_modes.csv": NULLSPACE_MODE_FIELDS,
+    "nullspace_status.csv": NULLSPACE_STATUS_FIELDS,
     "nullspace_metrics.csv": NULLSPACE_METRIC_FIELDS,
 }
 
@@ -386,6 +405,8 @@ class DenseSolve:
     rank: int
     smallest_pivot: Decimal
     largest_pivot: Decimal
+    pivot_threshold: Decimal
+    pivot_trace: tuple[tuple[int, int, Decimal], ...]
 
 
 def decimal_complete_pivot_solve(matrix: Sequence[Sequence[Decimal]], rhs: Sequence[Decimal]) -> DenseSolve:
@@ -395,9 +416,11 @@ def decimal_complete_pivot_solve(matrix: Sequence[Sequence[Decimal]], rhs: Seque
     work = [list(row) for row in matrix]
     value = list(rhs)
     permutation = list(range(size))
+    row_permutation = list(range(size))
     initial_max = max(abs(entry) for row in work for entry in row)
     threshold = initial_max * HP_PIVOT_RELATIVE
     pivots: list[Decimal] = []
+    pivot_trace: list[tuple[int, int, Decimal]] = []
     rank = 0
     for index in range(size):
         pivot_row, pivot_column = max(
@@ -409,11 +432,15 @@ def decimal_complete_pivot_solve(matrix: Sequence[Sequence[Decimal]], rhs: Seque
             break
         work[index], work[pivot_row] = work[pivot_row], work[index]
         value[index], value[pivot_row] = value[pivot_row], value[index]
+        row_permutation[index], row_permutation[pivot_row] = (
+            row_permutation[pivot_row], row_permutation[index])
         for row in range(size):
             work[row][index], work[row][pivot_column] = work[row][pivot_column], work[row][index]
         permutation[index], permutation[pivot_column] = permutation[pivot_column], permutation[index]
         pivot = work[index][index]
         pivots.append(abs(pivot))
+        pivot_trace.append((
+            row_permutation[index], permutation[index], abs(pivot)))
         for row in range(index + 1, size):
             factor = work[row][index] / pivot
             work[row][index] = Decimal(0)
@@ -430,7 +457,10 @@ def decimal_complete_pivot_solve(matrix: Sequence[Sequence[Decimal]], rhs: Seque
     solution = [Decimal(0)] * size
     for position, original_column in enumerate(permutation):
         solution[original_column] = permuted[position]
-    return DenseSolve(tuple(solution), rank, min(pivots), max(pivots))
+    return DenseSolve(
+        tuple(solution), rank, min(pivots), max(pivots), threshold,
+        tuple(pivot_trace),
+    )
 
 
 def float_assembled(system: ExactSystem) -> tuple[list[list[float]], list[list[float]], list[list[float]]]:
@@ -476,7 +506,12 @@ def high_precision_solutions(system: ExactSystem) -> tuple[list[DenseSolve], lis
 def float_pcg(matrix: Sequence[Sequence[float]], rhs: Sequence[float], limit: int = 10000) -> tuple[list[float], int, str]:
     size = len(matrix)
     x = [rhs[i] / matrix[i][i] for i in range(size)]
-    apply = lambda v: [sum(row[j] * v[j] for j in range(size)) for row in matrix]
+    def apply(vector: Sequence[float]) -> list[float]:
+        return [
+            sum(row[j] * vector[j] for j in range(size))
+            for row in matrix
+        ]
+
     applied = apply(x)
     r = [rhs[i] - applied[i] for i in range(size)]
     diagonal = [matrix[i][i] for i in range(size)]
@@ -492,7 +527,7 @@ def float_pcg(matrix: Sequence[Sequence[float]], rhs: Sequence[float], limit: in
         alpha = rz / denominator
         x = [x[i] + alpha * p[i] for i in range(size)]
         r = [r[i] - alpha * ap[i] for i in range(size)]
-        if math.sqrt(sum(value * value for value in r)) / max(rhs_norm, 1.0) <= 5.0e-12:
+        if math.sqrt(sum(value * value for value in r)) / max(rhs_norm, 1.0) <= PCG_RESIDUAL_LIMIT:
             return x, iteration, "solved"
         z = [r[i] / diagonal[i] for i in range(size)]
         next_rz = sum(r[i] * z[i] for i in range(size))
@@ -521,10 +556,16 @@ def decimal_metric_rows(system: ExactSystem, solutions: Sequence[Sequence[float]
         return rows
 
 
-def nullspace_probe(system: ExactSystem) -> tuple[list[Q], dict[str, Q]]:
-    modes = nullspace(system.sampling)
-    if not modes:
+def nullspace_probe(
+    system: ExactSystem,
+) -> tuple[list[list[Q]], list[Q], dict[str, Q]]:
+    raw_modes = nullspace(system.sampling)
+    if not raw_modes:
         raise AssertionError("singular oracle system unexpectedly has no nullspace")
+    modes = [
+        [value / max(abs(entry) for entry in mode) for value in mode]
+        for mode in raw_modes
+    ]
     best_mode: list[Q] | None = None
     best_gradient_squared = Q(-1)
     best_values: list[Vec3Q] = []
@@ -542,14 +583,57 @@ def nullspace_probe(system: ExactSystem) -> tuple[list[Q], dict[str, Q]]:
     assert all(value == 0 for value in matvec(system.matrix, best_mode))
     assert best_gradient_squared > GRADIENT_VISIBILITY_FLOOR * GRADIENT_VISIBILITY_FLOOR
     rms_squared = qsum(qsum(value * value for value in gradient) for gradient in best_values) / len(best_values)
-    return best_mode, {
+    return modes, best_mode, {
         "gradient_max_squared": best_gradient_squared,
         "gradient_rms_squared": rms_squared,
         "nullity": Q(len(modes)),
     }
 
 
-def build_oracle() -> tuple[ExactSystem, ExactSystem, dict, list[DenseSolve], list[dict[str, Decimal]], list[Q], dict[str, Q]]:
+def decimal_sampling_qr_diagnostics(
+    system: ExactSystem,
+) -> tuple[int, Decimal, Decimal, Decimal]:
+    row_count = len(system.points)
+    column_count = len(system.nodes)
+    columns = [
+        [Decimal.from_float(float(system.sampling[row][column])) for row in range(row_count)]
+        for column in range(column_count)
+    ]
+    norms = [decimal_l2(column) for column in columns]
+    largest = max(norms)
+    threshold = (
+        Decimal(128) * Decimal(max(row_count, column_count))
+        * (Decimal(2) ** -52) * max(largest, Decimal.from_float(sys.float_info.min))
+    )
+    accepted: list[Decimal] = []
+    rank = 0
+    while rank < min(row_count, column_count):
+        pivot = max(range(rank, column_count), key=lambda column: norms[column])
+        if norms[pivot] <= threshold:
+            break
+        columns[rank], columns[pivot] = columns[pivot], columns[rank]
+        norms[rank], norms[pivot] = norms[pivot], norms[rank]
+        norm = decimal_l2(columns[rank])
+        if norm <= threshold:
+            break
+        accepted.append(norm)
+        q = [value / norm for value in columns[rank]]
+        for column in range(rank + 1, column_count):
+            for _pass in range(2):
+                projection = decimal_dot(q, columns[column])
+                for row in range(row_count):
+                    columns[column][row] -= projection * q[row]
+            norms[column] = decimal_l2(columns[column])
+        rank += 1
+    if not accepted:
+        raise AssertionError("oracle sampling QR accepted no pivots")
+    return rank, threshold, largest, min(accepted)
+
+
+def build_oracle() -> tuple[
+    ExactSystem, ExactSystem, dict, list[DenseSolve], list[dict[str, Decimal]],
+    list[list[Q]], list[Q], dict[str, Q],
+]:
     full = build_system("oracle_full_27", "full_rank_affine", (Q(5, 8), Q(1), Q(11, 8)))
     singular = build_system("oracle_singular_8", "rank_deficient_affine", (Q(3, 4), Q(5, 4)))
     if full.rank != len(full.nodes):
@@ -562,7 +646,7 @@ def build_oracle() -> tuple[ExactSystem, ExactSystem, dict, list[DenseSolve], li
         assert metric["normalized_backward"] <= hp_backward_limit
         assert metric["normalized_forward"] <= HP_FORWARD_LIMIT
         assert metric["normalized_reconstruction"] <= HP_RECONSTRUCTION_LIMIT
-    mode, mode_metrics = nullspace_probe(singular)
+    modes, mode, mode_metrics = nullspace_probe(singular)
     result = {
         "arithmetic": "fractions.Fraction exact; decimal.Decimal complete pivot",
         "decimal_digits": DECIMAL_DIGITS,
@@ -592,7 +676,7 @@ def build_oracle() -> tuple[ExactSystem, ExactSystem, dict, list[DenseSolve], li
     }
     payload = json.dumps(result, indent=2, sort_keys=True)
     result["result_sha256_before_hash_field"] = hashlib.sha256(payload.encode()).hexdigest()
-    return full, singular, result, hp_solves, hp_metrics, mode, mode_metrics
+    return full, singular, result, hp_solves, hp_metrics, modes, mode, mode_metrics
 
 
 def write_csv(path: Path, fields: Sequence[str], rows: Sequence[dict[str, str]]) -> None:
@@ -619,7 +703,7 @@ def manifest_payload(hashes: dict[str, str]) -> bytes:
 
 
 def write_fixture(target: Path) -> None:
-    full, singular, oracle_result, hp_solves, hp_metrics, mode, mode_metrics = build_oracle()
+    full, singular, oracle_result, hp_solves, hp_metrics, modes, _mode, _mode_metrics = build_oracle()
     if target.exists():
         raise FileExistsError(f"fixture target already exists: {target}")
     target.mkdir(parents=True)
@@ -628,6 +712,7 @@ def write_fixture(target: Path) -> None:
     pcg_values: dict[str, list[list[float]] | None] = {}
     pcg_iterations: dict[str, list[int]] = {}
     pcg_status: dict[str, list[str]] = {}
+    pcg_legacy_residual: dict[str, list[float | None]] = {}
     for system in systems:
         sampling_f, matrix_f, rhs_f = float_assembled(system)
         if system is full:
@@ -635,10 +720,23 @@ def write_fixture(target: Path) -> None:
             pcg_values[system.system_id] = [entry[0] for entry in triples]
             pcg_iterations[system.system_id] = [entry[1] for entry in triples]
             pcg_status[system.system_id] = [entry[2] for entry in triples]
+            pcg_legacy_residual[system.system_id] = []
+            for component, (solution, _iterations, _status) in enumerate(triples):
+                residual = [
+                    sum(matrix_f[row][column] * solution[column]
+                        for column in range(len(solution))) - rhs_f[component][row]
+                    for row in range(len(solution))
+                ]
+                rhs_norm = math.sqrt(sum(value * value for value in rhs_f[component]))
+                pcg_legacy_residual[system.system_id].append(
+                    math.sqrt(sum(value * value for value in residual))
+                    / max(rhs_norm, 1.0)
+                )
         else:
             pcg_values[system.system_id] = None
             pcg_iterations[system.system_id] = [0, 0, 0]
             pcg_status[system.system_id] = ["structurally_rank_deficient"] * 3
+            pcg_legacy_residual[system.system_id] = [None, None, None]
         nonzero = sum(value != 0 for row in system.matrix for value in row)
         max_stencil = max(sum(value != 0 for value in row) for row in system.sampling)
         max_contributions = max(
@@ -696,21 +794,44 @@ def write_fixture(target: Path) -> None:
                 tables["rhs.csv"].append(dict(zip(RHS_FIELDS, (
                     system.system_id, str(node), str(component), float(value).hex(),
                 ), strict=True)))
+        with localcontext() as context:
+            context.prec = DECIMAL_DIGITS
+            sampling_for_sg = [[Decimal.from_float(value) for value in row] for row in sampling_f]
+            analytic_for_sg = [
+                [Decimal.from_float(float(value)) for value in system.nodal_affine[component]]
+                for component in range(3)
+            ]
+            particles_for_sg = [
+                [Decimal.from_float(float(value)) for value in velocity]
+                for velocity in system.particle_velocity
+            ]
+            reconstructed_for_sg = [
+                [decimal_dot(row, analytic_for_sg[component]) for component in range(3)]
+                for row in sampling_for_sg
+            ]
+            sg_residual = decimal_l2(
+                reconstructed_for_sg[p][component] - particles_for_sg[p][component]
+                for p in range(len(system.points))
+                for component in range(3)
+            )
+            particle_reference = decimal_l2(
+                particles_for_sg[p][component]
+                for p in range(len(system.points))
+                for component in range(3)
+            )
+            sgv_denominator = max(
+                particle_reference, Decimal(len(system.points)).sqrt())
+        for component in range(3):
             with localcontext() as context:
                 context.prec = DECIMAL_DIGITS
                 matrix_d = [[Decimal.from_float(value) for value in row] for row in matrix_f]
                 sampling_d = [[Decimal.from_float(value) for value in row] for row in sampling_f]
                 rhs_d = [Decimal.from_float(value) for value in rhs_f[component]]
                 analytic_d = [Decimal.from_float(float(value)) for value in system.nodal_affine[component]]
-                particles_d = [Decimal.from_float(float(value[component])) for value in system.particle_velocity]
                 mg = [decimal_dot(row, analytic_d) for row in matrix_d]
                 mg_residual = decimal_l2(mg[i] - rhs_d[i] for i in range(len(rhs_d)))
                 abs_m_g = [sum((abs(matrix_d[row][column]) * abs(analytic_d[column]) for column in range(len(system.nodes))), Decimal(0)) for row in range(len(system.nodes))]
                 mgq_denominator = decimal_l2(abs_m_g) + decimal_l2(rhs_d)
-                reconstructed = [decimal_dot(row, analytic_d) for row in sampling_d]
-                sg_residual = decimal_l2(reconstructed[p] - particles_d[p] for p in range(len(particles_d)))
-                particle_reference = decimal_l2(particles_d)
-                sgv_denominator = max(particle_reference, Decimal(len(system.points)).sqrt())
             maximum_point_norm = max(math.sqrt(sum(float(value) ** 2 for value in point)) for point in system.points)
             partition_bound = 32.0 * gamma64(max_stencil)
             linear_bound = 64.0 * gamma64(max_stencil) * max(1.0, maximum_point_norm)
@@ -729,12 +850,23 @@ def write_fixture(target: Path) -> None:
             for component in range(3):
                 metric = pcg_metrics[component]
                 raw_condition = Decimal("1e0")
+                accuracy_classification = (
+                    "backward_pass_forward_fail"
+                    if metric["normalized_forward"] > HP_FORWARD_LIMIT
+                    or metric["normalized_reconstruction"] > HP_RECONSTRUCTION_LIMIT
+                    else "backward_and_forward_pass"
+                )
                 tables["solve_diagnostics.csv"].append(dict(zip(SOLVE_FIELDS, (
-                    system.system_id, str(component), pcg_status[system.system_id][component], "pcg_control",
-                    str(pcg_iterations[system.system_id][component]), *(decimal_text(metric[name]) for name in (
+                    system.system_id, str(component), pcg_status[system.system_id][component],
+                    accuracy_classification, "pcg_control",
+                    str(pcg_iterations[system.system_id][component]), "true",
+                    hexfloat(pcg_legacy_residual[system.system_id][component] or 0.0),
+                    hexfloat(PCG_RESIDUAL_LIMIT), "oracle PCG solved",
+                    *(decimal_text(metric[name]) for name in (
                         "backward", "backward_denominator", "normalized_backward", "forward", "forward_denominator",
                         "normalized_forward", "reconstruction", "reconstruction_denominator", "normalized_reconstruction")),
-                    decimal_text(raw_condition), "dense_numerical_estimate", "1e0", "dense_numerical_estimate",
+                    decimal_text(raw_condition), "dense_numerical_estimate",
+                    decimal_text(raw_condition), "dense_numerical_estimate",
                     decimal_text(raw_condition * metric["normalized_backward"]),
                 ), strict=True)))
                 hp = hp_solves[component]
@@ -746,59 +878,125 @@ def write_fixture(target: Path) -> None:
                     decimal_text(hp.largest_pivot), *(decimal_text(metric_hp[name]) for name in (
                         "backward", "backward_denominator", "normalized_backward", "forward", "forward_denominator",
                         "normalized_forward", "reconstruction", "reconstruction_denominator",
-                        "normalized_reconstruction")), "1e0", "high_precision_inverse_norm_estimate",
+                    "normalized_reconstruction")), decimal_text(Decimal(1)),
+                    "high_precision_inverse_norm_estimate",
                 ), strict=True)))
+            pivot_reference = hp_solves[0]
+            if not all(
+                solve.pivot_trace == pivot_reference.pivot_trace
+                and solve.pivot_threshold == pivot_reference.pivot_threshold
+                for solve in hp_solves
+            ):
+                raise AssertionError("component-independent oracle pivot traces differ")
+            for step, (original_row, original_column, pivot_abs) in enumerate(
+                pivot_reference.pivot_trace
+            ):
+                tables["high_precision_pivots.csv"].append(dict(zip(
+                    HIGH_PRECISION_PIVOT_FIELDS, (
+                        system.system_id, str(step), str(original_row),
+                        str(original_column), decimal_text(pivot_abs),
+                        decimal_text(pivot_reference.pivot_threshold),
+                        "solved", "false",
+                    ), strict=True,
+                )))
         else:
             for component in range(3):
                 tables["solve_diagnostics.csv"].append(dict(zip(SOLVE_FIELDS, (
-                    system.system_id, str(component), "structurally_rank_deficient", "pcg_control", "0",
-                    *("NA" for _ in range(14)),
+                    system.system_id, str(component), "structurally_rank_deficient", "not_available",
+                    "pcg_control", "0",
+                    "false", "NA", hexfloat(PCG_RESIDUAL_LIMIT),
+                    "oracle structurally rank deficient",
+                    *("NA" for _ in range(9)),
+                    "NA", "unavailable", "NA", "unavailable", "NA",
                 ), strict=True)))
         if system is singular:
+            qr_rank, qr_threshold, qr_largest, qr_smallest = (
+                decimal_sampling_qr_diagnostics(system)
+            )
+            if qr_rank != system.rank:
+                raise AssertionError("oracle QR/exact rank mismatch")
+            tables["nullspace_status.csv"].append(dict(zip(
+                NULLSPACE_STATUS_FIELDS, (
+                    system.system_id, "analyzed", str(len(system.nodes)),
+                    str(len(system.points)), str(system.rank), "true",
+                    "exact_sampling_rref", "true",
+                    str(len(system.nodes) - system.rank),
+                    decimal_text(qr_threshold), decimal_text(qr_largest),
+                    decimal_text(qr_smallest), str(len(modes)), "true", "false",
+                ), strict=True,
+            )))
             component = 0
             representative = list(system.nodal_affine[component])
-            shifted = [representative[i] + mode[i] for i in range(len(mode))]
-            for node_index in range(len(mode)):
-                tables["nullspace_modes.csv"].append(dict(zip(NULLSPACE_MODE_FIELDS, (
-                    system.system_id, "0", str(node_index), hexfloat(mode[node_index]), "exact_sampling_rref", "NA",
-                    hexfloat(representative[node_index]), hexfloat(shifted[node_index]),
-                ), strict=True)))
             matrix_d = [[Decimal.from_float(value) for value in row] for row in matrix_f]
             sampling_d = [[Decimal.from_float(value) for value in row] for row in sampling_f]
             gradient_d = [[[Decimal.from_float(float(value)) for value in system.gradients[p][node]] for node in range(len(system.nodes))] for p in range(len(system.points))]
-            z_d = [Decimal.from_float(float(value)) for value in mode]
-            representative_d = [Decimal.from_float(float(value)) for value in representative]
-            shifted_d = [Decimal.from_float(float(value)) for value in shifted]
-            mz = [decimal_dot(row, z_d) for row in matrix_d]
-            sz = [decimal_dot(row, z_d) for row in sampling_d]
-            gradient_vectors = [[sum((z_d[node] * gradient_d[p][node][c] for node in range(len(z_d))), Decimal(0)) for c in range(3)] for p in range(len(system.points))]
-            gradient_norms = [decimal_l2(values) for values in gradient_vectors]
-            gradient_rms = (sum((value * value for value in gradient_norms), Decimal(0)) / Decimal(len(gradient_norms))).sqrt()
-            gradient_max = max(gradient_norms)
             matrix_frobenius = decimal_l2(value for row in matrix_d for value in row)
             sampling_frobenius = decimal_l2(value for row in sampling_d for value in row)
-            z_l2 = decimal_l2(z_d)
-            mz_denominator = matrix_frobenius * z_l2
-            sz_denominator = sampling_frobenius * z_l2
-            max_gradient_sum = max(sum((abs(z_d[node]) * decimal_l2(gradient_d[p][node]) for node in range(len(z_d))), Decimal(0)) for p in range(len(system.points)))
-            gradient_bound_d = Decimal(128) * (Decimal(3 * max_stencil) * (Decimal(2) ** -52) / (Decimal(1) - Decimal(3 * max_stencil) * (Decimal(2) ** -52))) * max_gradient_sum
-            visibility_ratio_d = gradient_max / gradient_bound_d
             rhs_component_d = [Decimal.from_float(value) for value in rhs_f[component]]
             particle_component_d = [Decimal.from_float(float(value[component])) for value in system.particle_velocity]
-            base_metrics = projection_metrics_decimal(matrix_d, sampling_d, [Decimal(1)] * len(system.points), rhs_component_d, representative_d, representative_d, particle_component_d)
-            shifted_metrics = projection_metrics_decimal(matrix_d, sampling_d, [Decimal(1)] * len(system.points), rhs_component_d, shifted_d, representative_d, particle_component_d)
-            recon_base = [decimal_dot(row, representative_d) for row in sampling_d]
-            recon_shift = [decimal_dot(row, shifted_d) for row in sampling_d]
-            recon_delta = decimal_l2(recon_shift[p] - recon_base[p] for p in range(len(recon_base))) / sz_denominator
-            tables["nullspace_metrics.csv"].append(dict(zip(NULLSPACE_METRIC_FIELDS, (
-                system.system_id, "0", str(system.rank), "exact_sampling_rref", "true",
-                decimal_text(decimal_l2(mz)), decimal_text(mz_denominator), decimal_text(decimal_l2(mz) / mz_denominator),
-                decimal_text(decimal_l2(sz)), decimal_text(sz_denominator), decimal_text(decimal_l2(sz) / sz_denominator),
-                decimal_text(gradient_max), decimal_text(gradient_rms), decimal_text(gradient_bound_d),
-                decimal_text(visibility_ratio_d), "true", hexfloat(1), str(component), "analytic_affine",
-                decimal_text(base_metrics["normalized_backward"]), decimal_text(shifted_metrics["normalized_backward"]), decimal_text(recon_delta),
-                "oracle_dyadic", "identity", "false", "true",
-            ), strict=True)))
+            representative_d = [Decimal.from_float(float(value)) for value in representative]
+            for mode_index, mode in enumerate(modes):
+                shifted = [representative[i] + mode[i] for i in range(len(mode))]
+                for node_index in range(len(mode)):
+                    tables["nullspace_modes.csv"].append(dict(zip(NULLSPACE_MODE_FIELDS, (
+                        system.system_id, str(mode_index), str(node_index), hexfloat(mode[node_index]),
+                        "exact_sampling_rref", "NA", hexfloat(representative[node_index]),
+                        hexfloat(shifted[node_index]),
+                    ), strict=True)))
+                z_d = [Decimal.from_float(float(value)) for value in mode]
+                shifted_d = [Decimal.from_float(float(value)) for value in shifted]
+                mz = [decimal_dot(row, z_d) for row in matrix_d]
+                sz = [decimal_dot(row, z_d) for row in sampling_d]
+                gradient_vectors = [[sum((z_d[node] * gradient_d[p][node][c] for node in range(len(z_d))), Decimal(0)) for c in range(3)] for p in range(len(system.points))]
+                gradient_norms = [decimal_l2(values) for values in gradient_vectors]
+                gradient_rms = (sum((value * value for value in gradient_norms), Decimal(0)) / Decimal(len(gradient_norms))).sqrt()
+                gradient_max = max(gradient_norms)
+                z_l2 = decimal_l2(z_d)
+                mz_denominator = matrix_frobenius * z_l2
+                sz_denominator = sampling_frobenius * z_l2
+                max_gradient_sum = max(sum((abs(z_d[node]) * decimal_l2(gradient_d[p][node]) for node in range(len(z_d))), Decimal(0)) for p in range(len(system.points)))
+                gradient_bound_d = Decimal(128) * (Decimal(3 * max_stencil) * (Decimal(2) ** -52) / (Decimal(1) - Decimal(3 * max_stencil) * (Decimal(2) ** -52))) * max_gradient_sum
+                visibility_ratio_d = gradient_max / gradient_bound_d
+                base_metrics = projection_metrics_decimal(matrix_d, sampling_d, [Decimal(1)] * len(system.points), rhs_component_d, representative_d, representative_d, particle_component_d)
+                shifted_metrics = projection_metrics_decimal(matrix_d, sampling_d, [Decimal(1)] * len(system.points), rhs_component_d, shifted_d, representative_d, particle_component_d)
+                base_residual = [
+                    decimal_dot(row, representative_d) - rhs_component_d[index]
+                    for index, row in enumerate(matrix_d)
+                ]
+                shifted_residual = [
+                    decimal_dot(row, shifted_d) - rhs_component_d[index]
+                    for index, row in enumerate(matrix_d)
+                ]
+                residual_change = decimal_l2(
+                    shifted_residual[index] - base_residual[index]
+                    for index in range(len(matrix_d))
+                )
+                recon_base = [decimal_dot(row, representative_d) for row in sampling_d]
+                recon_shift = [decimal_dot(row, shifted_d) for row in sampling_d]
+                recon_delta = decimal_l2(recon_shift[p] - recon_base[p] for p in range(len(recon_base))) / sz_denominator
+                null_limit = Decimal(512) * Decimal(
+                    max(len(system.points), len(system.nodes))) * (Decimal(2) ** -52)
+                mode_pass = (
+                    decimal_l2(mz) / mz_denominator <= null_limit
+                    and decimal_l2(sz) / sz_denominator <= null_limit
+                    and residual_change / mz_denominator <= null_limit
+                    and recon_delta <= null_limit
+                )
+                gradient_visible = gradient_max > max(
+                    Decimal("1e-10"), Decimal("1e4") * gradient_bound_d)
+                tables["nullspace_metrics.csv"].append(dict(zip(NULLSPACE_METRIC_FIELDS, (
+                    system.system_id, str(mode_index), str(system.rank), "exact_sampling_rref", "true",
+                    decimal_text(decimal_l2(mz)), decimal_text(mz_denominator), decimal_text(decimal_l2(mz) / mz_denominator),
+                    decimal_text(decimal_l2(sz)), decimal_text(sz_denominator), decimal_text(decimal_l2(sz) / sz_denominator),
+                    decimal_text(gradient_max), decimal_text(gradient_rms), decimal_text(gradient_bound_d),
+                    decimal_text(visibility_ratio_d), "true" if gradient_visible else "false",
+                    hexfloat(1), str(component), "analytic_affine",
+                    decimal_text(base_metrics["normalized_backward"]), decimal_text(shifted_metrics["normalized_backward"]),
+                    decimal_text(residual_change), decimal_text(mz_denominator),
+                    decimal_text(residual_change / mz_denominator), decimal_text(recon_delta),
+                    "oracle_dyadic", "identity", "false",
+                    "true" if mode_pass else "false",
+                ), strict=True)))
 
     raw_tables = ("particles.csv", "nodes.csv", "stencils.csv", "matrix.csv", "rhs.csv")
     for system_row in tables["systems.csv"]:
