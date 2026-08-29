@@ -115,6 +115,73 @@ MLS_TEST("projection exactness diagnostic policies fail closed") {
         diagnostic::diagnose_gram_nullspace(system, std::vector<Vec3d>{}));
 }
 
+MLS_TEST("projection solve diagnostics separate backward from forward error") {
+    const AffineVelocityField field{affine_matrix(), {0.888, -0.645, -0.592}};
+    const auto particles = affine_lattice(field);
+    const auto system = projection::build_projection_system(
+        particles, TransferConfig{1.0, {}, 0.01});
+    const auto solved = diagnostic::run_legacy_pcg_control(system);
+    MLS_REQUIRE_EQ(solved.status, projection::ProjectionStatus::solved);
+    const auto diagnostics = diagnostic::diagnose_affine_full_solve(
+        system, solved, field);
+    MLS_REQUIRE(diagnostics.grid_solution_available);
+
+    long double matrix_squared = 0.0L;
+    for (const auto& row : system.consistent_mass_rows()) {
+        for (const auto& [column, value] : row) {
+            static_cast<void>(column);
+            matrix_squared += static_cast<long double>(value) * value;
+        }
+    }
+    const auto matrix_frobenius = std::sqrt(static_cast<double>(matrix_squared));
+    for (std::size_t axis = 0; axis < 3U; ++axis) {
+        long double residual_squared = 0.0L;
+        long double solution_squared = 0.0L;
+        long double rhs_squared = 0.0L;
+        const auto applied = projection::apply_consistent_mass(
+            system, solved.grid_velocity_m_per_s);
+        for (std::size_t node = 0; node < system.active_nodes().size(); ++node) {
+            const std::array solution{
+                solved.grid_velocity_m_per_s[node].x,
+                solved.grid_velocity_m_per_s[node].y,
+                solved.grid_velocity_m_per_s[node].z};
+            const std::array observed{applied[node].x, applied[node].y, applied[node].z};
+            const std::array rhs{
+                system.consistent_rhs_kg_m_per_s()[node].x,
+                system.consistent_rhs_kg_m_per_s()[node].y,
+                system.consistent_rhs_kg_m_per_s()[node].z};
+            const auto residual = observed[axis] - rhs[axis];
+            residual_squared += static_cast<long double>(residual) * residual;
+            solution_squared +=
+                static_cast<long double>(solution[axis]) * solution[axis];
+            rhs_squared += static_cast<long double>(rhs[axis]) * rhs[axis];
+        }
+        const auto expected = std::sqrt(static_cast<double>(residual_squared)) /
+            (matrix_frobenius * std::sqrt(static_cast<double>(solution_squared)) +
+             std::sqrt(static_cast<double>(rhs_squared)));
+        MLS_REQUIRE(std::abs(
+            diagnostics.component_normalized_backward_error[axis] - expected) <
+            2.0e-18);
+    }
+    MLS_REQUIRE(diagnostics.grid_forward_error.relative_l2 < 1.0e-9);
+    MLS_REQUIRE(diagnostics.particle_reconstruction_error.relative_l2 < 1.0e-9);
+}
+
+MLS_TEST("projection high precision preserves rank-deficient evidence") {
+    const AffineVelocityField field{affine_matrix(), {0.888, -0.645, -0.592}};
+    const Vec3d position{};
+    const std::vector<CenterParticle> particles{
+        {1, 2, position, diagnostic::evaluate(field, position)},
+    };
+    const auto system = projection::build_projection_system(
+        particles, TransferConfig{1.0, {}, 0.5});
+    const auto result = diagnostic::solve_affine_high_precision(system, field);
+    MLS_REQUIRE_EQ(result.status, diagnostic::HighPrecisionStatus::rank_deficient);
+    MLS_REQUIRE_EQ(result.threshold_rank, std::size_t{1});
+    MLS_REQUIRE(!result.regularization_applied);
+    MLS_REQUIRE(result.grid_velocity_extended.empty());
+}
+
 MLS_TEST("projection exactness analytic witness bypasses every solver") {
     const AffineVelocityField field{affine_matrix(), {0.888, -0.645, -0.592}};
     const auto particles = affine_lattice(field);
