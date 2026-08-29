@@ -30,6 +30,12 @@ configuration_id,packet_index,packet_id,mass_quanta,x_m,y_m,z_m,vx_m_per_s,vy_m_
 configuration_id,lookup_phase,low_packet_id,high_packet_id,distance_squared_m2,support_radius_squared_m2,brute_force_eligible,lookup_eligible,agreement,weight
 ```
 
+`grid_nodes.csv`
+
+```text
+sampling_operator_id,derivative_operator_id,configuration_id,lookup_phase,node_index,node_id,grid_i,grid_j,grid_k,x_m,y_m,z_m
+```
+
 `relations.csv`
 
 ```text
@@ -106,6 +112,12 @@ operator_id,sampling_operator_id,derivative_operator_id,mode_index,representativ
 reference_id,configuration_id,candidate,operator_id,arithmetic,precision_digits,row_count,column_count,rank,nullity,rigid_rank,nonrigid_nullity,rigid_in_kernel,kernel_equals_rigid_span,source,pass,promotion_eligible
 ```
 
+`checkpoints.csv`
+
+```text
+configuration_id,checkpoint_kind,encoding,byte_count,payload_sha256,payload_hex
+```
+
 Relations include retained and deleted edges.  Only retained relations enter
 an operator.  An edge uses `first_id,second_id`; a volume relation uses
 `center_id,first_id,second_id,third_id`.  Candidate-A entries use
@@ -128,6 +140,19 @@ scaled `nominal_spacing_m`; its origin is the registered componentwise phase
 times that spacing.  Exact-control packet IDs are one-based, so the
 preregistered square index tuple `(0,1,2,3)` is emitted as packet-ID tuple
 `(1,2,3,4)` without changing its geometry or orientation.
+
+For candidate A, `grid_gauge.operator_id` equals `sampling_operator_id`; there
+is no synthetic gauge operator. Node IDs are `node_index+1` and are scoped to
+one sampling/derivative operator pair. The complete scalar sampling-null basis
+is lifted into all three velocity components and exported in
+`nullspace_modes.csv`. Both the sampling and derivative matrices are exported
+in full. The validator rebuilds both matrices from packet and grid-node
+geometry before accepting a gauge counterexample.
+
+Each configuration has one canonical `MLSMOBS1` version-1 little-endian input
+checkpoint row. The validator decodes and canonically reserializes its support
+radius, packets, retained bonds, and supplied validated volume-relation subset;
+two producer-supplied hashes are not checkpoint evidence.
 
 ## Summary and manifest
 
@@ -153,5 +178,5 @@ outcomes frozen in the preregistration.
 
 `manifest.json` has exactly `algorithm`, `files`, `pre_hash_sha256`, and
 `schema`.  Its schema is `mls.mechanical-observability.manifest.v1`; it covers
-the fifteen CSV files and `summary.json` using SHA-256.  This manifest and a
+the seventeen CSV files and `summary.json` using SHA-256.  This manifest and a
 later outer seal are integrity records, not signatures.
