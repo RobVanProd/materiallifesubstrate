@@ -1102,11 +1102,34 @@ def normalized_rows(matrix: Sequence[Sequence[Decimal]]) -> list[list[Decimal]]:
     return result
 
 
+def require_qrcp_pivot_maximality(
+    selected_squared: Decimal,
+    maximum_squared: Decimal,
+    unresolved_floor: Decimal,
+    rows: int,
+    columns: int,
+    step: int,
+) -> None:
+    """Require a maximal/tied pivot when the suffix is numerically resolved."""
+
+    if maximum_squared == 0 or maximum_squared.sqrt() <= unresolved_floor:
+        return
+    tie_budget = (
+        Decimal(512) * Decimal(max(rows, columns)) * EPS64
+        * max(maximum_squared, MIN_NORMAL)
+    )
+    require(maximum_squared - selected_squared <= tie_budget,
+            "independent QRCP selected nonmaximal pivot at step "
+            f"{step}: selected2={selected_squared} max2={maximum_squared} "
+            f"budget={tie_budget}")
+
+
 def decimal_householder_qrcp_trace(
     matrix: Sequence[Sequence[Decimal]],
     *,
     claimed_permutation: Sequence[int] | None = None,
     unresolved_floor: Decimal = Decimal(0),
+    pivot_audit: list[tuple[Decimal, Decimal]] | None = None,
 ) -> tuple[list[int], list[Decimal]]:
     """Independently reproduce the registered complete Householder-QRCP trace.
 
@@ -1144,21 +1167,19 @@ def decimal_householder_qrcp_trace(
             selected = permutation.index(claimed_original, step)
             maximum_squared = trailing_norms[independently_selected_offset]
             selected_squared = trailing_norms[selected - step]
+            if pivot_audit is not None:
+                pivot_audit.append((selected_squared, maximum_squared))
             if maximum_squared == 0:
                 # The registered algorithm performs no arbitrary permutation of
                 # an identically zero suffix.  Enforcing that fact prevents a
                 # fabricated suffix trace from escaping through the early exit.
                 require(selected == step,
                         f"independent QRCP permuted zero suffix at step {step}")
-            elif maximum_squared.sqrt() > unresolved_floor:
-                tie_budget = (
-                    Decimal(512) * Decimal(max(rows, columns)) * EPS64
-                    * max(maximum_squared, MIN_NORMAL)
+            else:
+                require_qrcp_pivot_maximality(
+                    selected_squared, maximum_squared, unresolved_floor,
+                    rows, columns, step,
                 )
-                require(maximum_squared - selected_squared <= tie_budget,
-                        "independent QRCP selected nonmaximal pivot at step "
-                        f"{step}: selected2={selected_squared} max2={maximum_squared} "
-                        f"budget={tie_budget}")
         selected_norm = math.sqrt(float(max(trailing_norms[selected - step], Decimal(0))))
         if selected_norm == 0.0:
             diagonals.append(Decimal(0))
@@ -1197,6 +1218,20 @@ def decimal_householder_qrcp_trace(
     # append structural-zero free columns after the Householder steps.
     diagonals.extend(Decimal(0) for _ in range(columns - len(diagonals)))
     return permutation, diagonals
+
+
+def qrcp_band_classification(
+    diagonals: Sequence[Decimal],
+    lower: Decimal,
+    upper: Decimal,
+) -> tuple[int, int, bool]:
+    """Classify a complete QR trace against the frozen ambiguity band."""
+
+    require(Decimal(0) <= lower <= upper, "invalid QRCP ambiguity band")
+    rank_at_lower = sum(value > lower for value in diagonals)
+    rank_at_upper = sum(value > upper for value in diagonals)
+    ambiguous = any(lower <= value <= upper for value in diagonals)
+    return rank_at_lower, rank_at_upper, ambiguous
 
 
 def symmetric_tridiagonal_binary64(
@@ -4039,20 +4074,58 @@ def validate_rank_and_bases(
         assert all(value is not None for value in diagonals)
         require(all(value >= 0 for value in diagonals), f"{operator_id}: negative QR diagonal")
         matrix = normalized_rows(matrices[operator_id])
-        independent_permutation, independent_diagonals = decimal_householder_qrcp_trace(
-            matrix, claimed_permutation=permutation, unresolved_floor=Decimal(0)
+        # First replay the complete claimed path without treating unresolved
+        # nonzero tail ordering as a resolved pivot decision.  Structural-zero
+        # suffix permutations remain forbidden inside the replay.  The first
+        # claimed diagonal then fixes the preregistered rank threshold and its
+        # ambiguity band without taking an independently chosen path as a
+        # premise.
+        claimed_pivot_audit: list[tuple[Decimal, Decimal]] = []
+        claimed_permutation, claimed_diagonals = decimal_householder_qrcp_trace(
+            matrix,
+            claimed_permutation=permutation,
+            unresolved_floor=Decimal("Infinity"),
+            pivot_audit=claimed_pivot_audit,
         )
-        require(permutation == independent_permutation,
-                f"{operator_id}: independent QRCP pivot replay mismatch")
-        require(len(independent_diagonals) == len(diagonals),
+        require(permutation == claimed_permutation,
+                f"{operator_id}: independent QRCP claimed-path replay mismatch")
+        require(len(claimed_diagonals) == len(diagonals),
                 f"{operator_id}: independent QRCP diagonal count")
-        independent_first = independent_diagonals[0] if independent_diagonals else MIN_NORMAL
+        independent_first = claimed_diagonals[0] if claimed_diagonals else MIN_NORMAL
         expected_threshold = (
             Decimal(512) * Decimal(max(row_count, column_count)) * EPS64
             * max(independent_first, MIN_NORMAL)
         )
         expected_lower = expected_threshold / Decimal(8)
         expected_upper = expected_threshold * Decimal(8)
+
+        # Enforce pivot maximality from the recorded claimed-path suffix norms
+        # only while that suffix is above the frozen ambiguity lower bound.
+        # Below it, pivot order is unresolved; the path and all diagonals have
+        # nevertheless already been replayed.
+        for step, (selected_squared, maximum_squared) in enumerate(
+            claimed_pivot_audit
+        ):
+            require_qrcp_pivot_maximality(
+                selected_squared, maximum_squared, expected_lower,
+                row_count, column_count, step,
+            )
+
+        # A separate greedy factorization may choose a different unresolved
+        # null-tail permutation.  It must nevertheless agree with the claimed
+        # path on both sides of the frozen ambiguity band and on whether the
+        # band is occupied.
+        _greedy_permutation, greedy_diagonals = decimal_householder_qrcp_trace(matrix)
+        require(len(greedy_diagonals) == len(claimed_diagonals),
+                f"{operator_id}: independent greedy QRCP diagonal count")
+        claimed_band = qrcp_band_classification(
+            claimed_diagonals, expected_lower, expected_upper
+        )
+        greedy_band = qrcp_band_classification(
+            greedy_diagonals, expected_lower, expected_upper
+        )
+        require(claimed_band == greedy_band,
+                f"{operator_id}: claimed/greedy QRCP band classification mismatch")
         threshold = binary64(summary["threshold"], f"{operator_id} rank threshold")
         emitted_lower = binary64(summary["ambiguity_lower"], f"{operator_id} ambiguity lower")
         emitted_upper = binary64(summary["ambiguity_upper"], f"{operator_id} ambiguity upper")
@@ -4066,13 +4139,11 @@ def validate_rank_and_bases(
                 emitted, expected, physical_scale=expected, operation_count=6,
                 safety_factor=8, where=f"{operator_id}: QR {name} formula",
             )
-        accepted = [value > expected_threshold for value in independent_diagonals]
+        accepted = [value > expected_threshold for value in claimed_diagonals]
         require([boolean(row["accepted_pivot"], f"{operator_id} accepted pivot") for row in pivots]
                 == accepted and sum(accepted) == rank,
                 f"{operator_id}: independently derived pivot acceptance/rank")
-        trace_ambiguous = any(
-            expected_lower <= value <= expected_upper for value in independent_diagonals
-        )
+        trace_ambiguous = claimed_band[2]
         ambiguous = boolean(summary["rank_ambiguous"], f"{operator_id} ambiguous")
         require(ambiguous == trace_ambiguous, f"{operator_id}: independent QR ambiguity trace")
         status_name = summary["status"]
@@ -4080,7 +4151,7 @@ def validate_rank_and_bases(
             operator_id, status_name, failure_stage, ambiguous
         )
         for step, (emitted, independent) in enumerate(zip(
-            diagonals, independent_diagonals, strict=True
+            diagonals, claimed_diagonals, strict=True
         )):
             qr_scale = max(abs(emitted), abs(independent), independent_first, MIN_NORMAL)
             qr_error = Decimal(256) * Decimal(max(row_count, column_count)) * EPS64 * qr_scale

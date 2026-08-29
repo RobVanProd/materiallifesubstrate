@@ -5732,6 +5732,27 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         reject("qrcp-trace", qrcp_trace)
 
+        def rank_scalar(bundle: Path, field: str, scale: float) -> None:
+            def change(rows: list[dict[str, str]]) -> None:
+                for row in rows:
+                    if row["operator_id"] == "base.filament.r205.original.C":
+                        row[field] = hx(float.fromhex(row[field]) * scale)
+
+            mutate_csv(bundle, "rank_status.csv", change)
+
+        reject(
+            "qrcp-threshold-formula",
+            lambda bundle: rank_scalar(bundle, "threshold", 2.0),
+        )
+        reject(
+            "qrcp-ambiguity-lower-formula",
+            lambda bundle: rank_scalar(bundle, "ambiguity_lower", 2.0),
+        )
+        reject(
+            "qrcp-ambiguity-upper-formula",
+            lambda bundle: rank_scalar(bundle, "ambiguity_upper", 0.5),
+        )
+
         exact_edge_mutations = {
             "exact.tetrahedron_k4_minus_edge": (
                 (1, 2), (1, 3), (1, 4), (2, 3), (3, 4),
@@ -5758,15 +5779,99 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             mutations += 1
 
+        resolved_nonmaximal = [
+            [Decimal("1e-8"), Decimal(0)],
+            [Decimal(0), Decimal("2e-8")],
+        ]
+        resolved_audit: list[tuple[Decimal, Decimal]] = []
+        _resolved_order, resolved_diagonals = module.decimal_householder_qrcp_trace(
+            resolved_nonmaximal,
+            claimed_permutation=[0, 1],
+            unresolved_floor=Decimal("Infinity"),
+            pivot_audit=resolved_audit,
+        )
+        resolved_lower = (
+            Decimal(512) * Decimal(2) * module.EPS64
+            * max(resolved_diagonals[0], module.MIN_NORMAL) / Decimal(8)
+        )
+        try:
+            for step, (selected_squared, maximum_squared) in enumerate(resolved_audit):
+                module.require_qrcp_pivot_maximality(
+                    selected_squared, maximum_squared, resolved_lower,
+                    2, 2, step,
+                )
+        except module.InvalidBundle:
+            pass
+        else:
+            raise AssertionError("resolved QRCP pivot gate accepted a nonmaximal pivot")
+        mutations += 1
+
+        # Byte-preserved facts from
+        # base.bcc35.r105.original.B/step 99 in the rejected 2e563ed
+        # full bundle.  The claimed pivot is measurably nonmaximal, but the
+        # entire remaining suffix is more than three orders of magnitude below
+        # the already frozen ambiguity lower bound.  Its ordering is therefore
+        # unresolved, while its rank-band classification remains independently
+        # checkable.
+        bcc_first = Decimal.from_float(float.fromhex("0x1.ba8a71d2df13fp+0"))
+        bcc_selected_squared = Decimal(
+            "1.7115437548820073862676429604209490407158045514375175819021812628761836094781756401062011718750e-30"
+        )
+        bcc_maximum_squared = Decimal(
+            "1.98215581401757524600513599863764986268090715715393251850073852438072208315134048461914062500e-30"
+        )
+        bcc_tail = [
+            [bcc_first, Decimal(0), Decimal(0)],
+            [Decimal(0), bcc_selected_squared.sqrt(), Decimal(0)],
+            [Decimal(0), Decimal(0), bcc_maximum_squared.sqrt()],
+        ]
+        bcc_claimed = [0, 1, 2]
+        bcc_audit: list[tuple[Decimal, Decimal]] = []
+        replayed_permutation, replayed_diagonals = module.decimal_householder_qrcp_trace(
+            bcc_tail,
+            claimed_permutation=bcc_claimed,
+            unresolved_floor=Decimal("Infinity"),
+            pivot_audit=bcc_audit,
+        )
+        bcc_threshold = (
+            Decimal(512) * Decimal(210) * module.EPS64
+            * max(replayed_diagonals[0], module.MIN_NORMAL)
+        )
+        bcc_lower, bcc_upper = bcc_threshold / Decimal(8), bcc_threshold * Decimal(8)
+        if not (
+            replayed_permutation == bcc_claimed
+            and bcc_maximum_squared.sqrt() < bcc_lower
+        ):
+            raise AssertionError("preserved bcc35 unresolved-tail fixture is malformed")
+        for step, (selected_squared, maximum_squared) in enumerate(bcc_audit):
+            module.require_qrcp_pivot_maximality(
+                selected_squared, maximum_squared, bcc_lower,
+                210, 105, step,
+            )
+        _greedy_permutation, greedy_diagonals = module.decimal_householder_qrcp_trace(
+            bcc_tail
+        )
+        if not (
+            replayed_permutation == bcc_claimed
+            and module.qrcp_band_classification(
+                replayed_diagonals, bcc_lower, bcc_upper
+            )
+            == module.qrcp_band_classification(
+                greedy_diagonals, bcc_lower, bcc_upper
+            )
+            == (1, 1, False)
+        ):
+            raise AssertionError("preserved bcc35 unresolved-tail classification changed")
         try:
             module.decimal_householder_qrcp_trace(
-                [[Decimal("1e-8"), Decimal(0)], [Decimal(0), Decimal("2e-8")]],
-                claimed_permutation=[0, 1],
+                bcc_tail,
+                claimed_permutation=bcc_claimed,
+                unresolved_floor=Decimal(0),
             )
         except module.InvalidBundle:
             pass
         else:
-            raise AssertionError("relative QRCP pivot gate accepted a nonmaximal tiny pivot")
+            raise AssertionError("legacy all-scale maximality unexpectedly accepted bcc35 tail")
         mutations += 1
 
         try:
