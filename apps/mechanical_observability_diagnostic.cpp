@@ -53,12 +53,47 @@ constexpr std::int64_t packet_mass_quanta = 4096;
 constexpr double epsilon64 = std::numeric_limits<double>::epsilon();
 constexpr double minimum_normal64 = std::numeric_limits<double>::min();
 constexpr std::string_view summary_schema =
-    "mls.mechanical-observability.summary.v1";
+    "mls.mechanical-observability.summary.v2";
 constexpr std::string_view manifest_schema =
     "mls.mechanical-observability.manifest.v1";
 constexpr std::string_view accepted_parent_sha =
     "2e175396ff30faea8a4d96d5a0336ab9ba042f12";
 constexpr std::string_view frozen_branch = "mechanical-observability-lab";
+
+enum class RunMode {
+    full,
+    smoke,
+    failure_fixture,
+};
+
+enum class CandidateAFailureFixture {
+    none,
+    sampling,
+    derivative,
+};
+
+[[nodiscard]] constexpr std::string_view run_mode_name(
+    RunMode mode) noexcept {
+    switch (mode) {
+    case RunMode::full:
+        return "full";
+    case RunMode::smoke:
+        return "smoke";
+    case RunMode::failure_fixture:
+        return "failure_fixture";
+    }
+    return "invalid";
+}
+
+[[nodiscard]] constexpr bool valid_option_shape(
+    bool smoke, bool failure_fixture, bool schema, bool logic,
+    bool output) noexcept {
+    const int action_count = static_cast<int>(schema) +
+        static_cast<int>(logic) + static_cast<int>(output);
+    return action_count == 1 &&
+        !(smoke && failure_fixture) &&
+        !((smoke || failure_fixture) && !output);
+}
 
 constexpr std::string_view configurations_header =
     "configuration_id,base_configuration_id,family,variant,profile,transform,"
@@ -2193,6 +2228,17 @@ struct RankEvidenceDisposition final {
         modes_pass(diagnostics.nonrigid_nullspace_basis, true);
 }
 
+[[nodiscard]] bool decisive_rank_contract_pass(
+    const OperatorSnapshot& snapshot) {
+    const bool required = snapshot.candidate == "C" ||
+        snapshot.decision_driving;
+    if (!required) {
+        return true;
+    }
+    return snapshot.built && resolved_packet_rank_contract(
+        snapshot.linearized, snapshot.normalization, snapshot.diagnostics);
+}
+
 void emit_rank_evidence(
     BundleTables& tables, const OperatorSnapshot& snapshot) {
     const auto& diagnostics = snapshot.diagnostics;
@@ -2816,15 +2862,10 @@ struct EmissionState final {
                     finite_pass && emission.finite_all_pass;
             }
         }
-        if (candidate == "C" || snapshot.decision_driving) {
-            emission.decisive_ranks_unambiguous =
-                resolved_packet_rank_contract(snapshot.linearized,
-                    snapshot.normalization, snapshot.diagnostics) &&
-                emission.decisive_ranks_unambiguous;
-        }
-    } else if (candidate == "C" || snapshot.decision_driving) {
-        emission.decisive_ranks_unambiguous = false;
     }
+    emission.decisive_ranks_unambiguous =
+        decisive_rank_contract_pass(snapshot) &&
+        emission.decisive_ranks_unambiguous;
     if (candidate == "B" && corrected != nullptr) {
         emit_moment_evidence(tables, snapshot.id, *corrected);
     }
@@ -3206,6 +3247,42 @@ struct CandidateAPreparedOperator final {
     bool built{false};
 };
 
+struct CandidateAPairBuildDisposition final {
+    bool pair_complete{false};
+    bool sampling_rank_applicable{false};
+    bool derivative_rank_applicable{false};
+    bool rank_and_gauge_evidence_allowed{false};
+};
+
+[[nodiscard]] constexpr CandidateAPairBuildDisposition
+candidate_a_pair_build_disposition(
+    bool sampling_built, bool derivative_built) noexcept {
+    const bool complete = sampling_built && derivative_built;
+    return {complete, complete, false, complete};
+}
+
+struct CandidateARankWireDisposition final {
+    std::string_view status{"analyzed"};
+    std::string_view failure_stage{"NA"};
+    std::string_view failure_reason{"NA"};
+    bool suppress_basis_evidence{false};
+};
+
+[[nodiscard]] constexpr CandidateARankWireDisposition
+candidate_a_rank_wire_disposition(
+    bool basis_failure, bool basis_nonfinite, bool ambiguous) noexcept {
+    if (basis_failure) {
+        return {"numerical_failure", "basis_construction",
+            basis_nonfinite ? "nonfinite_basis" : "incomplete_kernel",
+            true};
+    }
+    if (ambiguous) {
+        return {"ambiguous", "rank_estimation",
+            "ambiguity_band_overlap", true};
+    }
+    return {};
+}
+
 [[nodiscard]] CandidateAPreparedOperator prepare_candidate_a_operator(
     BundleTables& tables, std::string_view operator_id,
     const Configuration& configuration, const pf::ProjectionSystem& system,
@@ -3236,13 +3313,55 @@ struct CandidateAPreparedOperator final {
     return prepared;
 }
 
+void emit_candidate_a_status(
+    BundleTables& tables, std::string_view id,
+    const Configuration& configuration, std::string_view role,
+    std::string_view observable, const mo::DenseMatrix& matrix,
+    const CandidateAPreparedOperator& prepared, bool rank_applicable) {
+    if (rank_applicable && !prepared.built) {
+        throw std::logic_error(
+            "candidate A rank cannot apply to an unbuilt operator");
+    }
+    tables.operator_status.row({std::string(id), configuration.id, "A",
+        std::string(role), std::string(observable), prepared.build_status,
+        std::to_string(configuration.packets.size()), "0",
+        std::to_string(matrix.row_count()),
+        std::to_string(matrix.column_count()),
+        bool_text(prepared.raw_exported),
+        prepared.raw_exported ? grouped_payload_digest(
+            "MLS-MECHANICAL-OBSERVABILITY-OPERATOR-v1",
+            tables.operator_entries, prepared.entries) : "NA",
+        bool_text(prepared.normalization.complete),
+        prepared.failure.stage == "row_normalization"
+            ? prepared.failure.row : "NA",
+        bool_text(rank_applicable), "false", "false", "true", "false",
+        prepared.failure.stage, prepared.failure.reason,
+        prepared.failure.row, prepared.failure.column,
+        prepared.failure.value, prepared.failure.ieee754_bits,
+        prepared.failure.value_class});
+}
+
 [[nodiscard]] CandidateAResult emit_candidate_a_pair(
     BundleTables& tables, const Configuration& configuration,
-    const LookupPhase& phase) {
+    const LookupPhase& phase,
+    CandidateAFailureFixture failure_fixture =
+        CandidateAFailureFixture::none) {
     CandidateAResult result{};
     auto operators = build_candidate_a(configuration, phase);
     result.operator_ids = {operators.sampling_id, operators.derivative_id};
-    const std::size_t packet_count = configuration.packets.size();
+    std::optional<mo::DenseMatrix> failed_sampling;
+    std::optional<mo::DenseMatrix> failed_derivative;
+    if (failure_fixture == CandidateAFailureFixture::sampling) {
+        failed_sampling.emplace(operators.sampling.row_count(),
+            operators.sampling.column_count());
+    } else if (failure_fixture == CandidateAFailureFixture::derivative) {
+        failed_derivative.emplace(operators.derivative.row_count(),
+            operators.derivative.column_count());
+    }
+    const auto& sampling_matrix = failed_sampling.has_value()
+        ? *failed_sampling : operators.sampling;
+    const auto& derivative_matrix = failed_derivative.has_value()
+        ? *failed_derivative : operators.derivative;
     const std::size_t node_count = operators.system.active_nodes().size();
     for (std::size_t node = 0U; node < node_count; ++node) {
         const auto index = operators.system.active_nodes()[node];
@@ -3255,40 +3374,21 @@ struct CandidateAPreparedOperator final {
     }
     const auto sampling_prepared = prepare_candidate_a_operator(
         tables, operators.sampling_id, configuration, operators.system,
-        operators.sampling, true);
+        sampling_matrix, true);
     const auto derivative_prepared = prepare_candidate_a_operator(
         tables, operators.derivative_id, configuration, operators.system,
-        operators.derivative, false);
-    const auto emit_status = [&](std::string_view id, std::string_view role,
-                                 std::string_view observable,
-                                 const mo::DenseMatrix& matrix,
-                                 const CandidateAPreparedOperator& prepared,
-                                 bool rank_applicable) {
-        tables.operator_status.row({std::string(id), configuration.id, "A",
-            std::string(role), std::string(observable), prepared.build_status,
-            std::to_string(packet_count), "0",
-            std::to_string(matrix.row_count()),
-            std::to_string(matrix.column_count()),
-            bool_text(prepared.raw_exported),
-            prepared.raw_exported ? grouped_payload_digest(
-                "MLS-MECHANICAL-OBSERVABILITY-OPERATOR-v1",
-                tables.operator_entries, prepared.entries) : "NA",
-            bool_text(prepared.normalization.complete),
-            prepared.failure.stage == "row_normalization"
-                ? prepared.failure.row : "NA",
-            bool_text(rank_applicable && prepared.built), "false", "false",
-            "true", "false", prepared.failure.stage,
-            prepared.failure.reason, prepared.failure.row,
-            prepared.failure.column, prepared.failure.value,
-            prepared.failure.ieee754_bits, prepared.failure.value_class});
-    };
-    emit_status(operators.sampling_id, "negative_control_sampling",
-        "frozen_quadratic_sampling", operators.sampling,
-        sampling_prepared, true);
-    emit_status(operators.derivative_id, "negative_control_derivative",
-        "frozen_quadratic_symmetric_gradient", operators.derivative,
-        derivative_prepared, false);
-    if (!sampling_prepared.built || !derivative_prepared.built) {
+        derivative_matrix, false);
+    const auto pair = candidate_a_pair_build_disposition(
+        sampling_prepared.built, derivative_prepared.built);
+    emit_candidate_a_status(tables, operators.sampling_id,
+        configuration, "negative_control_sampling",
+        "frozen_quadratic_sampling", sampling_matrix,
+        sampling_prepared, pair.sampling_rank_applicable);
+    emit_candidate_a_status(tables, operators.derivative_id,
+        configuration, "negative_control_derivative",
+        "frozen_quadratic_symmetric_gradient", derivative_matrix,
+        derivative_prepared, pair.derivative_rank_applicable);
+    if (!pair.rank_and_gauge_evidence_allowed) {
         result.ranks_unambiguous = false;
         result.raw_decision_exported =
             sampling_prepared.raw_exported &&
@@ -3333,16 +3433,13 @@ struct CandidateAPreparedOperator final {
         full_rank.status == mo::RankStatus::numerical_failure ||
         scalar_rank.status == mo::RankStatus::numerical_failure ||
         rank_basis_nonfinite;
+    const auto rank_disposition = candidate_a_rank_wire_disposition(
+        rank_basis_failure, rank_basis_nonfinite, rank_ambiguous);
     const bool rank_evidence_suppressed =
-        rank_basis_failure || rank_ambiguous;
-    const std::string rank_status = rank_basis_failure
-        ? "numerical_failure" : std::string(mo::status_name(full_rank.status));
-    const std::string rank_failure_stage = rank_basis_failure
-        ? "basis_construction" :
-            (rank_ambiguous ? "rank_estimation" : "NA");
-    const std::string rank_failure_reason = rank_basis_failure
-        ? (rank_basis_nonfinite ? "nonfinite_basis" : "incomplete_kernel")
-        : (rank_ambiguous ? "ambiguity_band_overlap" : "NA");
+        rank_disposition.suppress_basis_evidence;
+    const std::string rank_status(rank_disposition.status);
+    const std::string rank_failure_stage(rank_disposition.failure_stage);
+    const std::string rank_failure_reason(rank_disposition.failure_reason);
     const auto rank_row = [&](std::string kind, std::string pivot_step,
                               std::string permuted_column,
                               std::string diagonal, std::string accepted) {
@@ -4348,7 +4445,7 @@ struct NamedTable final {
 }
 
 struct SummaryInputs final {
-    bool smoke{false};
+    RunMode mode{RunMode::full};
     bool checkpoint_all{true};
     bool read_only_all{true};
     bool neighbor_all{true};
@@ -4409,7 +4506,7 @@ struct BScientificReduction final {
         inputs.read_only_all && inputs.neighbor_all && inputs.affine_all &&
         inputs.finite_all && inputs.invariance_all && inputs.ranks_all &&
         inputs.raw_all && inputs.exact_all;
-    if (!inputs.smoke && gates_pass) {
+    if (inputs.mode == RunMode::full && gates_pass) {
         const auto b_reduction = reduce_scientific_b(emission.snapshots);
         bool c_present = false;
         std::set<std::string> c_generic_configurations;
@@ -4470,7 +4567,11 @@ struct BScientificReduction final {
     output.imbue(std::locale::classic());
     output << "{\n"
            << "  \"schema\": \"" << summary_schema << "\",\n"
-           << "  \"mode\": \"" << (inputs.smoke ? "smoke" : "full") << "\",\n"
+           << "  \"mode\": \"" << run_mode_name(inputs.mode) << "\",\n"
+           << "  \"provisional\": "
+           << bool_text(inputs.mode != RunMode::full) << ",\n"
+           << "  \"sweep_complete\": "
+           << bool_text(inputs.mode == RunMode::full) << ",\n"
            << "  \"producer\": \"cpp_mechanical_observability_lab\",\n"
            << "  \"seed\": " << seed << ",\n"
            << "  \"source_sha\": \"" << MLS_CONFIGURED_SOURCE_SHA << "\",\n"
@@ -4633,6 +4734,17 @@ void schema_audit() {
                 std::string(named.name));
         }
     }
+    constexpr std::string_view summary_v2_key_prefix =
+        "schema,mode,provisional,sweep_complete,producer,seed,source_sha,"
+        "parent_sha,branch,dirty,";
+    if (schema_document.find(summary_schema) == std::string::npos ||
+        schema_document.find(summary_v2_key_prefix) == std::string::npos ||
+        schema_document.find(
+            "--a-pair-failure-fixture {sampling,derivative} --output DIR") ==
+            std::string::npos) {
+        throw std::logic_error(
+            "summary v2 or failure-fixture wire documentation drift");
+    }
     for (const auto& configuration : full) {
         const auto order = frozen_packet_permutation(configuration);
         std::vector<std::uint64_t> canonical;
@@ -4675,6 +4787,34 @@ void schema_audit() {
 void logic_audit() {
     static_assert(finite_bond_operation_count == 72U);
     static_assert(finite_volume_operation_count == 134U);
+    struct OptionShapeCase final {
+        bool smoke{false};
+        bool failure_fixture{false};
+        bool schema{false};
+        bool logic{false};
+        bool output{false};
+        bool expected{false};
+    };
+    constexpr std::array option_shape_cases{
+        OptionShapeCase{false, false, false, false, true, true},
+        OptionShapeCase{true, false, false, false, true, true},
+        OptionShapeCase{false, true, false, false, true, true},
+        OptionShapeCase{false, false, true, false, false, true},
+        OptionShapeCase{false, false, false, true, false, true},
+        OptionShapeCase{true, true, false, false, true, false},
+        OptionShapeCase{false, true, true, false, false, false},
+        OptionShapeCase{false, true, false, true, false, false},
+        OptionShapeCase{false, true, false, false, false, false},
+        OptionShapeCase{false, false, true, false, true, false},
+        OptionShapeCase{false, false, false, false, false, false},
+    };
+    for (const auto& test : option_shape_cases) {
+        if (valid_option_shape(test.smoke, test.failure_fixture,
+                test.schema, test.logic, test.output) != test.expected) {
+            throw std::logic_error(
+                "logic audit diagnostic CLI state-machine mismatch");
+        }
+    }
     auto bases = base_configurations();
     const auto square = std::find_if(bases.begin(), bases.end(), [](const auto& value) {
         return value.id ==
@@ -4733,6 +4873,105 @@ void logic_audit() {
     if (accepted_resolved_c_contract(bonds.linearized, failed_mode_c)) {
         throw std::logic_error(
             "logic audit failed C per-mode residual triggered enrichment");
+    }
+    struct DecisiveRankCase final {
+        std::string_view candidate{};
+        std::string_view state{};
+        bool decision_driving{true};
+        bool expected{false};
+    };
+    constexpr std::array decisive_rank_cases{
+        DecisiveRankCase{"B", "resolved", true, true},
+        DecisiveRankCase{"B", "ambiguous", true, false},
+        DecisiveRankCase{"B", "numerical_failure", true, false},
+        DecisiveRankCase{"B", "unbuilt", true, false},
+        DecisiveRankCase{"C", "resolved", true, true},
+        DecisiveRankCase{"C", "ambiguous", true, false},
+        DecisiveRankCase{"C", "numerical_failure", true, false},
+        DecisiveRankCase{"C", "unbuilt", true, false},
+        DecisiveRankCase{"D", "resolved", true, true},
+        DecisiveRankCase{"D", "ambiguous", true, false},
+        DecisiveRankCase{"D", "numerical_failure", true, false},
+        DecisiveRankCase{"D", "unbuilt", true, false},
+        DecisiveRankCase{"B", "unbuilt", false, true},
+        DecisiveRankCase{"D", "unbuilt", false, true},
+    };
+    for (const auto& test : decisive_rank_cases) {
+        OperatorSnapshot snapshot{};
+        snapshot.candidate = std::string(test.candidate);
+        snapshot.decision_driving = test.decision_driving;
+        snapshot.linearized = bonds.linearized;
+        snapshot.normalization = mo::normalize_operator_rows(
+            snapshot.linearized.matrix);
+        snapshot.diagnostics = c;
+        snapshot.built = test.state != "unbuilt";
+        if (test.state == "ambiguous") {
+            snapshot.diagnostics.status = mo::RankStatus::ambiguous;
+        } else if (test.state == "numerical_failure") {
+            snapshot.diagnostics.status =
+                mo::RankStatus::numerical_failure;
+            snapshot.diagnostics.operator_rank.basis_complete = false;
+        }
+        if (decisive_rank_contract_pass(snapshot) != test.expected) {
+            throw std::logic_error(
+                "logic audit decisive rank state-machine mismatch for " +
+                std::string(test.candidate) + "/" +
+                std::string(test.state));
+        }
+    }
+    struct CandidateAPairCase final {
+        bool sampling_built{false};
+        bool derivative_built{false};
+        bool expected_complete{false};
+    };
+    constexpr std::array candidate_a_pair_cases{
+        CandidateAPairCase{true, true, true},
+        CandidateAPairCase{true, false, false},
+        CandidateAPairCase{false, true, false},
+        CandidateAPairCase{false, false, false},
+    };
+    for (const auto& test : candidate_a_pair_cases) {
+        const auto disposition = candidate_a_pair_build_disposition(
+            test.sampling_built, test.derivative_built);
+        if (disposition.pair_complete != test.expected_complete ||
+            disposition.sampling_rank_applicable !=
+                test.expected_complete ||
+            disposition.derivative_rank_applicable ||
+            disposition.rank_and_gauge_evidence_allowed !=
+                test.expected_complete) {
+            throw std::logic_error(
+                "logic audit Candidate-A pair state-machine mismatch");
+        }
+    }
+    struct CandidateARankCase final {
+        bool basis_failure{false};
+        bool basis_nonfinite{false};
+        bool ambiguous{false};
+        std::string_view status{};
+        std::string_view stage{};
+        std::string_view reason{};
+    };
+    constexpr std::array candidate_a_rank_cases{
+        CandidateARankCase{false, false, false,
+            "analyzed", "NA", "NA"},
+        CandidateARankCase{false, false, true,
+            "ambiguous", "rank_estimation", "ambiguity_band_overlap"},
+        CandidateARankCase{true, false, false,
+            "numerical_failure", "basis_construction", "incomplete_kernel"},
+        CandidateARankCase{true, true, false,
+            "numerical_failure", "basis_construction", "nonfinite_basis"},
+    };
+    for (const auto& test : candidate_a_rank_cases) {
+        const auto disposition = candidate_a_rank_wire_disposition(
+            test.basis_failure, test.basis_nonfinite, test.ambiguous);
+        if (disposition.status != test.status ||
+            disposition.failure_stage != test.stage ||
+            disposition.failure_reason != test.reason ||
+            disposition.suppress_basis_evidence !=
+                (test.basis_failure || test.ambiguous)) {
+            throw std::logic_error(
+                "logic audit Candidate-A rank wire state mismatch");
+        }
     }
     CandidateAGaugeContract valid_a_contract{};
     valid_a_contract.observe(true, true);
@@ -4961,6 +5200,85 @@ void logic_audit() {
         throw std::logic_error(
             "logic audit A normalization failure was not preserved");
     }
+    mo::DenseMatrix zero_a_derivative(
+        zero_a_operators.derivative.row_count(),
+        zero_a_operators.derivative.column_count());
+    BundleTables sampling_only_tables{};
+    const auto sampling_only_sampling = prepare_candidate_a_operator(
+        sampling_only_tables, "logic.sampling_only.A.S", *filament,
+        zero_a_operators.system, zero_a_operators.sampling, true);
+    const auto sampling_only_derivative = prepare_candidate_a_operator(
+        sampling_only_tables, "logic.sampling_only.A.D", *filament,
+        zero_a_operators.system, zero_a_derivative, false);
+    const auto sampling_only_pair = candidate_a_pair_build_disposition(
+        sampling_only_sampling.built, sampling_only_derivative.built);
+    emit_candidate_a_status(sampling_only_tables,
+        "logic.sampling_only.A.S", *filament,
+        "negative_control_sampling", "frozen_quadratic_sampling",
+        zero_a_operators.sampling, sampling_only_sampling,
+        sampling_only_pair.sampling_rank_applicable);
+    emit_candidate_a_status(sampling_only_tables,
+        "logic.sampling_only.A.D", *filament,
+        "negative_control_derivative",
+        "frozen_quadratic_symmetric_gradient",
+        zero_a_derivative, sampling_only_derivative,
+        sampling_only_pair.derivative_rank_applicable);
+    if (sampling_only_pair.pair_complete ||
+        sampling_only_tables.operator_status.size() != 2U ||
+        sampling_only_tables.operator_status.rows()[0][5] != "built" ||
+        sampling_only_tables.operator_status.rows()[0][14] != "false" ||
+        sampling_only_tables.operator_status.rows()[1][5] !=
+            "numerical_failure" ||
+        sampling_only_tables.operator_status.rows()[1][10] != "true" ||
+        sampling_only_tables.operator_status.rows()[1][14] != "false" ||
+        sampling_only_tables.operator_status.rows()[1][19] !=
+            "row_normalization" ||
+        sampling_only_tables.operator_status.rows()[1][20] !=
+            "zero_row_norm" ||
+        sampling_only_tables.operator_entries.size() == 0U ||
+        sampling_only_tables.rank_status.size() != 0U ||
+        sampling_only_tables.grid_gauge.size() != 0U) {
+        throw std::logic_error(
+            "logic audit S-built/D-failed A pair exposed rank or gauge");
+    }
+    BundleTables derivative_only_tables{};
+    const auto derivative_only_sampling = prepare_candidate_a_operator(
+        derivative_only_tables, "logic.derivative_only.A.S", *filament,
+        zero_a_operators.system, zero_a_matrix, true);
+    const auto derivative_only_derivative = prepare_candidate_a_operator(
+        derivative_only_tables, "logic.derivative_only.A.D", *filament,
+        zero_a_operators.system, zero_a_operators.derivative, false);
+    const auto derivative_only_pair = candidate_a_pair_build_disposition(
+        derivative_only_sampling.built, derivative_only_derivative.built);
+    emit_candidate_a_status(derivative_only_tables,
+        "logic.derivative_only.A.S", *filament,
+        "negative_control_sampling", "frozen_quadratic_sampling",
+        zero_a_matrix, derivative_only_sampling,
+        derivative_only_pair.sampling_rank_applicable);
+    emit_candidate_a_status(derivative_only_tables,
+        "logic.derivative_only.A.D", *filament,
+        "negative_control_derivative",
+        "frozen_quadratic_symmetric_gradient",
+        zero_a_operators.derivative, derivative_only_derivative,
+        derivative_only_pair.derivative_rank_applicable);
+    if (derivative_only_pair.pair_complete ||
+        derivative_only_tables.operator_status.size() != 2U ||
+        derivative_only_tables.operator_status.rows()[0][5] !=
+            "numerical_failure" ||
+        derivative_only_tables.operator_status.rows()[0][10] != "true" ||
+        derivative_only_tables.operator_status.rows()[0][14] != "false" ||
+        derivative_only_tables.operator_status.rows()[0][19] !=
+            "row_normalization" ||
+        derivative_only_tables.operator_status.rows()[0][20] !=
+            "zero_row_norm" ||
+        derivative_only_tables.operator_status.rows()[1][5] != "built" ||
+        derivative_only_tables.operator_status.rows()[1][14] != "false" ||
+        derivative_only_tables.operator_entries.size() == 0U ||
+        derivative_only_tables.rank_status.size() != 0U ||
+        derivative_only_tables.grid_gauge.size() != 0U) {
+        throw std::logic_error(
+            "logic audit D-built/S-failed A pair exposed rank or gauge");
+    }
     mo::LinearizedOperator zero_relational{};
     zero_relational.kind = mo::ObservableKind::central_bond_length_rate;
     for (const auto& packet : square->packets) {
@@ -5186,8 +5504,17 @@ void logic_audit() {
     std::cout << "Mechanical Observability logic audit: PASS\n";
 }
 
-void run_producer(bool smoke, const std::filesystem::path& output_directory) {
-    auto configurations_value = configurations(smoke);
+void run_producer(
+    RunMode mode, CandidateAFailureFixture failure_fixture,
+    const std::filesystem::path& output_directory) {
+    const bool fixture_mode = mode == RunMode::failure_fixture;
+    if (fixture_mode !=
+        (failure_fixture != CandidateAFailureFixture::none)) {
+        throw std::invalid_argument(
+            "failure-fixture mode requires exactly one A half");
+    }
+    const bool reduced_inventory = mode != RunMode::full;
+    auto configurations_value = configurations(reduced_inventory);
     const auto d_trigger = assess_global_d_trigger(configurations_value);
     if (d_trigger.trigger()) {
         assign_volume_relations(configurations_value);
@@ -5196,9 +5523,10 @@ void run_producer(bool smoke, const std::filesystem::path& output_directory) {
     BundleTables tables{};
     EmissionState emission{};
     SummaryInputs summary{};
-    summary.smoke = smoke;
+    summary.mode = mode;
     bool candidate_a_seen = false;
     bool candidate_a_all_pass = true;
+    std::size_t failure_fixture_count = 0U;
     for (const auto& configuration : configurations_value) {
         const auto input = emit_configuration_inputs(tables, configuration);
         summary.checkpoint_all = summary.checkpoint_all &&
@@ -5208,8 +5536,15 @@ void run_producer(bool smoke, const std::filesystem::path& output_directory) {
         if (configuration.candidate_a_representative &&
             configuration.variant == "original") {
             for (const auto& phase : lookup_phases) {
+                const bool fixture_target = fixture_mode &&
+                    configuration.id ==
+                        "base.filament.r205.original" &&
+                    phase.id == "p000";
+                const auto pair_failure = fixture_target
+                    ? failure_fixture : CandidateAFailureFixture::none;
                 const auto a = emit_candidate_a_pair(
-                    tables, configuration, phase);
+                    tables, configuration, phase, pair_failure);
+                failure_fixture_count += fixture_target ? 1U : 0U;
                 candidate_a_seen = true;
                 candidate_a_all_pass = candidate_a_all_pass &&
                     a.negative_control_reproduced;
@@ -5232,6 +5567,10 @@ void run_producer(bool smoke, const std::filesystem::path& output_directory) {
         summary.read_only_all = summary.read_only_all && read_only;
         emit_configuration_row(tables, configuration, input, after);
     }
+    if (fixture_mode && failure_fixture_count != 1U) {
+        throw std::logic_error(
+            "A pair failure fixture target count is not exactly one");
+    }
     summary.negative_control = candidate_a_seen && candidate_a_all_pass;
     emit_exact_references(tables, configurations_value);
     summary.invariance_all = emit_invariance_evidence(
@@ -5247,7 +5586,11 @@ void run_producer(bool smoke, const std::filesystem::path& output_directory) {
     sort_tables(tables);
     const std::string summary_text = make_summary(tables, emission, summary);
     write_bundle(output_directory, tables, summary_text);
-    if (smoke) {
+    if (mode == RunMode::failure_fixture) {
+        std::cout << "Mechanical Observability provisional A-pair failure "
+                     "fixture written: "
+                  << output_directory.string() << '\n';
+    } else if (mode == RunMode::smoke) {
         std::cout << "Mechanical Observability provisional smoke evidence written: "
                   << output_directory.string() << '\n';
     } else {
@@ -5260,6 +5603,8 @@ struct Options final {
     bool smoke{false};
     bool schema{false};
     bool logic{false};
+    CandidateAFailureFixture failure_fixture{
+        CandidateAFailureFixture::none};
     std::optional<std::filesystem::path> output{};
 };
 
@@ -5269,6 +5614,23 @@ struct Options final {
         const std::string_view argument(argv[index]);
         if (argument == "--smoke") {
             result.smoke = true;
+        } else if (argument == "--a-pair-failure-fixture") {
+            if (++index >= argc || result.failure_fixture !=
+                    CandidateAFailureFixture::none) {
+                throw std::invalid_argument(
+                    "--a-pair-failure-fixture requires one unique half");
+            }
+            const std::string_view half(argv[index]);
+            if (half == "sampling") {
+                result.failure_fixture =
+                    CandidateAFailureFixture::sampling;
+            } else if (half == "derivative") {
+                result.failure_fixture =
+                    CandidateAFailureFixture::derivative;
+            } else {
+                throw std::invalid_argument(
+                    "A-pair failure fixture half must be sampling or derivative");
+            }
         } else if (argument == "--schema-audit") {
             result.schema = true;
         } else if (argument == "--logic-audit") {
@@ -5282,14 +5644,14 @@ struct Options final {
             throw std::invalid_argument("unknown option: " + std::string(argument));
         }
     }
-    const int action_count = static_cast<int>(result.schema) +
-        static_cast<int>(result.logic) +
-        static_cast<int>(result.output.has_value());
-    if (action_count != 1 || (result.smoke && !result.output.has_value())) {
+    if (!valid_option_shape(result.smoke,
+            result.failure_fixture != CandidateAFailureFixture::none,
+            result.schema, result.logic, result.output.has_value())) {
         throw std::invalid_argument(
             "usage: mls_mechanical_observability_diagnostic "
-            "[--smoke --output DIR | --output DIR | --schema-audit | "
-            "--logic-audit]");
+            "[--smoke --output DIR | --a-pair-failure-fixture "
+            "{sampling,derivative} --output DIR | --output DIR | "
+            "--schema-audit | --logic-audit]");
     }
     return result;
 }
@@ -5304,7 +5666,11 @@ int main(int argc, char** argv) {
         } else if (options.logic) {
             logic_audit();
         } else {
-            run_producer(options.smoke, *options.output);
+            const RunMode mode = options.failure_fixture !=
+                    CandidateAFailureFixture::none
+                ? RunMode::failure_fixture
+                : (options.smoke ? RunMode::smoke : RunMode::full);
+            run_producer(mode, options.failure_fixture, *options.output);
         }
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {

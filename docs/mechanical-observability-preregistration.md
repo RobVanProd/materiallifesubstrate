@@ -15,7 +15,14 @@ dirty/provisional and cannot be sealed.
 - **A — frozen quadratic-grid control.** Use the accepted tensor-product
   quadratic B-spline sampling and analytic derivative unchanged. Report
   `S_A`, `D_A`, complete accepted sampling-null modes, and the quotient test
-  `ker(S_A) subset ker(D_A)`. Never construct a grid lift.
+  `ker(S_A) subset ker(D_A)`. Never construct a grid lift. The two operators
+  are one acceptance pair: `S_A` is rank-applicable only when both operators
+  build, `D_A` is never rank-applicable, and a failure in either half
+  suppresses all pair rank/null/gauge evidence while retaining the successful
+  raw half and the failed half's closed witness. Even for a fully built pair,
+  gauge evidence requires an analyzed, unambiguous, basis-complete sampling
+  rank. A partial or unresolved pair makes the negative-control and decisive-
+  rank gates false and forces the implementation STOP.
 - **B — packet WLS gradient.** Use the exact cutoff and weight
   `w=(1-r^2/H^2)^2` from the contract, sorted Euclidean packet IDs, and
   `G=B M^-1`. Its observability operator is `vec(sym G)`.
@@ -477,6 +484,13 @@ gate may be true, but the incomplete producer basis still fails the decisive-
 rank gate. Any malformed failure stage/reason, pivot trace, nullable cell, raw
 generator, or suppressed basis inventory remains INVALID.
 
+The rank wire uses only three closed status/failure combinations:
+`analyzed` with `NA,NA`; `ambiguous` with
+`rank_estimation,ambiguity_band_overlap`; and `numerical_failure` with
+`basis_construction` plus a closed basis-failure reason. In particular,
+`analyzed` plus a basis-construction failure is malformed rather than a
+preservable negative.
+
 The deterministic-success target requires two byte-identical full producers.
 A structurally valid divergent pair may instead be sealed only through the
 preserved-negative inconclusive STOP route defined above. Both routes also
@@ -495,3 +509,13 @@ Candidate-A gauge, an actual metamorphic comparison, and built-D/non-rigid
 quotient paths. The registered filament rotation remains mandatory in the
 59-configuration full matrix and is intentionally not suppressed or
 reinterpreted by the smoke fixture.
+
+The closed diagnostic command
+`--a-pair-failure-fixture {sampling,derivative} --output DIR` uses the same
+three-configuration subset and is permanently provisional, incomplete, and
+unsealable. It injects exactly one all-zero finite pre-normalization operator
+at `base.filament.r205.original.A.p000.S` or `.D`, respectively, so both
+one-sided Candidate-A build failures can be validated end to end. The partner
+operator remains built/raw, all other operators remain ordinary smoke output,
+and the fixture can support only validator regression—not a scientific
+candidate finding, retained direction, or promotion.

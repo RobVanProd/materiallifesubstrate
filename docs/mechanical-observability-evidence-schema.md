@@ -87,6 +87,17 @@ independent reference formula reproduces the same witness. Unsupported status
 or witness combinations make the bundle invalid rather than a convenient
 failure.
 
+Candidate A is one attempted sampling/derivative pair. Its sampling status has
+`rank_applicable=true` if and only if both the sampling operator and derivative
+operator have `build_status=built`; its derivative status always has
+`rank_applicable=false`. If either half fails construction or normalization,
+neither half has rank, nullspace, or gauge rows. The successfully built half
+still exports its complete raw operator, and the failed half retains its full
+closed failure witness and any independently valid pre-normalization raw
+operator. The incomplete pair forces `negative_control_reproduced=false`,
+`decisive_rank_rows_all_unambiguous=false`, and the inconclusive implementation
+STOP.
+
 `moment_diagnostics.csv`
 
 ```text
@@ -173,11 +184,13 @@ One `record_kind=summary` row is followed by the complete
 `record_kind=pivot` trace.  Summary fields are identical on every row for the
 same operator.
 
-Analyzed success has `failure_stage=failure_reason=NA`. Ambiguity is
+The rank-status state machine is closed. `status=analyzed` requires
+`failure_stage=failure_reason=NA`. `status=ambiguous` requires
 `rank_estimation,ambiguity_band_overlap`, has `basis_complete=false`, retains
 the complete pivot trace and only the raw rigid generators (none for A), and
-leaves rigid/kernel/residual/orthogonality/generic cells `NA`. A basis failure is
-`basis_construction` with reason exactly `incomplete_kernel`,
+leaves rigid/kernel/residual/orthogonality/generic cells `NA`.
+`status=numerical_failure` requires `failure_stage=basis_construction` with
+reason exactly `incomplete_kernel`,
 `rigid_span_failure`, `nonrigid_quotient_failure`, or `nonfinite_basis`.
 Whenever rank factorization ran, the pivot trace remains complete. A basis
 failure exports the complete raw rigid generators but no orthonormal rigid,
@@ -208,11 +221,16 @@ operator_id,sampling_operator_id,derivative_operator_id,mode_index,representativ
 ```
 
 Candidate A passes only with a nonempty emitted gauge basis and `pass=true` on
-every row for every registered phase. Candidate B/C/D rank aggregation applies
-only to decision-driving rows and requires analyzed unambiguous rank, complete
-basis, rigid containment, all four aggregate residuals within the registered
-bound, and `pass=true` on every applicable complete-kernel and non-rigid metric
-row. `decisive_rank_rows_all_unambiguous` also includes the independent exact-
+every row for every registered phase. Even after both A operators build, gauge
+rows exist only when the sampling rank is independently `analyzed`,
+unambiguous, and basis-complete. An ambiguous or numerical-failure sampling
+rank emits its closed pivot/failure evidence but no grid-gauge rows, makes the
+negative control false, clears the decisive-rank gate, and forces STOP.
+Candidate B/C/D rank aggregation applies only to decision-driving rows and
+requires analyzed unambiguous rank, complete basis, rigid containment, all
+four aggregate residuals within the registered bound, and `pass=true` on every
+applicable complete-kernel and non-rigid metric row.
+`decisive_rank_rows_all_unambiguous` also includes the independent exact-
 reference agreement; the latter remains separately reported rather than being
 hidden inside the aggregate.
 
@@ -361,7 +379,7 @@ binary64 bit pattern as little-endian uint64. Positive zero is canonical.
 `summary.json` has exactly these top-level members:
 
 ```text
-schema,mode,producer,seed,source_sha,parent_sha,branch,dirty,
+schema,mode,provisional,sweep_complete,producer,seed,source_sha,parent_sha,branch,dirty,
 registered_configuration_ids,registered_operator_ids,
 checkpoint_round_trip_all_pass,diagnostics_read_only_all_exact,
 neighbor_lookup_all_agree,negative_control_reproduced,
@@ -372,9 +390,11 @@ nondeterminism_detected,candidate_findings,decision,promotion,row_counts,
 tolerances
 ```
 
-The schema is `mls.mechanical-observability.summary.v1`, the producer is
-`cpp_mechanical_observability_lab`, and promotion is always false.  Smoke
-output is provisional and not sealable. The validation-only smoke subset is
+The schema is `mls.mechanical-observability.summary.v2`, the producer is
+`cpp_mechanical_observability_lab`, and promotion is always false. The closed
+mode/flag tuples are `full,false,true`, `smoke,true,false`, and
+`failure_fixture,true,false` for `mode,provisional,sweep_complete`. Only full
+output is sealable. The validation-only smoke subset is
 exactly `base.filament.r205.original`,
 `base.filament.r205.original.translation`, and
 `exact.planar_square_plus_diagonal_and_volume`. It is a compact positive wire
@@ -385,6 +405,17 @@ variant remains mandatory in the full matrix; smoke exclusion neither hides
 nor reclassifies its result. Candidate findings are keyed exactly `A`, `B`,
 `C`, and `D`. Overall decisions are limited to the four outcomes frozen in the
 preregistration.
+
+The diagnostic-only command
+`--a-pair-failure-fixture {sampling,derivative} --output DIR` uses that same
+three-configuration inventory and cannot be combined with `--smoke`, a full
+run, or either audit action. It replaces exactly one finite pre-normalization
+matrix with zeros: `base.filament.r205.original.A.p000.S` for `sampling` or
+the corresponding `.D` operator for `derivative`. The other half remains the
+ordinary built/raw operator, the `p037_011_029` pair is unchanged, and no
+other subsystem is altered. This authentic failure-wire fixture is permanently
+unsealable and may be used only for validator regression; it cannot support a
+scientific candidate outcome.
 
 `manifest.json` has exactly `algorithm`, `files`, `pre_hash_sha256`, and
 `schema`.  Its schema is `mls.mechanical-observability.manifest.v1`; it covers
@@ -437,7 +468,8 @@ The fields and closed types are:
   lowercase 64-hex and the two digests differ. A path must be one of the
   manifest-bound nineteen CSVs, `summary.json`, or `manifest.json`; both
   compared inventories must otherwise be identical.
-- `mode`: `smoke` or `full`; an outer seal requires `full`.
+- `mode`: `smoke`, `failure_fixture`, or `full`; an outer seal requires
+  `full`.
 - `producer_claims_sha256`: lowercase 64-hex SHA-256.
 - `promotion`: the Boolean `false` only.
 - `result_sha256_before_hash_field`: lowercase 64-hex SHA-256.
@@ -512,7 +544,7 @@ file SHA-256.
 The validator accepts `--validator-sha256 <lowercase64>` and emits that pin
 verbatim after executing those exact bytes; without the option it hashes its
 own file. The frozen release-validator SHA-256 is
-`ebf2690072e3c56ff0a8636ebf1c14c3dda76ef0417a1b5535d95329052fcd50`.
+`ebf9629dda1deeeeea81ad4661a1d145daa91fce0a6762918318cfc5eb8cd4bc`.
 The outer seal always supplies and rechecks that exact pin. A valid claim
 disagreement, byte divergence, or failed derived gate is evidence and produces
 no promotion; malformed structure, noncanonical bytes, invalid provenance, an
