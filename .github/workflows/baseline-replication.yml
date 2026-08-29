@@ -11,6 +11,7 @@ on:
       - projection-foundation-lab
       - projection-exactness-nullspace-lab
       - mechanical-observability-lab
+      - kelvin-covariance-audit
   pull_request:
   workflow_dispatch:
 
@@ -175,6 +176,15 @@ jobs:
             2>&1 | tee ci-artifacts/mechanical-observability-validator.txt
           python tests/mechanical_observability_seal_test.py \
             2>&1 | tee ci-artifacts/mechanical-observability-seal.txt
+          python reference/kelvin_covariance_oracle.py \
+            --verify tests/kelvin_covariance_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/kelvin-covariance-oracle.txt
+          python tests/kelvin_covariance_oracle_test.py \
+            2>&1 | tee ci-artifacts/kelvin-covariance-oracle-regression.txt
+          python -m py_compile \
+            reference/validate_kelvin_covariance_bundle.py \
+            tests/kelvin_covariance_bundle_validator_test.py \
+            2>&1 | tee ci-artifacts/kelvin-covariance-validator-compile.txt
 
       - name: Preserve exact-oracle evidence
         if: always()
