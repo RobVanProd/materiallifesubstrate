@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
 import csv
 import hashlib
 import importlib.util
@@ -5028,6 +5029,248 @@ def mutate_csv(bundle: Path, name: str, change: Callable[[list[dict[str, str]]],
     write_csv(bundle / name, fields, rows)
 
 
+def exercise_decision_state_machine(module: ModuleType) -> int:
+    """Exercise every nullable decision-rank state without bundle I/O.
+
+    These cases intentionally keep producer summary gates optimistic unless a
+    case is specifically about a reference failure.  The reducer must derive
+    its own implementation stop from operator/rank state before it reads any
+    nullable non-rigid quotient.
+    """
+
+    configuration_id = "base.sc3.r180.original"
+
+    def operator_id(candidate: str) -> str:
+        return f"{configuration_id}.{candidate}"
+
+    sampling_id = f"{configuration_id}.A.p000.S"
+    derivative_id = f"{configuration_id}.A.p000.D"
+    required_flags = (
+        "checkpoint_round_trip_all_pass",
+        "diagnostics_read_only_all_exact",
+        "neighbor_lookup_all_agree",
+        "affine_objectivity_all_pass",
+        "finite_objectivity_all_pass",
+        "invariance_all_pass",
+        "decisive_rank_rows_all_unambiguous",
+        "raw_decision_rows_all_exported",
+        "independent_reference_all_pass",
+    )
+    summary = {
+        "mode": "full",
+        "nondeterminism_detected": False,
+        **{field: True for field in required_flags},
+    }
+    status = {
+        sampling_id: {
+            "candidate": "A", "configuration_id": configuration_id,
+            "build_status": "built", "decision_driving": "true",
+            "rank_applicable": "true", "b_rank_eligible": "false",
+            "row_normalization_complete": "true", "raw_exported": "true",
+        },
+        derivative_id: {
+            "candidate": "A", "configuration_id": configuration_id,
+            "build_status": "built", "decision_driving": "true",
+            "rank_applicable": "false", "b_rank_eligible": "false",
+            "row_normalization_complete": "true", "raw_exported": "true",
+        },
+        operator_id("B"): {
+            "candidate": "B", "configuration_id": configuration_id,
+            "build_status": "built", "decision_driving": "true",
+            "rank_applicable": "true", "b_rank_eligible": "true",
+            "row_normalization_complete": "true", "raw_exported": "true",
+        },
+        operator_id("C"): {
+            "candidate": "C", "configuration_id": configuration_id,
+            "build_status": "built", "decision_driving": "true",
+            "rank_applicable": "true", "b_rank_eligible": "false",
+            "row_normalization_complete": "true", "raw_exported": "true",
+        },
+        operator_id("D"): {
+            "candidate": "D", "configuration_id": configuration_id,
+            "build_status": "not_triggered", "decision_driving": "false",
+            "rank_applicable": "false", "b_rank_eligible": "false",
+            "row_normalization_complete": "false", "raw_exported": "false",
+        },
+    }
+
+    def resolved(nonrigid: int, generic_pass: bool) -> dict[str, Any]:
+        return {
+            "status": "analyzed", "ambiguous": False,
+            "basis_complete": True, "contract_pass": True,
+            "generic_pass": generic_pass, "nonrigid_nullity": nonrigid,
+        }
+
+    ranks = {
+        sampling_id: resolved(3, False),
+        operator_id("B"): resolved(1, False),
+        operator_id("C"): resolved(0, True),
+    }
+    generic = {configuration_id}
+
+    findings, decision = module.derive_decision(
+        summary, status, ranks, True, generic
+    )
+    if decision != "retain_central_relational_representation_for_research" \
+            or findings["B"] \
+            != "reject_averaged_single_gradient_packet_kinematics":
+        raise AssertionError("resolved B/C decision control did not remain conclusive")
+    cases = 1
+
+    def expect_stop(
+        label: str,
+        case_summary: Mapping[str, Any],
+        case_status: Mapping[str, Mapping[str, str]],
+        case_ranks: Mapping[str, Mapping[str, Any]],
+        negative_control: bool = True,
+    ) -> None:
+        try:
+            case_findings, case_decision = module.derive_decision(
+                case_summary, case_status, case_ranks, negative_control, generic
+            )
+        except Exception as error:  # pragma: no cover - diagnostic detail
+            raise AssertionError(f"{label} raised before implementation STOP") from error
+        if case_decision != "stop_inconclusive_or_implementation_failure" \
+                or any(case_findings[candidate] != "inconclusive"
+                       for candidate in ("B", "C", "D")):
+            raise AssertionError(f"{label} reached a scientific decision")
+
+    unavailable_rank_states = {
+        "ambiguous": {
+            "status": "ambiguous", "ambiguous": True,
+            "basis_complete": False, "contract_pass": False,
+            "generic_pass": None, "nonrigid_nullity": None,
+        },
+        "numerical_failure": {
+            "status": "numerical_failure", "ambiguous": False,
+            "basis_complete": False, "contract_pass": False,
+            "generic_pass": None, "nonrigid_nullity": None,
+        },
+        "rigid_containment_failure": {
+            "status": "analyzed", "ambiguous": False,
+            "basis_complete": True, "contract_pass": False,
+            "generic_pass": False, "nonrigid_nullity": None,
+        },
+        "claimed_contract_missing_quotient": {
+            "status": "analyzed", "ambiguous": False,
+            "basis_complete": True, "contract_pass": True,
+            "generic_pass": False, "nonrigid_nullity": None,
+        },
+    }
+
+    # B and C share the no-D control.  Every unresolved rank must stop before
+    # accessing its nullable quotient, even if all producer summary flags claim
+    # success.
+    for candidate in ("B", "C"):
+        for state_name, rank_state in unavailable_rank_states.items():
+            case_ranks = copy.deepcopy(ranks)
+            case_ranks[operator_id(candidate)] = copy.deepcopy(rank_state)
+            expect_stop(
+                f"generic {candidate} {state_name}", summary, status, case_ranks
+            )
+            cases += 1
+
+        case_summary = dict(summary)
+        case_summary["independent_reference_all_pass"] = False
+        expect_stop(
+            f"generic {candidate} reference failure",
+            case_summary, status, ranks,
+        )
+        cases += 1
+
+        case_status = copy.deepcopy(status)
+        candidate_status = case_status[operator_id(candidate)]
+        candidate_status.update({
+            "build_status": "numerical_failure",
+            "rank_applicable": "false",
+            "row_normalization_complete": "false",
+            "raw_exported": "false",
+        })
+        if candidate == "B":
+            candidate_status["b_rank_eligible"] = "false"
+        case_ranks = copy.deepcopy(ranks)
+        del case_ranks[operator_id(candidate)]
+        expect_stop(
+            f"generic {candidate} unbuilt", summary, case_status, case_ranks
+        )
+        cases += 1
+
+    # Trigger D with a resolved non-rigid C, then exercise the same complete
+    # built/resolved and unavailable states for the enriched relation operator.
+    triggered_status = copy.deepcopy(status)
+    triggered_status[operator_id("D")].update({
+        "build_status": "built", "decision_driving": "true",
+        "rank_applicable": "true", "row_normalization_complete": "true",
+        "raw_exported": "true",
+    })
+    triggered_ranks = copy.deepcopy(ranks)
+    triggered_ranks[operator_id("C")] = resolved(1, False)
+    triggered_ranks[operator_id("D")] = resolved(0, True)
+    findings, decision = module.derive_decision(
+        summary, triggered_status, triggered_ranks, True, generic
+    )
+    if decision != "retain_volume_enriched_relational_representation_for_research" \
+            or findings["D"] \
+            != "retain_volume_enriched_relational_representation_for_research":
+        raise AssertionError("resolved D decision control did not remain conclusive")
+    cases += 1
+
+    for state_name, rank_state in unavailable_rank_states.items():
+        case_ranks = copy.deepcopy(triggered_ranks)
+        case_ranks[operator_id("D")] = copy.deepcopy(rank_state)
+        expect_stop(
+            f"generic D {state_name}", summary, triggered_status, case_ranks
+        )
+        cases += 1
+    reference_summary = dict(summary)
+    reference_summary["independent_reference_all_pass"] = False
+    expect_stop(
+        "generic D reference failure", reference_summary,
+        triggered_status, triggered_ranks,
+    )
+    cases += 1
+    unbuilt_d_status = copy.deepcopy(triggered_status)
+    unbuilt_d_status[operator_id("D")].update({
+        "build_status": "numerical_failure", "rank_applicable": "false",
+        "row_normalization_complete": "false", "raw_exported": "false",
+    })
+    unbuilt_d_ranks = copy.deepcopy(triggered_ranks)
+    del unbuilt_d_ranks[operator_id("D")]
+    expect_stop(
+        "generic D unbuilt", summary, unbuilt_d_status, unbuilt_d_ranks
+    )
+    cases += 1
+
+    # Candidate A's negative control is an implementation prerequisite.  Its
+    # unresolved rank and both partial-pair build states must quarantine B/C/D
+    # before scientific reduction as well.
+    for state_name, rank_state in unavailable_rank_states.items():
+        case_ranks = copy.deepcopy(ranks)
+        case_ranks[sampling_id] = copy.deepcopy(rank_state)
+        expect_stop(
+            f"Candidate A {state_name}", summary, status, case_ranks, False
+        )
+        cases += 1
+    for failed_id, partner_id in (
+        (sampling_id, derivative_id), (derivative_id, sampling_id)
+    ):
+        case_status = copy.deepcopy(status)
+        case_status[failed_id].update({
+            "build_status": "numerical_failure", "rank_applicable": "false",
+            "row_normalization_complete": "false",
+        })
+        case_status[partner_id]["rank_applicable"] = "false"
+        case_ranks = copy.deepcopy(ranks)
+        case_ranks.pop(sampling_id, None)
+        expect_stop(
+            f"Candidate A partial pair {failed_id}",
+            summary, case_status, case_ranks, False,
+        )
+        cases += 1
+
+    return cases
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     root = Path(__file__).resolve().parents[1]
@@ -5037,14 +5280,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=root / "reference" / "validate_mechanical_observability_bundle.py",
     )
     parser.add_argument("--skip-positive", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--decision-state-only", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     module = load_module(args.validator)
+    decision_state_cases = exercise_decision_state_machine(module)
+    if args.decision_state_only:
+        print(
+            "mechanical observability decision-state regression: PASS "
+            f"({decision_state_cases} cases)"
+        )
+        return 0
     mutations = 0
     with tempfile.TemporaryDirectory(prefix="mls-mechanical-validator-") as temporary:
         root_path = Path(temporary)
         base = root_path / "base"
         twin = root_path / "twin"
         materialize_registered_smoke_fixture(module, base)
+        mutations += decision_state_cases
         shutil.copytree(base, twin)
         if not args.skip_positive:
             positive_findings = root_path / "positive-findings.json"
@@ -5619,16 +5871,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             "resolved": {
                 "status": "analyzed", "ambiguous": False,
                 "basis_complete": True, "contract_pass": True,
+                "nonrigid_nullity": 0,
                 "independent_basis_agreement": True,
             },
             "ambiguous": {
                 "status": "ambiguous", "ambiguous": True,
                 "basis_complete": False, "contract_pass": False,
+                "nonrigid_nullity": None,
                 "independent_basis_agreement": True,
             },
             "numerical_failure": {
                 "status": "numerical_failure", "ambiguous": False,
                 "basis_complete": False, "contract_pass": False,
+                "nonrigid_nullity": None,
                 "independent_basis_agreement": True,
             },
         }

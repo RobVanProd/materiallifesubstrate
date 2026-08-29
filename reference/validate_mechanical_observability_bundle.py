@@ -5866,12 +5866,19 @@ def validate_operator_status_metadata(
 
 
 def rank_claim_is_resolved(rank: Mapping[str, Any] | None) -> bool:
+    nonrigid_nullity = None if rank is None else rank.get("nonrigid_nullity")
     return (
         rank is not None
         and rank["status"] == "analyzed"
         and not rank["ambiguous"]
         and rank["basis_complete"]
         and rank.get("contract_pass", False)
+        # Scientific reducers consume this quotient.  A completed-looking rank
+        # row with an unavailable quotient is therefore unresolved, even if a
+        # producer flag accidentally claims that the surrounding contract
+        # passed.  ``type(...) is int`` deliberately excludes booleans.
+        and type(nonrigid_nullity) is int
+        and nonrigid_nullity >= 0
     )
 
 
@@ -6001,6 +6008,17 @@ def derive_decision(
         and not rank_claim_is_resolved(ranks.get(operator_id))
         for operator_id in decisive_operators
     )
+    decisive_contract_ready = all(
+        status_by_id[operator_id]["build_status"] == "built"
+        and (
+            not boolean(
+                status_by_id[operator_id]["rank_applicable"],
+                f"{operator_id} rank applicable",
+            )
+            or rank_claim_is_resolved(ranks.get(operator_id))
+        )
+        for operator_id in decisive_operators
+    )
     required_flags = (
         "checkpoint_round_trip_all_pass",
         "diagnostics_read_only_all_exact",
@@ -6016,6 +6034,7 @@ def derive_decision(
         summary["mode"] != "full"
         or not negative_control
         or rank_inconclusive
+        or not decisive_contract_ready
         or any(summary[key] is not True for key in required_flags)
         or summary["nondeterminism_detected"] is True
     )
@@ -6026,20 +6045,45 @@ def derive_decision(
         and boolean(status["b_rank_eligible"], f"{operator_id} B eligible")
         and boolean(status["decision_driving"], f"{operator_id} decision")
     ]
-    b_nonrigid = any(operator_id in ranks and ranks[operator_id]["nonrigid_nullity"] > 0
-                     for operator_id in b_eligible)
     c_generic = [
         operator_id for operator_id, status in status_by_id.items()
         if status["candidate"] == "C"
         and is_generic(status)
         and boolean(status["decision_driving"], f"{operator_id} decision")
     ]
-    c_classification_inconsistent = any(
-        rank_claim_is_resolved(ranks.get(operator_id))
-        and ranks[operator_id]["nonrigid_nullity"] == 0
-        and not ranks[operator_id].get("generic_pass", False)
+    b_science_ready = bool(b_eligible) and all(
+        status_by_id[operator_id]["build_status"] == "built"
+        and boolean(
+            status_by_id[operator_id]["rank_applicable"],
+            f"{operator_id} rank applicable",
+        )
+        and rank_claim_is_resolved(ranks.get(operator_id))
+        for operator_id in b_eligible
+    )
+    c_science_ready = bool(c_generic) and all(
+        status_by_id[operator_id]["build_status"] == "built"
+        and boolean(
+            status_by_id[operator_id]["rank_applicable"],
+            f"{operator_id} rank applicable",
+        )
+        and rank_claim_is_resolved(ranks.get(operator_id))
         for operator_id in c_generic
     )
+    implementation_failure = (
+        implementation_failure or not b_science_ready or not c_science_ready
+    )
+    if implementation_failure:
+        findings = {
+            "A": "negative_control_reproduced" if negative_control else "negative_control_failed",
+            "B": "inconclusive",
+            "C": "inconclusive",
+            "D": "inconclusive",
+        }
+        return findings, "stop_inconclusive_or_implementation_failure"
+
+    # Every scientific B/C quotient is now an independently accepted
+    # non-negative integer.  D inventory still has its own availability gate,
+    # so defer the actual scientific reductions until that gate also passes.
     global_d_trigger = derive_global_d_trigger(
         status_by_id, ranks, generic_configurations
     )
@@ -6058,17 +6102,9 @@ def derive_decision(
         not rank_claim_is_resolved(ranks.get(operator_id))
         for operator_id in triggered_d
     )
-    triggered_d_classification_inconsistent = any(
-        rank_claim_is_resolved(ranks.get(operator_id))
-        and ranks[operator_id]["nonrigid_nullity"] == 0
-        and not ranks[operator_id].get("generic_pass", False)
-        for operator_id in triggered_d
-    )
     implementation_failure = (
-        implementation_failure or not b_eligible or not c_generic
-        or triggered_d != expected_triggered_d
-        or triggered_d_incomplete or c_classification_inconsistent
-        or triggered_d_classification_inconsistent
+        triggered_d != expected_triggered_d
+        or triggered_d_incomplete
     )
     if implementation_failure:
         findings = {
@@ -6078,6 +6114,29 @@ def derive_decision(
             "D": "inconclusive",
         }
         return findings, "stop_inconclusive_or_implementation_failure"
+    # All B/C and any triggered D ranks are now resolved.  Only below this line
+    # may scientific quotient fields be consumed.
+    b_nonrigid = any(
+        ranks[operator_id]["nonrigid_nullity"] > 0
+        for operator_id in b_eligible
+    )
+    c_classification_inconsistent = any(
+        ranks[operator_id]["nonrigid_nullity"] == 0
+        and not ranks[operator_id].get("generic_pass", False)
+        for operator_id in c_generic
+    )
+    triggered_d_classification_inconsistent = any(
+        ranks[operator_id]["nonrigid_nullity"] == 0
+        and not ranks[operator_id].get("generic_pass", False)
+        for operator_id in triggered_d
+    )
+    if c_classification_inconsistent or triggered_d_classification_inconsistent:
+        return {
+            "A": "negative_control_reproduced",
+            "B": "inconclusive",
+            "C": "inconclusive",
+            "D": "inconclusive",
+        }, "stop_inconclusive_or_implementation_failure"
     b_finding = (
         "reject_averaged_single_gradient_packet_kinematics"
         if b_nonrigid else "no_resolved_eligible_nonrigid_mode"
