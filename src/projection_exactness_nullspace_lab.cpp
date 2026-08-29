@@ -1058,7 +1058,7 @@ FullSolveDiagnostics diagnose_affine_full_solve(
         result.diagnostics.condition_estimated;
     diagnostics.condition_method = result.diagnostics.numerical_rank_method;
     diagnostics.backward_error_normalization =
-        "||M v_hat-q||_2 / || |M||v_hat|+|q| ||_2";
+        "||M v_hat-q||_2 / (||M||_F ||v_hat||_2+||q||_2)";
     diagnostics.grid_forward_error_normalization =
         "sqrt(sum_i D_i |v_hat_i-g_i|^2) / max(sqrt(sum_i D_i |g_i|^2),sqrt(sum_i D_i)*(1 m/s))";
     diagnostics.reconstruction_error_normalization =
@@ -1080,25 +1080,39 @@ FullSolveDiagnostics diagnose_affine_full_solve(
         return diagnostics;
     }
 
-    std::vector<Vec3d> applied;
     const auto residual = equation_residual(
-        system, result.grid_velocity_m_per_s, &applied);
-    diagnostics.backward_error = normwise_equation_error_norms(
-        system, result.grid_velocity_m_per_s, residual);
+        system, result.grid_velocity_m_per_s);
+    diagnostics.backward_error.absolute_l2 = vec_l2_norm(residual);
+    diagnostics.backward_error.absolute_max = vec_max_norm(residual);
+    const auto matrix_frobenius = matrix_frobenius_norm(system);
+    const auto grid_l2 = vec_l2_norm(result.grid_velocity_m_per_s);
+    const auto rhs_l2 = vec_l2_norm(system.consistent_rhs_kg_m_per_s());
+    diagnostics.backward_error.reference_l2 =
+        matrix_frobenius * grid_l2 + rhs_l2;
+    diagnostics.backward_error.relative_l2 =
+        diagnostics.backward_error.reference_l2 > 0.0
+        ? diagnostics.backward_error.absolute_l2 /
+            diagnostics.backward_error.reference_l2
+        : diagnostics.backward_error.absolute_l2;
     for (std::size_t axis = 0; axis < 3U; ++axis) {
         long double residual_squared = 0.0L;
-        long double denominator_squared = 0.0L;
+        long double solution_squared = 0.0L;
+        long double rhs_squared = 0.0L;
         for (std::size_t row = 0; row < residual.size(); ++row) {
             const auto residual_value = component(residual[row], axis);
             const auto rhs_value = component(
                 system.consistent_rhs_kg_m_per_s()[row], axis);
-            const auto applied_value = component(applied[row], axis);
             residual_squared += static_cast<long double>(residual_value) * residual_value;
-            const auto denominator = std::abs(rhs_value) + std::abs(applied_value);
-            denominator_squared += static_cast<long double>(denominator) * denominator;
+            rhs_squared += static_cast<long double>(rhs_value) * rhs_value;
+            const auto solution_value = component(
+                result.grid_velocity_m_per_s[row], axis);
+            solution_squared +=
+                static_cast<long double>(solution_value) * solution_value;
         }
         const auto absolute = std::sqrt(static_cast<double>(residual_squared));
-        const auto scale = std::sqrt(static_cast<double>(denominator_squared));
+        const auto scale = matrix_frobenius *
+                std::sqrt(static_cast<double>(solution_squared)) +
+            std::sqrt(static_cast<double>(rhs_squared));
         const auto normalized = scale > 0.0 ? absolute / scale : absolute;
         diagnostics.component_absolute_backward_error[axis] = absolute;
         diagnostics.component_normalized_backward_error[axis] = normalized;
@@ -1165,7 +1179,7 @@ HighPrecisionSolveResult solve_affine_high_precision(
     result.factorization_method =
         "deterministic dense complete-pivot Gaussian elimination; numerical rank threshold=2^12*n*2^-104*max|M_ij| by frozen default; no shift, regularization, node drop, or basis change";
     result.backward_error_normalization =
-        "||M v_hp-q||_2 / || |M||v_hp|+|q| ||_2, evaluated in double-double";
+        "||M v_hp-q||_2 / (||M||_F ||v_hp||_2+||q||_2), evaluated in double-double";
     result.grid_forward_error_normalization =
         "sqrt(sum_i D_i |v_hp_i-g_i|^2) / max(sqrt(sum_i D_i |g_i|^2),sqrt(sum_i D_i)*(1 m/s)), evaluated in double-double";
     result.reconstruction_error_normalization =
@@ -1341,9 +1355,7 @@ HighPrecisionSolveResult solve_affine_high_precision(
             }
             const auto expected_rhs = DoubleDouble(component(
                 system.consistent_rhs_kg_m_per_s()[row], axis));
-            backward.add(
-                applied - expected_rhs,
-                absolute(applied) + absolute(expected_rhs));
+            backward.add(applied - expected_rhs, DoubleDouble{});
             const auto expected_grid = DoubleDouble(component(
                 evaluate(field, system.active_node_positions_m()[row]), axis));
             forward.add(
@@ -1368,6 +1380,30 @@ HighPrecisionSolveResult solve_affine_high_precision(
         }
     }
     result.backward_error = finish(backward);
+    DoubleDouble matrix_squared{};
+    for (const auto& row : system.consistent_mass_rows()) {
+        for (const auto& [column, coefficient] : row) {
+            static_cast<void>(column);
+            const auto value = DoubleDouble(coefficient);
+            matrix_squared += value * value;
+        }
+    }
+    DoubleDouble solution_squared{};
+    DoubleDouble rhs_squared{};
+    for (std::size_t row = 0; row < count; ++row) {
+        for (std::size_t axis = 0; axis < 3U; ++axis) {
+            solution_squared += solution[axis][row] * solution[axis][row];
+            const auto rhs_value = DoubleDouble(component(
+                system.consistent_rhs_kg_m_per_s()[row], axis));
+            rhs_squared += rhs_value * rhs_value;
+        }
+    }
+    result.backward_error.reference_l2 = approximate(
+        dd_sqrt(matrix_squared) * dd_sqrt(solution_squared) +
+        dd_sqrt(rhs_squared));
+    result.backward_error.relative_l2 = result.backward_error.reference_l2 > 0.0
+        ? result.backward_error.absolute_l2 / result.backward_error.reference_l2
+        : result.backward_error.absolute_l2;
     result.grid_forward_error = finish(forward, true);
     result.particle_reconstruction_error = finish(reconstruction, true);
     result.backward_error_max_extended = extended(backward.maximum);
