@@ -288,7 +288,7 @@ Independent validation uses a two-path QRCP audit without changing that
 threshold or ambiguity band. It first replays the producer's complete claimed
 permutation to derive `d0`, `tau_R`, and `tau_R/8`. It then requires a maximal
 (or roundoff-tied) claimed pivot whenever the independently measured remaining
-suffix norm exceeds `tau_R/8`; a nonzero suffix wholly below that registered
+suffix norm is at or above `tau_R/8`; a nonzero suffix wholly below that registered
 resolution floor may have a different pivot order. An identically zero suffix
 may not be permuted. A separately factored greedy QRCP trace must agree with
 the claimed-path trace on rank above the lower and upper band limits and on

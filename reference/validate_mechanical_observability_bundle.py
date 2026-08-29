@@ -1112,7 +1112,7 @@ def require_qrcp_pivot_maximality(
 ) -> None:
     """Require a maximal/tied pivot when the suffix is numerically resolved."""
 
-    if maximum_squared == 0 or maximum_squared.sqrt() <= unresolved_floor:
+    if maximum_squared == 0 or maximum_squared.sqrt() < unresolved_floor:
         return
     tie_budget = (
         Decimal(512) * Decimal(max(rows, columns)) * EPS64

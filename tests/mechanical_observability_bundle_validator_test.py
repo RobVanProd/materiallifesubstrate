@@ -5806,6 +5806,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise AssertionError("resolved QRCP pivot gate accepted a nonmaximal pivot")
         mutations += 1
 
+        try:
+            module.require_qrcp_pivot_maximality(
+                Decimal(1), Decimal(4), Decimal(2), 2, 2, 0
+            )
+        except module.InvalidBundle:
+            pass
+        else:
+            raise AssertionError(
+                "QRCP pivot exactly at ambiguity_lower escaped maximality"
+            )
+        mutations += 1
+
         # Byte-preserved facts from
         # base.bcc35.r105.original.B/step 99 in the rejected 2e563ed
         # full bundle.  The claimed pivot is measurably nonmaximal, but the

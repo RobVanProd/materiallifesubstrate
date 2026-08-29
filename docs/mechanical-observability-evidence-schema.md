@@ -199,7 +199,7 @@ same operator.
 The independent QRCP audit replays the complete claimed permutation before it
 derives the frozen threshold and ambiguity limits from the first diagonal. It
 enforces maximal/tied pivot selection while the independently measured suffix
-norm is above `ambiguity_lower`; below that already registered limit, pivot
+norm is at or above `ambiguity_lower`; below that already registered limit, pivot
 ordering is unresolved but the claimed path and every diagonal are still
 replayed. Structural-zero suffixes cannot be permuted. A separate greedy QRCP
 factorization must match the claimed path's rank-at-lower, rank-at-upper, and
