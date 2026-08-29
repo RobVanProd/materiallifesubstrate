@@ -23,8 +23,14 @@ dirty/provisional and cannot be sealed.
   actual rigidity matrix. The graph is physical input.
 - **D — objective volume enrichment.** This type is frozen now but is included
   in the final candidate sweep only if a `generic_solid_gate=true` C row has a
-  resolved non-rigid null mode. D concatenates C with at most one explicit
-  ordered volume relation per center packet.
+  resolved non-rigid null mode. That trigger is global: if it fires, D is
+  instantiated across every non-exact configuration using the selector frozen
+  on that configuration's original/base geometry; metamorphic variants retain
+  those physical relation IDs. A D operator is built exactly when the selected
+  tuple set is nonempty. Only generic-solid D rows enter the scientific
+  decision. D concatenates C with at most one explicit ordered volume relation
+  per center packet. The exact enriched-square control is always built and is
+  exempt from the global trigger.
 
 The D relation-selection rule is fixed before data. At a center with at least
 three incident neighbors, enumerate sorted neighbor triples. For
@@ -67,6 +73,11 @@ passes the screen and still has extra kernel modes is an accidental C failure.
 Sheet, filament, and explicit underconnected controls are always intentionally
 flexible. Deleted graphs are classified by the same facts before their
 rigidity rank is inspected.
+
+The affine-span, incident-direction, and rigid-generator eligibility ranks are
+computed exactly over the rational values represented by the emitted
+binary64 coordinates (dyadic arithmetic, no floating rank threshold). The
+producer and independent validator must agree exactly on those topology facts.
 
 ## 3. Frozen base configuration matrix
 
@@ -150,6 +161,12 @@ separately. Candidate C's analytic target is
 `n dot (A r)=l n^T sym(A)n`. Candidate D's volume target is
 `trace(A)*tau`.
 
+Candidate D has no mixed-dimension affine norm. Every field emits and gates a
+bond-only block in `m/s` and, when present, a volume-only block in `m^3/s`,
+each using only its homogeneous operator rows, values, target, Frobenius norm,
+and tolerance. A failing volume block cannot be diluted by many correct bond
+rows.
+
 Finite C/D objectivity uses actual edge lengths and oriented volumes under the
 rational-quaternion rotation above, under a proper signed-axis 180-degree
 rotation, and with translation. Scale covariance is recorded separately.
@@ -189,8 +206,10 @@ first absolute diagonal,
 \]
 
 Any pivot in `[tau_R/8,8 tau_R]` makes the row `rank_ambiguous`; it cannot pass
-or promote. Rank is always called a numerical threshold estimate. Emit every
-free-column null basis vector and the full pivot/permutation trace.
+or promote. Rank is always called a numerical threshold estimate. Ambiguity
+retains the complete pivot trace but quarantines derived bases/metrics and
+records `rank_estimation,ambiguity_band_overlap`. For an analyzed row, emit
+every free-column null basis vector and the full pivot/permutation trace.
 
 Let `Q` be an orthonormal basis of the realized rigid-generator range and `Z`
 the complete accepted null basis. Require
@@ -219,6 +238,13 @@ A generic 3D row passes only with complete bases, rigid containment, no rank
 ambiguity, and `rank(R)=3N-rank(Q)`. Degenerate controls compare against the
 actual `rank(Q)` and remain ineligible for a generic-solid pass.
 
+If a completed kernel basis measures that rigid motion is visible,
+`nonrigid_nullity` is undefined (`NA`): retain complete-kernel evidence, omit
+the non-rigid quotient, and fail generic observability. Basis-construction
+failures retain raw rigid generators only and use one of the closed reasons
+`incomplete_kernel`, `rigid_span_failure`, `nonrigid_quotient_failure`, or
+`nonfinite_basis`; unevaluated summary fields are `NA`.
+
 ## 8. Affine, objectivity, and invariance tolerances
 
 For a linear observable target `y`, use
@@ -232,14 +258,83 @@ For a linear observable target `y`, use
 with threshold `4096*max(m,n)*epsilon64`.
 
 For finite length/volume operations let
-`gamma(k)=k epsilon64/(1-k epsilon64)`. Each row records its actual operation
-count and operand-magnitude scale; the pass bound is `256 gamma(k)` times that
-scale plus `256*minnormal`. No rounded display value participates in a gate.
+`gamma(k)=k epsilon64/(1-k epsilon64)`. The registered end-to-end operation
+counts are 72 for a bond row and 134 for an oriented-volume row. They cover the
+actual similarity-transform construction, reference and transformed
+observable, scale target, and final subtraction. The measured, target, and
+absolute-error cells retain that binary64 path.
 
-Metamorphic rank/nullity and topology must agree exactly. Normalized residuals
-and singular values agree within `16384*max(m,n)*epsilon64` after the declared
-scale transformation. Packet/relation permutation must reproduce canonical
-evidence byte-for-byte after sorting.
+The forward-error operand scale includes coordinate construction and
+cancellation, rather than only the final result. For point `x`, similarity
+`(Q,t,s)`, and axis `a`, define, in the written left-to-right grouping,
+
+`P_a(x)=|s|*((|Q_a0*x_0|+|Q_a1*x_1|)+|Q_a2*x_2|)+|t_a|`.
+
+For site `p` relative to center/endpoint `c`, define
+`R_a(p,c)=|x_p,a|+|x_c,a|` and `T_a(p,c)=P_a(x_p)+P_a(x_c)`. A bond uses
+
+`S_b=max(minnormal, (((|s|*((R_x+R_y)+R_z))+((T_x+T_y)+T_z))`
+`+|measured|)+|target|))`.
+
+For nonnegative component envelopes define
+
+`E(a,b,c)=a_x*(b_y*c_z+b_z*c_y)+a_y*(b_x*c_z+b_z*c_x)`
+`+a_z*(b_x*c_y+b_y*c_x)`,
+
+with the three outer terms also added left to right. An ordered volume uses the
+three `R` and `T` vectors from its non-center sites and
+
+`S_v=max(minnormal, (((((|s|*|s|)*|s|)*E(R1,R2,R3))`
+`+E(T1,T2,T3))+|measured|)+|target|))`.
+
+The pass bound remains `256*gamma(k)*S+256*minnormal`; normalized error is
+`absolute_error/S`. These formulae are scoped to the five registered
+similarity transforms. They deliberately expose large-translation cancellation
+instead of hiding it behind a unit-valued absolute floor. No rounded display
+value participates in a gate.
+
+Metamorphic rank/nullity and topology must agree exactly, and both rank
+diagnostics must be unambiguous before a spectrum comparison is admissible.
+Sort singular values descending and compare every independently resolved
+nonzero value through the common exact rank using
+`abs(s1[i]-s2[i])/max(s1[i],s2[i],1)`. The maximum resolved-spectrum delta and
+the normalized-residual delta must each be at most
+`16384*max(m,n)*epsilon64` after the declared scale transformation. The
+numerical null tail is not used as a magnitude metric; its invariance remains
+mandatory through exact rank/nullity agreement and the complete nullspace
+gates. No resolved singular value may be dropped.
+
+Every registered base/variant/candidate pair remains in invariance evidence if
+a build is unavailable. Comparable analyzed builds use numerical metrics.
+Unavailable pairs use `NA` metrics and may pass transformation parity only
+when the complete closed failure tuple (status, stage, reason, witness
+row/column/value/bits/class) matches exactly. Mandatory generic
+B/C/triggered-D unavailability still fails the overall invariance/build gate;
+status parity never converts it into a viable representation.
+
+Packet permutation is an actual rerun, not a producer equality flag. For each
+configuration, sort packet IDs by SHA-256 digest bytes of the exact UTF-8 ASCII
+preimage `260828|packet_permutation|configuration_id|packet_id`, with packet ID
+as the tie break. If that order is accidentally canonical and `N>1`, rotate it
+left once. For C/D, likewise sort retained relation IDs by SHA-256 digest bytes
+of `260828|relation_permutation|configuration_id|candidate|relation_id`, with
+relation ID as the tie break, and rotate left once if an order with more than
+one relation remains canonical. B records no relation order.
+
+Rebuild every built B/C/D operator from packets supplied in the non-identity
+packet order. Export the alternate operator in an order-sensitive raw layout:
+B row blocks and every column block follow packet order; C/D rows follow
+relation order and columns follow packet order. Each raw index carries its
+semantic packet/relation/component mapping. Bind both the complete raw dense
+row-major binary64 payload and all nonzero raw entries before restoring
+semantic order for the canonical comparison. The validator derives both
+orders, reconstructs the raw layout and hashes, and then canonicalizes it
+independently. Canonical bytes must match exactly. A copied canonical primary
+matrix, a multi-packet identity control, or a multi-relation identity control
+is invalid. The frozen enum is
+`sha256_packet_relation_permutation_v2`; raw grouped and dense domains are
+`MLS-MECHANICAL-OBSERVABILITY-PERMUTATION-OPERATOR-v2` and
+`MLS-MECHANICAL-OBSERVABILITY-RAW-PERMUTED-OPERATOR-v2`.
 
 Candidate-A `S`-null acceptance and derivative visibility reuse the sealed
 Projection Exactness + Nullspace formulas. The negative control passes this
@@ -272,7 +367,8 @@ precision findings are labeled numerical, never certified.
    `retain_central_relational_representation_for_research`; do not run D as a
    selectable candidate.
 4. If an eligible C row has a non-rigid mode, run the already frozen D operator
-   on the complete matrix. If D removes every such ordinary-3D mode, record
+   on every `generic_solid_gate=true` configuration in the complete matrix. If
+   D removes every ordinary-3D mode across that complete generic inventory, record
    `retain_volume_enriched_relational_representation_for_research` and exactly
    which tuples were necessary.
 5. If D is triggered and an ordinary eligible row still has a non-rigid mode,
@@ -280,7 +376,15 @@ precision findings are labeled numerical, never certified.
 
 Every outcome is **NO PROMOTION** and ends the lab. B failure does not prevent
 the independent C/D diagnosis. Intentionally flexible controls cannot cause a
-solid representation rejection by themselves.
+solid representation rejection by themselves. The scientific B reducer uses
+only rows that are simultaneously built, `b_rank_eligible=true`,
+`generic_solid_gate=true`, and `decision_driving=true`; all other B rows remain
+in the evidence as controls. Candidate D uses the same generic-solid-only
+`decision_driving` rule: non-generic and exact enriched D rows are retained as
+diagnostics but do not enter the raw-export, rank, affine, finite, or scientific
+decision reducers. Candidate C remains decision-driving for every registered
+attempted C operator because it is the primary relational representation under
+test, including its deliberately flexible validation controls.
 
 ## 11. Evidence tables and sealing gate
 
@@ -290,6 +394,7 @@ The deterministic bundle contains:
 - `neighbor_pairs.csv` with brute-force/lookup agreement;
 - `relations.csv` for every explicit edge and volume tuple;
 - `operator_status.csv` and selected raw `operator_entries.csv`;
+- `permutation_controls.csv` and full alternate `permutation_entries.csv`;
 - `moment_diagnostics.csv`;
 - `affine_objectivity.csv` and `invariance.csv`;
 - `rigid_basis.csv`, `rank_status.csv`, `nullspace_modes.csv`, and
@@ -299,7 +404,21 @@ The deterministic bundle contains:
 
 Every table has a frozen schema and deterministic lexicographic order. Raw
 operators must be exported for every exact/high-precision or decision-driving
-row; unexported rows carry an explicit digest and no stray entries.
+row; an unexported row has `operator_payload_sha256=NA` and no stray entries.
+There is no digest for an empty unexported group.
+Attempted A/C/D construction or row-normalization failure is retained using
+the closed failure fields in the wire contract. A finite pre-normalization
+operator remains completely exported when representable; rank, affine/gauge,
+and promotion claims are suppressed. B local-moment failures retain the full
+moment witness and no fabricated partial operator. Successful, not-triggered,
+local-moment, row-normalization, and nonfinite-cell status tuples are closed;
+unsupported failures make the bundle invalid.
+For each configuration, checkpoint evidence contains the exact closed sequence
+`authoritative_before`, `round_trip_reserialized`, and `after_diagnostics`.
+Every payload must be structurally valid and canonically reserializable. A
+byte-valid round-trip or read-only mismatch is retained as a failed gate and
+forces the inconclusive/implementation-failure stop; it is not discarded or
+rewritten into producer success.
 The exact headers, unavailable-value convention, summary enums, manifest
 inventory, and deletion-hash byte preimage are frozen in
 `mechanical-observability-evidence-schema.md` before the final producer run.
@@ -311,3 +430,12 @@ Windows/MSVC, Python, and pinned Lean CI; `lake --wfail build`; zero proof
 placeholders or project axioms; and `#print axioms` coverage for every exported
 theorem. Preserve all failed runs and publish the immutable bundle. Stop
 without starting a mechanics solver or material law.
+
+The producer's `--smoke` mode is validation-only and permanently
+promotion-ineligible. Its frozen three-configuration subset contains the
+filament high-radius original, its registered translation, and the enriched
+planar-square exact control. This compact positive fixture exercises the
+Candidate-A gauge, an actual metamorphic comparison, and built-D/non-rigid
+quotient paths. The registered filament rotation remains mandatory in the
+59-configuration full matrix and is intentionally not suppressed or
+reinterpreted by the smoke fixture.

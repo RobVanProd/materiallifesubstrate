@@ -45,7 +45,7 @@ configuration_id,relation_index,relation_id,relation_kind,center_id,first_id,sec
 `operator_status.csv`
 
 ```text
-operator_id,configuration_id,candidate,operator_role,observable_kind,build_status,packet_count,relation_count,row_count,column_count,raw_exported,operator_payload_sha256,row_normalization_complete,first_invalid_row,rank_applicable,b_rank_eligible,generic_solid_gate,decision_driving,promotion_eligible
+operator_id,configuration_id,candidate,operator_role,observable_kind,build_status,packet_count,relation_count,row_count,column_count,raw_exported,operator_payload_sha256,row_normalization_complete,first_invalid_row,rank_applicable,b_rank_eligible,generic_solid_gate,decision_driving,promotion_eligible,failure_stage,failure_reason,failure_witness_row,failure_witness_column,failure_witness_value,failure_witness_ieee754_bits,failure_witness_class
 ```
 
 `operator_entries.csv`
@@ -53,6 +53,39 @@ operator_id,configuration_id,candidate,operator_role,observable_kind,build_statu
 ```text
 operator_id,row_index,column_index,domain_kind,domain_id,velocity_component,row_kind,row_owner_id,row_component,value,units
 ```
+
+The seven operator failure fields use a closed convention. A successful built
+row uses `NA` in all seven. A non-triggered D row uses
+`not_attempted,global_d_not_triggered,NA,NA,NA,NA,none`. A B local-moment
+failure uses stage `local_moment`, reason equal to its build status
+(`singular_local_moment`, `ill_conditioned_local_moment`, or
+`numerical_failure`), the first canonical failing packet ID as witness row,
+`NA` column/value/bits, and class `moment_diagnostics`; the full witness is in
+`moment_diagnostics.csv`. B then has no operator matrix, `raw_exported=false`,
+and `rank_applicable=false`. Its `decision_driving` is true only when the
+configuration independently has `generic_solid_gate=true`; lower-dimensional,
+intentionally flexible, and exact validation controls retain the failure but
+do not drive the scientific B decision. Candidate D is likewise
+decision-driving only on independently generic-solid configurations when the
+global D trigger is active; non-generic and exact enriched D operators are
+diagnostic only. Every attempted Candidate C row remains decision-driving.
+
+An attempted A/C/D row-normalization failure has
+`build_status=numerical_failure`, stage `row_normalization`, and reason
+`zero_row_norm` or `nonfinite_row_norm`. A zero row records its row index,
+`NA` column, value `0x0.0p+0`, bits `0000000000000000`, and class
+`finite_zero`. A nonfinite norm from a completely finite raw row records value
+`NA`, the exact 16-digit lower-case IEEE-754 bits, and class
+`positive_infinity`, `negative_infinity`, `quiet_nan`, or `signaling_nan`.
+The complete finite pre-normalization sparse operator/digest/dimensions remain
+exported, while rank is inapplicable. A and C failures remain decision-driving;
+B and D use their generic-solid-only decision rule. A
+nonfinite constructed cell instead uses stage `operator_construction`, reason
+`nonfinite_operator_cell`, row and column, value `NA`, exact bits/class, and no
+claim of complete raw export. It is valid negative evidence only when the
+independent reference formula reproduces the same witness. Unsupported status
+or witness combinations make the bundle invalid rather than a convenient
+failure.
 
 `moment_diagnostics.csv`
 
@@ -66,11 +99,62 @@ operator_id,packet_id,neighbor_count,m00_m2,m01_m2,m02_m2,m10_m2,m11_m2,m12_m2,m
 operator_id,test_id,test_kind,field,packet_id,relation_id,component,measured_value,target_value,absolute_error,normalization_scale,normalized_error,operation_count,roundoff_bound,pass,units
 ```
 
+For `finite_bond_length`, `operation_count=72`; for
+`finite_oriented_volume`, `operation_count=134`. Measured, target, and error
+use the binary64 path in the subsystem contract. `normalization_scale` is the
+dimensioned forward-error operand scale, not `max(1,...)` and not a
+result-only relative scale. Let
+`P_a(x)=|s|*((|Q_a0*x_0|+|Q_a1*x_1|)+|Q_a2*x_2|)+|t_a|`,
+`R_a(p,c)=|x_p,a|+|x_c,a|`, and
+`T_a(p,c)=P_a(x_p)+P_a(x_c)`, preserving the written binary64 grouping. A
+bond emits
+`max(minnormal, (((|s|*((R_x+R_y)+R_z))+((T_x+T_y)+T_z))`
+`+|measured|)+|target|))`. Define
+`E(a,b,c)=((a_x*(b_y*c_z+b_z*c_y)+a_y*(b_x*c_z+b_z*c_x))`
+`+a_z*(b_x*c_y+b_y*c_x))`. A volume emits
+`max(minnormal, (((((|s|*|s|)*|s|)*E(R1,R2,R3))`
+`+E(T1,T2,T3))+|measured|)+|target|))`. The scale has units `m` or `m3`.
+`normalized_error=absolute_error/normalization_scale`, and
+`roundoff_bound=256*gamma(operation_count)*normalization_scale`
+`+256*minnormal`. These cells cover only the five registered transforms.
+
+The affine aggregate for B remains `affine:<field>:aggregate`, component
+`ALL`, units `per_s`; C remains the same ID/component with units `m_per_s`.
+D never emits a mixed-dimension aggregate. For every field it emits
+`affine:<field>:bond_aggregate`, component `BOND_ALL`, units `m_per_s`, and,
+when volume rows exist, `affine:<field>:volume_aggregate`, component
+`VOLUME_ALL`, units `m3_per_s`. Each row uses only its homogeneous operator
+block, measured values, target values, Frobenius norm, and row count to derive
+its independent normalization, tolerance, and pass. Either D block failing
+fails the affine contract.
+
 `invariance.csv`
 
 ```text
-comparison_id,base_operator_id,transformed_operator_id,transform_kind,scale,lookup_phase,topology_match,relation_ids_match,rank_match,nullity_match,normalized_residual_delta,max_scaled_singular_value_delta,tolerance,canonical_bytes_match,pass
+comparison_id,base_operator_id,transformed_operator_id,transform_kind,scale,lookup_phase,topology_match,relation_ids_match,rank_match,nullity_match,base_build_status,transformed_build_status,build_status_match,metrics_available,normalized_residual_delta,max_scaled_singular_value_delta,tolerance,canonical_bytes_match,pass
 ```
+
+For a metamorphic B/C/D comparison, `rank_match` and `nullity_match` are exact
+and both linked rank summaries must be unambiguous. Singular values are sorted
+descending, and `max_scaled_singular_value_delta` is the maximum of
+`abs(s1[i]-s2[i])/max(s1[i],s2[i],1)` over every index below that common rank
+(zero for common rank zero). Values in the numerical null tail are not folded
+into this magnitude. They remain decision-driving through exact rank/nullity
+agreement and the independently checked complete-nullspace evidence. A pass
+also requires both the resolved-spectrum delta and normalized-residual delta
+to be at most the unchanged invariance tolerance
+`16384*max(m,n)*epsilon64`.
+
+Every registered base/variant B/C/D pair has an invariance row even when an
+operator is unavailable. `metrics_available=true` only when both operators
+are built, both ranks are analyzed/unambiguous, and dimensions are comparable.
+Otherwise rank/nullity matches are false, numerical metrics and tolerance are
+`NA`, and canonical bytes are false. Such a row may pass only as closed status
+parity: both operators are unavailable and their independently derived build
+status and complete failure tuple (stage, reason, row, column, value, bits,
+and class) match. Mandatory
+generic B/C/triggered-D unavailability still forces the overall lab stop even
+when its metamorphic status parity passes.
 
 `rigid_basis.csv`
 
@@ -81,12 +165,28 @@ operator_id,basis_kind,mode_index,dof_index,domain_kind,domain_id,velocity_compo
 `rank_status.csv`
 
 ```text
-operator_id,record_kind,pivot_step,permuted_column_index,diagonal_magnitude,accepted_pivot,status,row_count,column_count,rank,nullity,rigid_rank,nonrigid_nullity,threshold,ambiguity_lower,ambiguity_upper,rank_ambiguous,rank_method,rank_is_certified,basis_complete,rigid_in_kernel,kernel_equals_rigid_subspace,normalized_rigid_residual,normalized_null_residual,normalized_nonrigid_residual,rigid_orthogonality_residual,residual_tolerance,generic_observability_pass,promotion_eligible
+operator_id,record_kind,pivot_step,permuted_column_index,diagonal_magnitude,accepted_pivot,status,row_count,column_count,rank,nullity,rigid_rank,nonrigid_nullity,threshold,ambiguity_lower,ambiguity_upper,rank_ambiguous,rank_method,rank_is_certified,basis_complete,rigid_in_kernel,kernel_equals_rigid_subspace,normalized_rigid_residual,normalized_null_residual,normalized_nonrigid_residual,rigid_orthogonality_residual,residual_tolerance,generic_observability_pass,promotion_eligible,failure_stage,failure_reason
 ```
 
 One `record_kind=summary` row is followed by the complete
 `record_kind=pivot` trace.  Summary fields are identical on every row for the
 same operator.
+
+Analyzed success has `failure_stage=failure_reason=NA`. Ambiguity is
+`rank_estimation,ambiguity_band_overlap`, has `basis_complete=false`, retains
+the complete pivot trace and only the raw rigid generators (none for A), and
+leaves rigid/kernel/residual/orthogonality/generic cells `NA`. A basis failure is
+`basis_construction` with reason exactly `incomplete_kernel`,
+`rigid_span_failure`, `nonrigid_quotient_failure`, or `nonfinite_basis`.
+Whenever rank factorization ran, the pivot trace remains complete. A basis
+failure exports the complete raw rigid generators but no orthonormal rigid,
+kernel, non-rigid, or per-mode metric rows; its `basis_complete=false`, and
+the unevaluated rigid/kernel/residual/generic-pass summary cells are `NA`.
+When a completed basis instead measures rigid visibility, status remains
+`analyzed`: `rigid_in_kernel=false`, `nonrigid_nullity=NA`,
+`kernel_equals_rigid_subspace=false`, and generic pass is false. Complete
+kernel modes/metrics remain, while non-rigid quotient modes/metrics and their
+residual fields are omitted/`NA` because the quotient is undefined.
 
 `nullspace_modes.csv`
 
@@ -118,6 +218,18 @@ reference_id,configuration_id,candidate,operator_id,arithmetic,precision_digits,
 configuration_id,checkpoint_kind,encoding,byte_count,payload_sha256,payload_hex
 ```
 
+`permutation_controls.csv`
+
+```text
+control_id,operator_id,configuration_id,permutation_kind,permutation_seed,packet_order,relation_order,row_count,column_count,entry_count,raw_payload_sha256,raw_dense_payload_sha256,canonical_payload_sha256,baseline_payload_sha256,canonical_bytes_match,promotion_eligible
+```
+
+`permutation_entries.csv`
+
+```text
+control_id,operator_id,row_index,column_index,domain_kind,domain_id,velocity_component,row_kind,row_owner_id,row_component,value,units
+```
+
 Relations include retained and deleted edges.  Only retained relations enter
 an operator.  An edge uses `first_id,second_id`; a volume relation uses
 `center_id,first_id,second_id,third_id`.  Candidate-A entries use
@@ -128,12 +240,19 @@ The deletion-order preimage is the UTF-8 byte sequence
 
 Each grouped payload digest begins with its ASCII domain followed by LF.  Each
 emitted group row then contributes, in header order, NUL followed by the UTF-8
-cell text for every field, followed by LF.  The four domains are
+cell text for every field, followed by LF.  The five domains are
 `MLS-MECHANICAL-OBSERVABILITY-PACKETS-v1`,
 `MLS-MECHANICAL-OBSERVABILITY-NEIGHBORS-v1`,
 `MLS-MECHANICAL-OBSERVABILITY-RELATIONS-v1`, and
-`MLS-MECHANICAL-OBSERVABILITY-OPERATOR-v1`.  Groups are by configuration ID
-for the first three and by operator ID for the last.
+`MLS-MECHANICAL-OBSERVABILITY-OPERATOR-v1`, plus
+`MLS-MECHANICAL-OBSERVABILITY-PERMUTATION-OPERATOR-v2`. Groups are by
+configuration ID for the first three, by operator ID for the primary
+operator, and by control ID for the permutation operator.
+
+An operator with `raw_exported=false` has
+`operator_payload_sha256=NA` and no `operator_entries.csv` rows. There is no
+empty-group digest. A built/decision-driving B/C/D row must instead export its
+complete nonzero primary operator.
 
 Candidate A uses transient quadratic-grid spacing equal to the configuration's
 scaled `nominal_spacing_m`; its origin is the registered componentwise phase
@@ -149,10 +268,79 @@ is lifted into all three velocity components and exported in
 in full. The validator rebuilds both matrices from packet and grid-node
 geometry before accepting a gauge counterexample.
 
-Each configuration has one canonical `MLSMOBS1` version-1 little-endian input
-checkpoint row. The validator decodes and canonically reserializes its support
-radius, packets, retained bonds, and supplied validated volume-relation subset;
-two producer-supplied hashes are not checkpoint evidence.
+Each configuration has exactly three canonical `MLSMOBS1` version-1
+little-endian checkpoint rows, sorted in this closed kind order:
+`authoritative_before`, `round_trip_reserialized`, `after_diagnostics`. Every
+row independently binds its lower-case hex bytes, byte count, and SHA-256; the
+validator parses and canonically reserializes each payload. Packet, relation,
+and configuration semantic input tables bind `authoritative_before`.
+`input_checkpoint_sha256_before` binds that row and
+`input_checkpoint_sha256_after` binds `after_diagnostics`.
+`checkpoint_round_trip_all_pass` is derived from byte equality of the before
+and reserialized rows; `diagnostics_read_only_all_exact` is derived from byte
+equality of before and after. A structurally valid canonical mismatch is
+preserved as negative evidence and forces a stop. A malformed, noncanonical,
+missing, or extra checkpoint row makes the bundle invalid.
+
+The D inventory is global and exact. The exact enriched-square D operator is
+always built. Otherwise, the validator derives the trigger from independently
+ranked `generic_solid_gate=true` C rows. With no resolved generic C non-rigid
+mode, every non-exact D status is `not_triggered` and no non-exact volume tuple
+is present. If any generic C row triggers D, every non-exact configuration
+inherits the selector result frozen on its original/base geometry, and every
+metamorphic variant retains those physical relation IDs. D is built exactly
+when that selected tuple set is nonempty; an empty set remains
+`not_triggered`. Non-generic D rows are diagnostic only. The final scientific
+decision ranges over the complete generic D inventory.
+
+Every built B/C/D operator has exactly one permutation control, with
+`control_id=permutation.<operator_id>` and the same identifier in
+`invariance.csv`. `permutation_kind` is exactly
+`sha256_packet_relation_permutation_v2` and `permutation_seed` is `260828`.
+The packet permutation is derived per configuration. For every
+canonical packet ID, hash the exact UTF-8 ASCII preimage
+`260828|packet_permutation|<configuration_id>|<packet_id>`, sort ascending by
+`(SHA-256 digest bytes, packet_id)`, and, only if this is still the canonical
+ascending order and there is more than one packet, rotate the result left by
+one. `packet_order` joins the resulting canonical-decimal IDs with `:`.
+Identity packet evidence is invalid for a multi-packet configuration.
+
+For C and D, independently hash every relevant retained canonical relation ID
+using the exact UTF-8 ASCII preimage
+`260828|relation_permutation|<configuration_id>|<candidate>|<relation_id>`,
+sort by `(SHA-256 digest bytes, relation_id)`, and rotate left once if the
+result is still the canonical relation order and there is more than one
+relation. `relation_order` joins those IDs with `:`. It is `NA` for B.
+Identity relation evidence is invalid when more than one relation exists.
+
+The producer rebuilds the operator from packets supplied in the actual packet
+order, then exports an order-sensitive raw storage layout. B rows are
+`packet_order` blocks of six and its columns are `packet_order` blocks of
+three. C/D rows follow `relation_order`, and their columns follow
+`packet_order` blocks of three. In every `permutation_entries.csv` row,
+`row_index` and `column_index` are these raw storage indices, while
+`row_owner_id`, `domain_id`, and components bind each block to its semantic
+identity. Every nonzero raw entry is exported. A copied canonical primary
+matrix interpreted under these raw mappings is invalid.
+
+`raw_payload_sha256` is the grouped-entry digest above.
+`raw_dense_payload_sha256` hashes ASCII
+`MLS-MECHANICAL-OBSERVABILITY-RAW-PERMUTED-OPERATOR-v2` followed by LF,
+little-endian uint64 row and column counts, then every raw row-major IEEE-754
+binary64 bit pattern as little-endian uint64, including zeros. Every numerical
+zero is encoded as positive zero because sparse entries do not bind a signed
+zero. The independent
+validator derives packet/relation orders, rebuilds this raw matrix and both
+raw hashes, then canonicalizes through the exported semantic mappings rather
+than accepting the producer's equality flag.
+
+For the two canonical matrix hashes, semantic packet and relation identities
+first restore canonical row and column order. The byte payload is ASCII
+`MLS-MECHANICAL-OBSERVABILITY-CANONICAL-OPERATOR-v1` followed by LF, then
+little-endian uint64 row count and column count, then every row-major IEEE-754
+binary64 bit pattern as little-endian uint64. Positive zero is canonical.
+`canonical_payload_sha256` binds the alternate run and
+`baseline_payload_sha256` binds the primary operator; they must match exactly.
 
 ## Summary and manifest
 
@@ -172,11 +360,19 @@ tolerances
 
 The schema is `mls.mechanical-observability.summary.v1`, the producer is
 `cpp_mechanical_observability_lab`, and promotion is always false.  Smoke
-output is provisional and not sealable.  Candidate findings are keyed
-exactly `A`, `B`, `C`, and `D`.  Overall decisions are limited to the four
-outcomes frozen in the preregistration.
+output is provisional and not sealable. The validation-only smoke subset is
+exactly `base.filament.r205.original`,
+`base.filament.r205.original.translation`, and
+`exact.planar_square_plus_diagonal_and_volume`. It is a compact positive wire
+fixture that exercises the A gauge, a genuine metamorphic comparison,
+built-D/non-rigid quotient, checkpoint, and exact-reference paths without
+changing the full 59-configuration experiment. The filament `.rotation`
+variant remains mandatory in the full matrix; smoke exclusion neither hides
+nor reclassifies its result. Candidate findings are keyed exactly `A`, `B`,
+`C`, and `D`. Overall decisions are limited to the four outcomes frozen in the
+preregistration.
 
 `manifest.json` has exactly `algorithm`, `files`, `pre_hash_sha256`, and
 `schema`.  Its schema is `mls.mechanical-observability.manifest.v1`; it covers
-the seventeen CSV files and `summary.json` using SHA-256.  This manifest and a
+the nineteen CSV files and `summary.json` using SHA-256.  This manifest and a
 later outer seal are integrity records, not signatures.

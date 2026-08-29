@@ -192,6 +192,23 @@ rotation, uniform scaling, packet permutation, lookup-grid phase, and
 orientation variants are separate metamorphic evidence. Scale covariance is
 not called objectivity.
 
+Finite binary64 evidence uses end-to-end operation counts 72 for a bond and
+134 for an oriented volume. The forward-error scale includes the absolute
+similarity-transform construction and coordinate-cancellation intermediates.
+For `y=sQx+t`, set
+`P_a(x)=|s|*((|Q_a0*x_0|+|Q_a1*x_1|)+|Q_a2*x_2|)+|t_a|`. For a site `p`
+relative to `c`, set `R_a=|x_p,a|+|x_c,a|` and
+`T_a=P_a(x_p)+P_a(x_c)`. A bond scale is
+`max(minnormal, |s|*sum(R)+sum(T)+|measured|+|target|)`, with each three-term
+sum and the outer additions evaluated left to right. For volumes, replace the
+vector sums by the six-monomial determinant envelope
+`E(a,b,c)=sum_abs_terms(det(a,b,c))`; the scale is
+`max(minnormal, |s|^3*E(R1,R2,R3)+E(T1,T2,T3)+|measured|+|target|)`, again in
+the registered left-to-right grouping. This contract is limited to the five
+declared transforms. The unchanged gate is
+`absolute_error <= 256*gamma(k)*scale+256*minnormal`; no unit-valued absolute
+floor is permitted.
+
 ## 9. Conservation and accounting boundary
 
 The experiment is read-only. It changes no mass, momentum, energy, clock, or
