@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -130,6 +131,13 @@ struct LocalMomentDiagnostic final {
     double smallest_eigenvalue_m2{0.0};
     double largest_eigenvalue_m2{0.0};
     double condition_number{0.0};
+    // The inverse is accepted only when this independently evaluated product
+    // residual satisfies the frozen 4096*3*epsilon64 gate.
+    double inverse_residual_normalized{
+        std::numeric_limits<double>::infinity()};
+    double inverse_residual_tolerance{
+        4096.0 * 3.0 * std::numeric_limits<double>::epsilon()};
+    bool inverse_accepted{false};
     OperatorBuildStatus status{OperatorBuildStatus::empty};
 };
 
@@ -174,6 +182,23 @@ struct VolumeOperator final {
 [[nodiscard]] VolumeOperator build_oriented_volume_operator(
     std::span<const MechanicalPacket> packets,
     std::span<const VolumeRelation> relations);
+
+// Frozen candidate-D topology rule. For every center with at least three
+// incident bond neighbors, choose the sorted neighbor triple maximizing the
+// registered objective area score, with stable-ID lexicographic ties. A
+// center whose maximum score is zero emits no tuple.
+[[nodiscard]] std::vector<VolumeRelation> select_oriented_volume_relations(
+    std::span<const MechanicalPacket> packets,
+    std::span<const BondRelation> bonds);
+
+// Empty volumes are a valid candidate-C state. Every tuple in a nonempty D
+// state must equal the selector's canonical choice for its center, with at
+// most one tuple per center. This permits explicit registered subsets while
+// rejecting arbitrary, multiple-per-center, and nonincident tuples.
+void validate_selected_oriented_volume_relations(
+    std::span<const MechanicalPacket> packets,
+    std::span<const BondRelation> bonds,
+    std::span<const VolumeRelation> volumes);
 
 [[nodiscard]] LinearizedOperator combine_relational_operators(
     const BondOperator& bonds, const VolumeOperator& volumes);

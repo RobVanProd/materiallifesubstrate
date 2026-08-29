@@ -7,7 +7,10 @@
 #include <limits>
 #include <map>
 #include <numeric>
+#include <optional>
+#include <set>
 #include <stdexcept>
+#include <string>
 #include <tuple>
 #include <utility>
 
@@ -118,6 +121,25 @@ namespace {
         result.push_back(packet.id);
     }
     return result;
+}
+
+[[nodiscard]] std::size_t checked_product(
+    std::size_t value, std::size_t multiplier,
+    std::string_view description) {
+    if (multiplier != 0U &&
+        value > std::numeric_limits<std::size_t>::max() / multiplier) {
+        throw std::length_error(std::string(description) + " dimension overflow");
+    }
+    return value * multiplier;
+}
+
+[[nodiscard]] std::size_t checked_sum(
+    std::size_t first, std::size_t second,
+    std::string_view description) {
+    if (first > std::numeric_limits<std::size_t>::max() - second) {
+        throw std::length_error(std::string(description) + " dimension overflow");
+    }
+    return first + second;
 }
 
 [[nodiscard]] bool inside_support(
@@ -246,6 +268,43 @@ void add_scaled_outer(
     inverse.value[2][2] = a[0][0] * a[1][1] - a[0][1] * a[1][0];
     inverse = scaled_matrix(inverse, 1.0 / (determinant * scale));
     return finite(inverse);
+}
+
+[[nodiscard]] double matrix3_frobenius(const Matrix3d& matrix) noexcept {
+    std::array<double, 9> entries{};
+    std::size_t index = 0U;
+    for (const auto& row : matrix.value) {
+        for (const auto value : row) {
+            entries[index++] = value;
+        }
+    }
+    return stable_l2(entries);
+}
+
+[[nodiscard]] double inverse_product_residual(
+    const Matrix3d& matrix, const Matrix3d& inverse) noexcept {
+    Matrix3d residual{};
+    for (std::size_t row = 0U; row < 3U; ++row) {
+        for (std::size_t column = 0U; column < 3U; ++column) {
+            long double value = 0.0L;
+            for (std::size_t inner = 0U; inner < 3U; ++inner) {
+                value += static_cast<long double>(matrix.value[row][inner]) *
+                    inverse.value[inner][column];
+            }
+            if (row == column) {
+                value -= 1.0L;
+            }
+            residual.value[row][column] = static_cast<double>(value);
+        }
+    }
+    const auto numerator = matrix3_frobenius(residual);
+    const auto denominator = std::max(
+        1.0, matrix3_frobenius(matrix) * matrix3_frobenius(inverse));
+    if (!std::isfinite(numerator) || !std::isfinite(denominator) ||
+        !(denominator > 0.0)) {
+        return std::numeric_limits<double>::infinity();
+    }
+    return numerator / denominator;
 }
 
 [[nodiscard]] double long_double_triple(Vec3d a, Vec3d b, Vec3d c) {
@@ -386,8 +445,15 @@ struct PivotedQr final {
         }
         const auto selected_norm = std::sqrt(
             static_cast<double>(std::max(0.0L, selected_squared)));
-        if (!(selected_norm > 0.0) || !std::isfinite(selected_norm)) {
-            break;
+        if (!std::isfinite(selected_norm)) {
+            return result;
+        }
+        if (!(selected_norm > 0.0)) {
+            // Preserve every structural-zero step in the deterministic trace.
+            // All remaining trailing norms are zero, but retaining each step
+            // makes the pivot evidence complete rather than silently short.
+            result.diagonals.push_back(0.0);
+            continue;
         }
         if (selected != step) {
             for (std::size_t row = 0; row < result.rows; ++row) {
@@ -403,8 +469,12 @@ struct PivotedQr final {
             norm_squared += static_cast<long double>(value) * value;
         }
         const auto column_norm = std::sqrt(static_cast<double>(norm_squared));
-        if (!(column_norm > 0.0) || !std::isfinite(column_norm)) {
-            break;
+        if (!std::isfinite(column_norm)) {
+            return result;
+        }
+        if (!(column_norm > 0.0)) {
+            result.diagonals.push_back(0.0);
+            continue;
         }
         const auto first = result.factor[step * result.columns + step];
         const auto alpha = first >= 0.0 ? -column_norm : column_norm;
@@ -440,9 +510,10 @@ struct PivotedQr final {
         }
         result.diagonals.push_back(std::abs(alpha));
     }
-    result.ok = std::ranges::all_of(result.factor, [](double value) {
-        return std::isfinite(value);
-    });
+    result.ok = result.diagonals.size() == steps &&
+        std::ranges::all_of(result.factor, [](double value) {
+            return std::isfinite(value);
+        });
     return result;
 }
 
@@ -519,7 +590,8 @@ struct PivotedQr final {
     std::span<const MechanicalPacket> packets) {
     const auto canonical = canonical_packets(packets);
     if (packet_ids(canonical) != linearized.packet_ids ||
-        linearized.matrix.column_count() != 3U * canonical.size()) {
+        linearized.matrix.column_count() !=
+            checked_product(canonical.size(), 3U, "packet velocity")) {
         throw std::invalid_argument("operator and packet identity sets disagree");
     }
     return canonical;
@@ -715,6 +787,7 @@ std::vector<std::uint8_t> serialize_mechanical_observability_state(
     const auto lookup = packet_lookup(packets);
     const auto bonds = validate_bonds(lookup, state.bonds);
     const auto volumes = validate_volumes(lookup, state.volumes);
+    validate_selected_oriented_volume_relations(packets, bonds, volumes);
     // These calls additionally reject coincident bond endpoints and a volume
     // tuple whose complete linearized observable is zero.
     static_cast<void>(build_bond_rigidity_operator(packets, bonds));
@@ -857,8 +930,11 @@ CorrectedGradientOperator build_corrected_local_gradient(
         return result;
     }
     const auto count = canonical.size();
-    result.symmetric_gradient.matrix = DenseMatrix(6U * count, 3U * count);
-    result.full_gradient = DenseMatrix(9U * count, 3U * count);
+    const auto velocity_dofs = checked_product(count, 3U, "packet velocity");
+    const auto symmetric_rows = checked_product(count, 6U, "symmetric gradient");
+    const auto full_rows = checked_product(count, 9U, "full gradient");
+    result.symmetric_gradient.matrix = DenseMatrix(symmetric_rows, velocity_dofs);
+    result.full_gradient = DenseMatrix(full_rows, velocity_dofs);
     result.local_moments.reserve(count);
     auto aggregate_status = OperatorBuildStatus::built;
 
@@ -870,12 +946,18 @@ CorrectedGradientOperator build_corrected_local_gradient(
     for (std::size_t particle = 0; particle < count; ++particle) {
         std::vector<Neighbor> neighbors;
         Matrix3d moment{};
+        bool coordinate_subtraction_failed = false;
         for (std::size_t candidate = 0; candidate < count; ++candidate) {
             if (candidate == particle) {
                 continue;
             }
             const auto offset = canonical[candidate].position_m -
                 canonical[particle].position_m;
+            if (!finite(offset)) {
+                coordinate_subtraction_failed = true;
+                aggregate_status = OperatorBuildStatus::numerical_failure;
+                continue;
+            }
             double squared_ratio = 0.0;
             if (!inside_support(offset, policy.support_radius_m, squared_ratio)) {
                 continue;
@@ -896,7 +978,7 @@ CorrectedGradientOperator build_corrected_local_gradient(
         diagnostic.moment_m2 = moment;
         diagnostic.status = OperatorBuildStatus::built;
         Matrix3d inverse{};
-        if (!finite(moment)) {
+        if (coordinate_subtraction_failed || !finite(moment)) {
             diagnostic.status = OperatorBuildStatus::numerical_failure;
         } else {
             const auto eigenvalues = symmetric_eigenvalues(moment);
@@ -921,6 +1003,17 @@ CorrectedGradientOperator build_corrected_local_gradient(
                 } else if (!inverse_symmetric_positive(moment, inverse)) {
                     diagnostic.status =
                         OperatorBuildStatus::singular_local_moment;
+                } else {
+                    diagnostic.inverse_residual_normalized =
+                        inverse_product_residual(moment, inverse);
+                    diagnostic.inverse_accepted =
+                        std::isfinite(diagnostic.inverse_residual_normalized) &&
+                        diagnostic.inverse_residual_normalized <=
+                            diagnostic.inverse_residual_tolerance;
+                    if (!diagnostic.inverse_accepted) {
+                        diagnostic.status =
+                            OperatorBuildStatus::numerical_failure;
+                    }
                 }
             }
         }
@@ -965,7 +1058,7 @@ CorrectedGradientOperator build_corrected_local_gradient(
 
         const auto copy_diagonal = [&](std::size_t output, std::size_t axis) {
             const auto full_row = 9U * particle + 3U * axis + axis;
-            for (std::size_t column = 0; column < 3U * count; ++column) {
+            for (std::size_t column = 0; column < velocity_dofs; ++column) {
                 result.symmetric_gradient.matrix(6U * particle + output, column) =
                     result.full_gradient(full_row, column);
             }
@@ -979,7 +1072,7 @@ CorrectedGradientOperator build_corrected_local_gradient(
               std::tuple{5U, 1U, 2U}}) {
             const auto first_row = 9U * particle + 3U * first + second;
             const auto second_row = 9U * particle + 3U * second + first;
-            for (std::size_t column = 0; column < 3U * count; ++column) {
+            for (std::size_t column = 0; column < velocity_dofs; ++column) {
                 result.symmetric_gradient.matrix(6U * particle + output, column) =
                     inverse_sqrt_two *
                     (result.full_gradient(first_row, column) +
@@ -1008,7 +1101,8 @@ BondOperator build_bond_rigidity_operator(
     result.linearized.packet_ids = packet_ids(canonical);
     result.relations = validate_bonds(lookup, relations);
     result.linearized.matrix =
-        DenseMatrix(result.relations.size(), 3U * canonical.size());
+        DenseMatrix(result.relations.size(),
+            checked_product(canonical.size(), 3U, "bond operator"));
     result.lengths_m.reserve(result.relations.size());
     for (std::size_t row = 0; row < result.relations.size(); ++row) {
         const auto& relation = result.relations[row];
@@ -1016,6 +1110,9 @@ BondOperator build_bond_rigidity_operator(
         const auto second = lookup.at(relation.second_id);
         const auto offset = canonical[second].position_m -
             canonical[first].position_m;
+        if (!finite(offset)) {
+            throw std::overflow_error("bond coordinate subtraction overflow");
+        }
         const auto length = stable_vector_norm(offset);
         if (!(length > 0.0) || !std::isfinite(length)) {
             throw std::invalid_argument("bond endpoints must be distinct and finite");
@@ -1044,7 +1141,8 @@ VolumeOperator build_oriented_volume_operator(
     result.linearized.packet_ids = packet_ids(canonical);
     result.relations = validate_volumes(lookup, relations);
     result.linearized.matrix =
-        DenseMatrix(result.relations.size(), 3U * canonical.size());
+        DenseMatrix(result.relations.size(),
+            checked_product(canonical.size(), 3U, "volume operator"));
     result.oriented_volumes_m3.reserve(result.relations.size());
     for (std::size_t row = 0; row < result.relations.size(); ++row) {
         const auto& relation = result.relations[row];
@@ -1055,6 +1153,9 @@ VolumeOperator build_oriented_volume_operator(
         const auto a = canonical[j].position_m - canonical[i].position_m;
         const auto b = canonical[k].position_m - canonical[i].position_m;
         const auto c = canonical[l].position_m - canonical[i].position_m;
+        if (!finite(a) || !finite(b) || !finite(c)) {
+            throw std::overflow_error("volume coordinate subtraction overflow");
+        }
         result.oriented_volumes_m3.push_back(long_double_triple(a, b, c));
         const auto coefficient_j = checked_cross(b, c);
         const auto coefficient_k = checked_cross(c, a);
@@ -1080,6 +1181,104 @@ VolumeOperator build_oriented_volume_operator(
     return result;
 }
 
+std::vector<VolumeRelation> select_oriented_volume_relations(
+    std::span<const MechanicalPacket> packets,
+    std::span<const BondRelation> bonds) {
+    const auto canonical = canonical_packets(packets);
+    const auto bond_operator = build_bond_rigidity_operator(canonical, bonds);
+    const auto lookup = packet_lookup(canonical);
+    std::map<std::uint64_t, std::vector<std::uint64_t>> neighbors;
+    for (const auto& packet : canonical) {
+        neighbors.emplace(packet.id, std::vector<std::uint64_t>{});
+    }
+    for (const auto& bond : bond_operator.relations) {
+        neighbors.at(bond.first_id).push_back(bond.second_id);
+        neighbors.at(bond.second_id).push_back(bond.first_id);
+    }
+    std::vector<VolumeRelation> result;
+    for (auto& [center, incident] : neighbors) {
+        std::ranges::sort(incident);
+        if (incident.size() < 3U) {
+            continue;
+        }
+        std::optional<VolumeRelation> selected;
+        long double maximum_score = 0.0L;
+        const auto center_position = canonical[lookup.at(center)].position_m;
+        for (std::size_t first = 0U; first + 2U < incident.size(); ++first) {
+            for (std::size_t second = first + 1U;
+                 second + 1U < incident.size(); ++second) {
+                for (std::size_t third = second + 1U;
+                     third < incident.size(); ++third) {
+                    const VolumeRelation candidate{
+                        center,
+                        {incident[first], incident[second], incident[third]}};
+                    const auto a = canonical[lookup.at(candidate.other_ids[0])]
+                                       .position_m - center_position;
+                    const auto b = canonical[lookup.at(candidate.other_ids[1])]
+                                       .position_m - center_position;
+                    const auto c = canonical[lookup.at(candidate.other_ids[2])]
+                                       .position_m - center_position;
+                    if (!finite(a) || !finite(b) || !finite(c)) {
+                        throw std::overflow_error(
+                            "volume selection coordinate subtraction overflow");
+                    }
+                    const std::array cross_products{
+                        checked_cross(b, c), checked_cross(c, a),
+                        checked_cross(a, b)};
+                    long double score = 0.0L;
+                    for (const auto value : cross_products) {
+                        score += static_cast<long double>(value.x) * value.x +
+                            static_cast<long double>(value.y) * value.y +
+                            static_cast<long double>(value.z) * value.z;
+                    }
+                    if (!std::isfinite(score)) {
+                        throw std::overflow_error(
+                            "volume selection score overflow");
+                    }
+                    if (score > maximum_score ||
+                        (score == maximum_score && selected.has_value() &&
+                         candidate.other_ids < selected->other_ids)) {
+                        maximum_score = score;
+                        selected = candidate;
+                    }
+                }
+            }
+        }
+        if (selected.has_value() && maximum_score > 0.0L) {
+            result.push_back(*selected);
+        }
+    }
+    return result;
+}
+
+void validate_selected_oriented_volume_relations(
+    std::span<const MechanicalPacket> packets,
+    std::span<const BondRelation> bonds,
+    std::span<const VolumeRelation> volumes) {
+    const auto canonical = canonical_packets(packets);
+    const auto lookup = packet_lookup(canonical);
+    static_cast<void>(validate_bonds(lookup, bonds));
+    const auto supplied = validate_volumes(lookup, volumes);
+    if (supplied.empty()) {
+        return;
+    }
+    const auto expected = select_oriented_volume_relations(canonical, bonds);
+    std::map<std::uint64_t, VolumeRelation> selected_by_center;
+    for (const auto& relation : expected) {
+        selected_by_center.emplace(relation.center_id, relation);
+    }
+    std::set<std::uint64_t> supplied_centers;
+    for (const auto& relation : supplied) {
+        const auto selected = selected_by_center.find(relation.center_id);
+        if (!supplied_centers.insert(relation.center_id).second ||
+            selected == selected_by_center.end() ||
+            selected->second != relation) {
+            throw std::invalid_argument(
+                "volume relation is not the unique deterministic selection for its center");
+        }
+    }
+}
+
 LinearizedOperator combine_relational_operators(
     const BondOperator& bonds, const VolumeOperator& volumes) {
     if (bonds.linearized.packet_ids != volumes.linearized.packet_ids ||
@@ -1091,8 +1290,8 @@ LinearizedOperator combine_relational_operators(
     result.kind = ObservableKind::enriched_bond_and_volume;
     result.packet_ids = bonds.linearized.packet_ids;
     result.matrix = DenseMatrix(
-        bonds.linearized.matrix.row_count() +
-            volumes.linearized.matrix.row_count(),
+        checked_sum(bonds.linearized.matrix.row_count(),
+            volumes.linearized.matrix.row_count(), "relational row"),
         bonds.linearized.matrix.column_count());
     for (std::size_t row = 0; row < bonds.linearized.matrix.row_count(); ++row) {
         for (std::size_t column = 0;
@@ -1254,7 +1453,8 @@ RankDiagnostics diagnose_rank_and_nullspace(
     result.column_permutation = qr.permutation;
     result.threshold = policy.roundoff_safety_factor *
         static_cast<double>(std::max(matrix.row_count(), matrix.column_count())) *
-        std::numeric_limits<double>::epsilon() * qr.diagonals.front();
+        std::numeric_limits<double>::epsilon() *
+        std::max(qr.diagonals.front(), std::numeric_limits<double>::min());
     result.ambiguity_lower = result.threshold / policy.ambiguity_factor;
     result.ambiguity_upper = result.threshold * policy.ambiguity_factor;
     for (const auto diagonal : qr.diagonals) {
@@ -1292,8 +1492,13 @@ RankDiagnostics diagnose_rank_and_nullspace(
     result.normalized_null_residual = result.basis_complete
         ? normalized_product_residual(matrix, result.nullspace_basis)
         : std::numeric_limits<double>::infinity();
+    const auto residual_tolerance = policy.residual_safety_factor *
+        static_cast<double>(std::max(
+            matrix.row_count(), matrix.column_count())) *
+        std::numeric_limits<double>::epsilon();
     if (!result.basis_complete ||
-        !std::isfinite(result.normalized_null_residual)) {
+        !std::isfinite(result.normalized_null_residual) ||
+        result.normalized_null_residual > residual_tolerance) {
         result.status = RankStatus::numerical_failure;
     } else {
         result.status = ambiguous ? RankStatus::ambiguous : RankStatus::analyzed;
@@ -1306,7 +1511,9 @@ RigidMotionSubspace build_rigid_motion_subspace(
     const auto canonical = canonical_packets(packets);
     RigidMotionSubspace result{};
     result.packet_ids = packet_ids(canonical);
-    result.generators = DenseMatrix(3U * canonical.size(), 6U);
+    const auto velocity_dofs =
+        checked_product(canonical.size(), 3U, "rigid generator");
+    result.generators = DenseMatrix(velocity_dofs, 6U);
     if (canonical.empty()) {
         return result;
     }
@@ -1332,7 +1539,7 @@ RigidMotionSubspace build_rigid_motion_subspace(
         }
     }
     const auto threshold = 256.0 * static_cast<double>(
-        std::max<std::size_t>(3U * canonical.size(), 6U)) *
+        std::max<std::size_t>(velocity_dofs, 6U)) *
         std::numeric_limits<double>::epsilon();
     result.orthonormal_basis =
         orthonormalize_columns(result.generators, threshold);
@@ -1405,6 +1612,14 @@ ObservabilityDiagnostics diagnose_mechanical_observability(
     if (result.rigid_subspace_in_kernel &&
         result.nonrigid_nullspace_basis.column_count() !=
             result.nonrigid_nullity) {
+        result.status = RankStatus::numerical_failure;
+    }
+    if (!std::isfinite(result.operator_rank.normalized_null_residual) ||
+        result.operator_rank.normalized_null_residual > tolerance ||
+        !std::isfinite(result.normalized_nonrigid_residual) ||
+        result.normalized_nonrigid_residual > tolerance ||
+        !std::isfinite(result.rigid_orthogonality_residual) ||
+        result.rigid_orthogonality_residual > tolerance) {
         result.status = RankStatus::numerical_failure;
     }
     result.kernel_equals_rigid_subspace =
