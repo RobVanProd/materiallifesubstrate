@@ -10,6 +10,7 @@ add_executable(
   physical_support_tests.cpp
   affine_advection_tests.cpp
   moving_apic_limit_tests.cpp
+  kelvin_covariance_audit_tests.cpp
   mechanical_observability_tests.cpp
   projection_exactness_nullspace_tests.cpp
   projection_foundation_tests.cpp
@@ -217,8 +218,113 @@ set_tests_properties(
     PASS_REGULAR_EXPRESSION "Mechanical Observability logic audit: PASS"
     TIMEOUT 30)
 
+add_test(
+  NAME mls.kelvin_covariance.smoke.a
+  COMMAND
+    mls_kelvin_covariance_diagnostic
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/kelvin-covariance-smoke-a")
+add_test(
+  NAME mls.kelvin_covariance.smoke.b
+  COMMAND
+    mls_kelvin_covariance_diagnostic
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/kelvin-covariance-smoke-b")
+set_tests_properties(
+  mls.kelvin_covariance.smoke.a
+  mls.kelvin_covariance.smoke.b
+  PROPERTIES
+    LABELS "deterministic;kelvin-covariance;smoke"
+    PASS_REGULAR_EXPRESSION "Decision: SUPPORTED_DIAGNOSTIC_COORDINATE_DEFECT"
+    TIMEOUT 120)
+
+add_test(
+  NAME mls.kelvin_covariance.schema.audit
+  COMMAND mls_kelvin_covariance_diagnostic --schema-audit)
+add_test(
+  NAME mls.kelvin_covariance.logic.audit
+  COMMAND mls_kelvin_covariance_diagnostic --logic-audit)
+set_tests_properties(
+  mls.kelvin_covariance.schema.audit
+  PROPERTIES
+    LABELS "deterministic;kelvin-covariance;schema"
+    PASS_REGULAR_EXPRESSION "Kelvin Covariance Audit schema audit: PASS"
+    TIMEOUT 30)
+set_tests_properties(
+  mls.kelvin_covariance.logic.audit
+  PROPERTIES
+    LABELS "deterministic;kelvin-covariance;logic"
+    PASS_REGULAR_EXPRESSION "Kelvin Covariance Audit logic audit: PASS"
+    TIMEOUT 30)
+
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
+  add_test(
+    NAME mls.kelvin_covariance.smoke.byte_compare
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/compare_evidence_directories.py"
+      --first
+      "${CMAKE_CURRENT_BINARY_DIR}/kelvin-covariance-smoke-a"
+      --second
+      "${CMAKE_CURRENT_BINARY_DIR}/kelvin-covariance-smoke-b")
+  set_tests_properties(
+    mls.kelvin_covariance.smoke.byte_compare
+    PROPERTIES
+      DEPENDS "mls.kelvin_covariance.smoke.a;mls.kelvin_covariance.smoke.b"
+      LABELS "deterministic;kelvin-covariance;smoke;independent"
+      PASS_REGULAR_EXPRESSION "smoke byte comparison: PASS"
+      TIMEOUT 30)
+
+  add_test(
+    NAME mls.kelvin_covariance.smoke.verify
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/reference/validate_kelvin_covariance_bundle.py"
+      --bundle
+      "${CMAKE_CURRENT_BINARY_DIR}/kelvin-covariance-smoke-a"
+      --compare
+      "${CMAKE_CURRENT_BINARY_DIR}/kelvin-covariance-smoke-b"
+      --allow-dirty)
+  set_tests_properties(
+    mls.kelvin_covariance.smoke.verify
+    PROPERTIES
+      DEPENDS "mls.kelvin_covariance.smoke.a;mls.kelvin_covariance.smoke.b"
+      LABELS "deterministic;kelvin-covariance;smoke;independent"
+      PASS_REGULAR_EXPRESSION "KELVIN COVARIANCE BUNDLE VALID"
+      TIMEOUT 120)
+
+  add_test(
+    NAME mls.kelvin_covariance.validator.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/kelvin_covariance_bundle_validator_test.py"
+      --validator
+      "${PROJECT_SOURCE_DIR}/reference/validate_kelvin_covariance_bundle.py"
+      --bundle
+      "${CMAKE_CURRENT_BINARY_DIR}/kelvin-covariance-smoke-a")
+  set_tests_properties(
+    mls.kelvin_covariance.validator.regression
+    PROPERTIES
+      DEPENDS "mls.kelvin_covariance.smoke.a"
+      LABELS "deterministic;kelvin-covariance;validator;independent"
+      PASS_REGULAR_EXPRESSION
+        "kelvin covariance bundle validator regression: PASS"
+      TIMEOUT 120)
+
+  add_test(
+    NAME mls.kelvin_covariance.seal.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/kelvin_covariance_seal_test.py")
+  set_tests_properties(
+    mls.kelvin_covariance.seal.regression
+    PROPERTIES
+      LABELS "deterministic;kelvin-covariance;seal;independent"
+      PASS_REGULAR_EXPRESSION
+        "kelvin covariance outer-seal mutation regression: PASS"
+      TIMEOUT 60)
+
   add_test(
     NAME mls.projection_exactness_nullspace.smoke.byte_compare
     COMMAND
@@ -395,6 +501,32 @@ if(Python3_Interpreter_FOUND)
       LABELS "deterministic;exact;projection-nullspace;independent"
       PASS_REGULAR_EXPRESSION "result_sha256_before_hash_field"
       TIMEOUT 60)
+
+  add_test(
+    NAME mls.kelvin_covariance.exact.oracle
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/reference/kelvin_covariance_oracle.py"
+      --verify
+      "${CMAKE_CURRENT_SOURCE_DIR}/kelvin_covariance_oracle.canonical.json")
+  set_tests_properties(
+    mls.kelvin_covariance.exact.oracle
+    PROPERTIES
+      LABELS "deterministic;exact;kelvin-covariance;independent"
+      PASS_REGULAR_EXPRESSION "result_sha256_before_hash_field"
+      TIMEOUT 60)
+
+  add_test(
+    NAME mls.kelvin_covariance.exact.oracle.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/kelvin_covariance_oracle_test.py")
+  set_tests_properties(
+    mls.kelvin_covariance.exact.oracle.regression
+    PROPERTIES
+      LABELS "deterministic;exact;kelvin-covariance;independent"
+      PASS_REGULAR_EXPRESSION "kelvin covariance exact-oracle regression: PASS"
+      TIMEOUT 90)
 
   add_test(
     NAME mls.mechanical_observability.exact.oracle
