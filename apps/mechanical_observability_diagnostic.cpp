@@ -794,7 +794,7 @@ void add_radius_relations(Configuration& configuration) {
             static_cast<std::uint64_t>(index) + 1U, packet_mass_quanta,
             positions[index], {}});
     }
-    for (const auto [first, second] : edges) {
+    for (const auto& [first, second] : edges) {
         const mo::BondRelation bond{std::min(first, second), std::max(first, second)};
         result.edges.push_back({
             "bond." + std::to_string(bond.first_id) + "." +
@@ -814,7 +814,7 @@ void add_radius_relations(Configuration& configuration) {
                                   std::vector<mo::MechanicalPacket> packets,
                                   std::initializer_list<std::pair<std::string_view, double>> profiles,
                                   bool flexible = false) {
-        for (const auto [profile, ratio] : profiles) {
+        for (const auto& [profile, ratio] : profiles) {
             result.push_back(make_base_configuration(
                 std::string(family), std::string(profile), ratio, packets,
                 flexible));
@@ -1661,7 +1661,7 @@ struct LookupPhase final {
     Vec3d fraction{};
 };
 
-constexpr std::array<LookupPhase, 2> lookup_phases{{
+const std::array<LookupPhase, 2> lookup_phases{{
     {"p000", {0.0, 0.0, 0.0}},
     {"p037_011_029", {0.37, 0.11, 0.29}}
 }};
