@@ -651,7 +651,9 @@ struct PivotedQr final {
     }
     const auto threshold = rank_roundoff_safety_factor *
         static_cast<double>(std::max(rows, columns)) *
-        std::numeric_limits<double>::epsilon() * largest_initial_column_norm;
+        std::numeric_limits<double>::epsilon() *
+        std::max(largest_initial_column_norm,
+                 std::numeric_limits<double>::min());
     result.rank_threshold = threshold;
     const auto steps = std::min(rows, columns);
     result.smallest_accepted_diagonal = std::numeric_limits<double>::infinity();
@@ -1530,7 +1532,7 @@ NullspaceDiagnostics diagnose_gram_nullspace(
         long double gradient_bound_squared = 0.0L;
         for (std::size_t particle = 0; particle < result.particle_count; ++particle) {
             Vec3d accumulated{};
-            std::array<long double, 3> absolute_sums{};
+            long double absolute_norm_sum = 0.0L;
             for (const auto& entry : system.particle_stencils()[particle]) {
                 const auto node = system.active_node_positions_m()[entry.node_index];
                 const auto gradient = basis_gradient(
@@ -1538,29 +1540,21 @@ NullspaceDiagnostics diagnose_gram_nullspace(
                     node,
                     system.config().grid_spacing_m);
                 accumulated += mode.nodal_mode[entry.node_index] * gradient.gradient_m_inv;
-                absolute_sums[0] += std::abs(
-                    static_cast<long double>(mode.nodal_mode[entry.node_index]) *
-                    gradient.gradient_m_inv.x);
-                absolute_sums[1] += std::abs(
-                    static_cast<long double>(mode.nodal_mode[entry.node_index]) *
-                    gradient.gradient_m_inv.y);
-                absolute_sums[2] += std::abs(
-                    static_cast<long double>(mode.nodal_mode[entry.node_index]) *
-                    gradient.gradient_m_inv.z);
+                absolute_norm_sum += std::abs(static_cast<long double>(
+                    mode.nodal_mode[entry.node_index])) *
+                    static_cast<long double>(norm(gradient.gradient_m_inv));
             }
             mode.particle_gradient_m_inv[particle] = accumulated;
             const auto magnitude = norm(accumulated);
             gradient_squared += static_cast<long double>(magnitude) * magnitude;
             mode.particle_gradient_max_m_inv = std::max(
                 mode.particle_gradient_max_m_inv, magnitude);
-            for (const auto absolute_sum : absolute_sums) {
-                const auto bound = gamma_n(
-                    8U * system.particle_stencils()[particle].size() + 8U) *
-                    static_cast<double>(absolute_sum);
-                gradient_bound_squared += static_cast<long double>(bound) * bound;
-                mode.particle_gradient_roundoff_bound_max_m_inv = std::max(
-                    mode.particle_gradient_roundoff_bound_max_m_inv, bound);
-            }
+            const auto bound = 128.0 * gamma_n(
+                3U * system.particle_stencils()[particle].size()) *
+                static_cast<double>(absolute_norm_sum);
+            gradient_bound_squared += static_cast<long double>(bound) * bound;
+            mode.particle_gradient_roundoff_bound_max_m_inv = std::max(
+                mode.particle_gradient_roundoff_bound_max_m_inv, bound);
         }
         mode.particle_gradient_l2_m_inv =
             std::sqrt(static_cast<double>(gradient_squared));
@@ -1577,8 +1571,11 @@ NullspaceDiagnostics diagnose_gram_nullspace(
         }
         mode.perturbed_grid_difference_l2_m_per_s =
             std::sqrt(static_cast<double>(grid_difference_squared));
-        mode.perturbed_equation_residual_l2_kg_m_per_s = vec_l2_norm(
-            equation_residual(system, perturbed));
+        const auto perturbed_residual = equation_residual(system, perturbed);
+        mode.perturbed_equation_residual_l2_kg_m_per_s =
+            vec_l2_norm(perturbed_residual);
+        mode.equation_residual_change_l2_kg_m_per_s = vec_l2_norm(
+            subtract_vectors(perturbed_residual, representative_residual));
         const auto perturbed_particles = reconstructed_velocities(system, perturbed);
         const auto particle_difference = subtract_vectors(
             perturbed_particles, representative_particles);

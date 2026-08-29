@@ -204,6 +204,7 @@ struct NullspaceModeDiagnostics final {
     double particle_gradient_roundoff_bound_max_m_inv{0.0};
     double perturbed_grid_difference_l2_m_per_s{0.0};
     double perturbed_equation_residual_l2_kg_m_per_s{0.0};
+    double equation_residual_change_l2_kg_m_per_s{0.0};
     double perturbed_particle_difference_l2_m_per_s{0.0};
     double perturbed_particle_difference_max_m_per_s{0.0};
 };

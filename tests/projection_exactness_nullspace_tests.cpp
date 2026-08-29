@@ -200,6 +200,9 @@ MLS_TEST("projection Gram QR exhibits center invisible gradient visible modes") 
         MLS_REQUIRE(mode.mass_image_relative < 2.0e-14);
         MLS_REQUIRE(mode.particle_center_image_relative < 2.0e-14);
         MLS_REQUIRE(mode.perturbed_particle_difference_max_m_per_s < 2.0e-14);
+        MLS_REQUIRE(std::abs(
+            mode.equation_residual_change_l2_kg_m_per_s -
+            mode.mass_image_l2_kg) < 2.0e-14);
         gradient_visible = gradient_visible ||
             mode.particle_gradient_max_m_inv >
                 1.0e4 * mode.particle_gradient_roundoff_bound_max_m_inv;
