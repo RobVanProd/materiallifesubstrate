@@ -126,6 +126,42 @@ set_tests_properties(
     PASS_REGULAR_EXPRESSION "Projection Foundation full schema audit: PASS"
     TIMEOUT 30)
 
+add_test(
+  NAME mls.projection_exactness_nullspace.smoke.a
+  COMMAND
+    mls_projection_exactness_nullspace_diagnostic
+    --smoke
+    --jobs 2
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/projection-exactness-nullspace-smoke-a")
+add_test(
+  NAME mls.projection_exactness_nullspace.smoke.b
+  COMMAND
+    mls_projection_exactness_nullspace_diagnostic
+    --smoke
+    --jobs 2
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/projection-exactness-nullspace-smoke-b")
+set_tests_properties(
+  mls.projection_exactness_nullspace.smoke.a
+  mls.projection_exactness_nullspace.smoke.b
+  PROPERTIES
+    LABELS "deterministic;projection-nullspace;smoke"
+    PASS_REGULAR_EXPRESSION
+      "Projection Exactness \\+ Nullspace provisional smoke evidence written"
+    TIMEOUT 180)
+
+add_test(
+  NAME mls.projection_exactness_nullspace.schema.audit
+  COMMAND mls_projection_exactness_nullspace_diagnostic --schema-audit)
+set_tests_properties(
+  mls.projection_exactness_nullspace.schema.audit
+  PROPERTIES
+    LABELS "deterministic;projection-nullspace;schema"
+    PASS_REGULAR_EXPRESSION
+      "Projection Exactness \\+ Nullspace schema audit: PASS"
+    TIMEOUT 30)
+
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
   add_test(
@@ -239,6 +275,21 @@ if(Python3_Interpreter_FOUND)
       LABELS "deterministic;projection-nullspace;validator;independent"
       PASS_REGULAR_EXPRESSION
         "Projection exactness/nullspace validator regression: PASS"
+      TIMEOUT 180)
+
+  add_test(
+    NAME mls.projection_exactness_nullspace.seal.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/projection_exactness_nullspace_seal_test.py"
+      --tool
+      "${PROJECT_SOURCE_DIR}/tools/seal_projection_exactness_nullspace_evidence.py")
+  set_tests_properties(
+    mls.projection_exactness_nullspace.seal.regression
+    PROPERTIES
+      LABELS "deterministic;projection-nullspace;seal;independent"
+      PASS_REGULAR_EXPRESSION
+        "projection exactness/nullspace outer seal mutation regression PASS"
       TIMEOUT 180)
 
   add_test(
