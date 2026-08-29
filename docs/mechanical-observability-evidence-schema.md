@@ -114,6 +114,21 @@ an operator.  An edge uses `first_id,second_id`; a volume relation uses
 The deletion-order preimage is the UTF-8 byte sequence
 `260828|configuration_id|low_id|high_id`, with IDs in canonical decimal.
 
+Each grouped payload digest begins with its ASCII domain followed by LF.  Each
+emitted group row then contributes, in header order, NUL followed by the UTF-8
+cell text for every field, followed by LF.  The four domains are
+`MLS-MECHANICAL-OBSERVABILITY-PACKETS-v1`,
+`MLS-MECHANICAL-OBSERVABILITY-NEIGHBORS-v1`,
+`MLS-MECHANICAL-OBSERVABILITY-RELATIONS-v1`, and
+`MLS-MECHANICAL-OBSERVABILITY-OPERATOR-v1`.  Groups are by configuration ID
+for the first three and by operator ID for the last.
+
+Candidate A uses transient quadratic-grid spacing equal to the configuration's
+scaled `nominal_spacing_m`; its origin is the registered componentwise phase
+times that spacing.  Exact-control packet IDs are one-based, so the
+preregistered square index tuple `(0,1,2,3)` is emitted as packet-ID tuple
+`(1,2,3,4)` without changing its geometry or orientation.
+
 ## Summary and manifest
 
 `summary.json` has exactly these top-level members:
