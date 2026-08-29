@@ -56,3 +56,15 @@ the ideal rational coordinates of exactly
 `31397/253327479039590400 m` (about `1.2393839041477703e-13 m`); this corrected
 the narrower preliminary estimate without changing a scientific tolerance,
 rank rule, candidate, or decision rule.
+
+The first clean local build after that amendment, source
+`c2d6500d2cd97f5fdf4b96e93a5a39870593c3ff`, preserved another validation
+failure. CTest completed all 47 tests in `1298.88 s`; 46 passed and
+`mls.mechanical_observability.smoke.verify` failed because `--allow-smoke`
+incorrectly selected the legacy pre-q50 geometry for every non-full bundle.
+The fresh smoke producer itself emitted q50 coordinates. The validator now
+uses q50 by default for current smoke and full evidence. Byte-authentic legacy
+synthetic fixtures require an explicit, default-off
+`--legacy-pre-q50-test-fixture` flag together with `--allow-smoke`, and that
+flag is rejected for full summaries. The failed CTest run is not reclassified
+as a passing run.
