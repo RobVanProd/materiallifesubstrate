@@ -10,6 +10,66 @@ No candidate, configuration, tolerance, rank rule, or decision rule below may
 change after the final full producer is run. Exploratory output is marked
 dirty/provisional and cannot be sealed.
 
+## 0. Pre-final affine-realization amendment (2026-08-29)
+
+The rejected full sweep produced at source `2e563edac0bb7dfe721e471a0c171ca84b8b9075`
+remains unchanged. Its two preserved bundles exposed an implementation-level
+inconsistency before any evidence was sealed: independently rounding every
+coordinate of an exact rational similarity transform made an intended
+filament microscopically three-dimensional and made several intended sheets
+microscopically nonplanar. In particular, the emitted
+`base.filament.r205.original.rotation_translation` packet positions had exact
+dyadic affine rank three and rigid-generator rank six, while the binary64
+rigid-basis construction resolved rank five. The rejected sweep and this
+finding remain negative provenance; they are not rewritten by this amendment.
+
+Before the next full producer run, every rational fixture is realized through
+one common dyadic affine lattice. For each configuration, write all untransformed
+rational packet coordinates as integer triples over their least common
+denominator `D`. Apply the registered rational rotation, scale, and translation
+to one affine origin and to the three `1/D m` coordinate increments. Round
+those twelve affine-frame quantities once, ties-to-even, to the fixed quantum
+
+\[
+q_x=2^{-50}\ \mathrm{m}.
+\]
+
+Reconstruct every emitted packet position from the resulting integer origin,
+integer basis increments, and the packet's unchanged integer coordinate
+triple. Jitter-offset evidence uses the same quantized linear basis without
+the affine origin. This rule is generic: it is not conditional on a filament,
+sheet, candidate, observed rank, or outcome. The emitted binary64 packet
+positions remain the sole state consumed by every observability operator; the
+integer frame is fixture-construction machinery and is not persistent physical
+or numerical auxiliary state.
+
+The producer must fail closed unless every reconstruction intermediate fits a
+signed 64-bit integer and every final dyadic numerator has magnitude at most
+`2^53`, so conversion to binary64 is exact. It must also rederive radius edges,
+affine span, incident-direction rank, and rigid-generator rank from the emitted
+packet positions. The final sweep must retain the existing finite-objectivity,
+metamorphic, exact-rank, nullspace, compiler, checkpoint, and independent-
+validator gates.
+
+This amendment changes no candidate, physical configuration, support radius,
+field, scientific tolerance, numerical-rank threshold, ambiguity band,
+residual rule, or decision rule. It specifies a correlated binary64
+realization of the already registered rational transforms so a rigid transform
+does not acquire a false geometric dimension solely through independently
+rounded coordinates. A q=50 pre-run diagnostic bounded the largest coordinate
+departure from the ideal rational transforms by `2.78e-15 m`, retained the
+registered filament and sheet edge inventories, and remained more than four
+orders of magnitude inside the unchanged spectral-invariance tolerances. Those
+diagnostics are design checks only; the regenerated producer evidence must
+pass the frozen gates independently.
+
+Two narrower responses were rejected. Lowering or bypassing the exact-rank
+check would hide actual emitted-state topology and weaken the registered gate.
+Forcing a sixth orthonormal rigid vector from the old, roundoff-warped filament
+could satisfy a local residual check, but it would promote an approximately
+ULP-sized coordinate artifact into the physical rigid/non-rigid partition and
+would leave the sheet topology drift unresolved. Neither response is used.
+
 ## 1. Frozen candidates
 
 - **A — frozen quadratic-grid control.** Use the accepted tensor-product
