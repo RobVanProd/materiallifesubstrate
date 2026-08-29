@@ -23,8 +23,9 @@ validity, convergence, chemistry expressivity, or an MLS gate by itself.
 | World/hash | Deterministic orchestration, physical-support guard, dimensioned fixed-point clock, audit hooks, order-independent packet-state hash. | Autonomous physics scheduling, renderer, agents, ecology. |
 | Checkpoint | Canonical versioned little-endian authoritative restart image with exact replay. | Version migration, cryptographic authenticity, debug-history persistence. |
 | Transfer laboratory | Isolated deterministic binary64 PIC/APIC/FLIP diagnostic candidates and separate residuals. | Authoritative world integration, constitutive mechanics, physical validation, candidate promotion. |
+| Mechanical-observability laboratory | Read-only corrected local-gradient, explicit distance-relation, and conditional objective-volume operators with complete numerical kernel diagnostics. | Constitutive law, force, stiffness, stress, time integration, contact, fracture, grid-derived mechanics state, candidate promotion. |
 
-This file contains six numbered core records. Additional bounded records are the
+This file contains nine numbered implementation records. Additional bounded records are the
 [physical interaction support contract](physical-support-contract.md), kept
 separate because it constrains every future pair law. Orbital angular momentum
 is a cross-cutting packet/ledger/world contract documented in
@@ -963,9 +964,129 @@ or prove gradient visibility. Their reported dependencies are only `propext`,
 `Classical.choice`, and `Quot.sound`, with no project-defined axioms or proof
 placeholders.
 
+## 9. Mechanical-observability laboratory
+
+**Implementation:** `include/mls/mechanical_observability_lab.hpp` and
+`src/mechanical_observability_lab.cpp`. This is an isolated read-only
+representation diagnostic, not a mechanics solver or material model.
+
+### State variables and units
+
+The canonical laboratory input contains stable packet ID, exact positive mass
+quanta, binary64 center position in metres, binary64 test velocity in metres per
+second, one support radius in metres, canonical generic pair-relation IDs, and
+canonical ordered four-packet volume-relation IDs. Mass is checkpointed for
+input identity but intentionally does not weight a kinematic observable.
+
+Moments, neighbor caches, lookup-grid buckets, linearized operators, row norms,
+QR factors, pivot traces, rigid generators, and null vectors are transient.
+The corrected moment has units `m^2`, its numerator `m^2/s`, and its gradient
+`1/s`. A central relation observes length rate in `m/s`. An ordered triple
+product is in `m^3` and its rate in `m^3/s`.
+
+### Diagnostic laws
+
+For packet offset `r_pq=x_q-x_p` inside the explicit spherical support,
+
+\[
+w_{pq}=(1-\lVert r_{pq}\rVert^2/H^2)^2,\quad
+M_p=\sum_qw_{pq}r_{pq}r_{pq}^T,
+\]
+
+\[
+G_p(v)=\left[\sum_qw_{pq}(v_q-v_p)r_{pq}^T\right]M_p^{-1}.
+\]
+
+The candidate-B operator retains `vec(sym G_p)`; the full `G_p` exists only for
+affine-reproduction tests. Singular, nonpositive, nonfinite, or condition-
+rejected moments produce no partial operator.
+
+For explicit relation `(i,j)`, candidate C uses the actual length Jacobian
+`n_ij dot (v_j-v_i)`. Conditional candidate D concatenates those rows with the
+multilinear derivative of the explicit oriented triple product
+`det(x_j-x_i,x_k-x_i,x_l-x_i)`. Neither relation defines energy or force.
+
+Every nonzero row is normalized before deterministic Householder column-
+pivoted QR. The complete threshold null basis is projected against the sampled
+translation/rotation range. A full-dimensional generic representation is
+observable only if its kernel equals that rigid-motion range. Candidate A
+retains the sealed quadratic-grid sampling/gradient quotient failure as a
+negative control and never constructs a preferred grid lift.
+
+### Conservation and accounting boundary
+
+The lab performs no physical update. It changes no packet mass, position,
+velocity, relation, energy, momentum, or clock. Canonical checkpoint bytes are
+required to remain identical across all diagnostics. Rank residuals and hidden
+modes are numerical evidence and cannot enter a thermal, structural, or other
+physical ledger channel.
+
+### Numerical approximation
+
+- binary64 geometry and operators with long-double accumulation in selected
+  norms, dot products, cross products, and determinant calculations;
+- a deterministic binary64 Householder CPQR numerical rank estimate, never a
+  rank certificate;
+- row normalization, which preserves an exact kernel but changes singular-value
+  scale and therefore remains part of the registered diagnostic;
+- a three-by-three symmetric moment eigendiagnostic and explicit inverse with a
+  fixed condition ceiling, no shift or pseudoinverse;
+- exact-rational Python RREF controls for selected WLS, graph, rigid-motion, and
+  volume-enrichment cases; and
+- an exact-rational Lean finite central-rigidity operator and selected K4
+  observability proof, without a connection theorem to binary64 CPQR.
+
+The disposable spatial grid may only enumerate neighbors for comparison with a
+brute-force Euclidean cutoff. It supplies no gradient, strain, deformation,
+stress, or persistent state.
+
+### Failure modes and open review items
+
+- malformed or duplicate packet/relation identity, nonpositive mass/support,
+  zero-length edge, repeated volume site, or nonfinite geometry;
+- moment singularity, ill-conditioning, inverse residual, or affine-
+  reproduction failure;
+- zero/nonfinite operator row, ambiguous rank pivot, incomplete null basis, or
+  excessive rigid/null residual;
+- a resolved non-rigid kernel in an adequately connected ordinary 3D row;
+- intentionally flexible sheet, filament, deleted, or underconnected topology
+  incorrectly relabeled as a generic solid;
+- finite translation/rotation objectivity, scale covariance, packet
+  permutation, or lookup-phase mismatch;
+- checkpoint mutation, schema mismatch, independent-oracle disagreement, or
+  non-byte-identical repeated evidence; and
+- affine reproduction alone can hide corrected-gradient hourglass modes, while
+  central-distance observability does not establish arbitrary-material
+  constitutive capability.
+
+No stabilization penalty, preferred null representative, regularization,
+hidden affine mode, or unaccounted auxiliary state can turn a failure into a
+pass.
+
+### Mapped tests
+
+- `mechanical observability corrected WLS reproduces affine fields`
+- `mechanical observability WLS is deterministic and ignores mass`
+- `mechanical observability WLS exposes singular lower dimensional support`
+- `mechanical observability tetrahedron bond kernel is exactly rigid numerically`
+- `mechanical observability objective volume removes planar square floppy mode`
+- `mechanical observability affine relational predictions match operators`
+- `mechanical observability finite relations are rigid objective`
+- `mechanical observability preserves intentional and degenerate modes`
+- `mechanical observability rejects malformed topology and state`
+- `mechanical observability row and rank diagnostics fail closed`
+- `mechanical observability checkpoint is canonical and diagnostics read only`
+- independent Fraction oracle, bundle-validator mutation suite, repeated
+  producer comparison, and outer-seal mutation suite
+- Lean central matrix/operator, rigid-kernel, exact K4, and explicit
+  missing-relation non-observability theorems
+
+Passing these software checks cannot establish physical validity, a
+constitutive response, or eligibility to begin mechanics.
+
 ## Review rule
 
-All records (the eight numbered records here plus the dedicated physical-support,
+All records (the nine numbered records here plus the dedicated physical-support,
 time/checkpoint, transfer-lab, and angular contracts) must be updated when their
 public state, operation, formula, or test mapping changes. Changes to point
 interaction, boundary, or ledger semantics must also update the cross-cutting
