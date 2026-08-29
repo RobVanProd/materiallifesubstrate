@@ -253,11 +253,20 @@ override those gates.
 | particles/cell raw | 36 |
 | exact angular-control methods | 6 |
 | all primary rows | 330 |
+| convergence decisions | 896 |
+| order-to-full decisions | 108 |
+| phase-sensitivity rows | 288 |
+| orientation-sensitivity rows | 288 |
+| hard-gate rows | 6,156 |
+| solver/checkpoint rows | 324 each |
 
 Derived convergence, order, phase, orientation, hard-gate, solver-failure, and
 per-metric tables must enumerate every expected family from these raw rows.
-Their exact row counts are computed from a frozen schema manifest before the
-final run and independently checked by the Python validator. Smoke output is
+The derived counts above are the complete Cartesian family counts; the earlier
+provisional arithmetic value `768` was rejected because it omitted 128
+registered phase/orientation-derived families. No rows were removed to fit the
+provisional value. Every count is independently reconstructed by the Python
+validator. Smoke output is
 provisional and cannot satisfy full counts.
 
 The final bundle includes raw CSV files, complete per-metric decisions,

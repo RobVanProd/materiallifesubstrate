@@ -739,7 +739,9 @@ Persistent experimental state is limited to:
 `ProjectionSystem` is a deterministic transient reconstruction containing
 ordered grid indices/positions, per-particle basis stencils, binary64 particle
 masses, lumped nodal mass `D`, sparse consistent mass rows `M`, and RHS `q`.
-It is observable for audit but absent from checkpoints.
+It is builder-created and immutable to callers: audit code receives const
+accessors, but cannot mutate `M`, `q`, `D`, or stencils independently of the
+center state from which they were derived. It is absent from checkpoints.
 
 ### Units
 
@@ -751,7 +753,8 @@ It is observable for audit but absent from checkpoints.
 - `q`: kilogram-metres per second;
 - exact clock: unsigned time quanta with an explicit rational seconds/quantum
   scale; and
-- kinetic/quadratic-energy diagnostics: joules.
+- center kinetic energy and the consistent-grid `q^T v / 2` diagnostic:
+  joules.
 
 The binary64 timestep must agree with the exact quantum count and scale. It is
 not inferred from `Tick`.
@@ -802,16 +805,22 @@ and solver value and does not change the authoritative World checkpoint ABI.
 - affine full-mass recovery additionally requires an accurate unique solve.
 
 No generic kinetic-energy conservation law is claimed. Projection energy
-change and consistent-grid quadratic energy are numerical diagnostics only.
+change and the consistent-grid `q^T v / 2` quantity are numerical diagnostics
+only. For an exact full solve the latter also equals `v^T M v / 2`; that
+identity is not assumed for PIC or finite FMPM.
 
 ### Numerical approximation
 
 - binary64 assembly and reconstruction with long-double scalar reductions in
   selected norms/dots;
 - deterministic serial sparse maps and PCG with lumped Jacobi preconditioning;
-- dense Cholesky pivot diagnostics only for bounded small systems;
+- complete symmetric Jacobi spectra for bounded small-system condition
+  estimates, with Cholesky pivots retained only as floating rank evidence;
+- explicit off-diagonal convergence checks for the dense eigen diagnostic,
+  with an unresolved spectrum failing closed;
 - at most 64 deterministic Lanczos steps for larger raw/preconditioned spectral
-  estimates; these estimates are explicitly labeled, not rank certificates;
+  estimates; these estimates report rank as unknown and are explicitly not
+  certificates;
 - exact integer mass/clock and byte-exact center-only checkpoint replay; and
 - no regularization, pseudoinverse, lumped fallback, post-correction, parallel
   reduction, or numerical-loss-to-heat conversion.
@@ -821,7 +830,8 @@ change and consistent-grid quadratic energy are numerical diagnostics only.
 - active-node count above particle count proves structural rank deficiency,
   but the converse does not prove full rank;
 - finite Lanczos/Ritz estimates can miss extreme modes, so a reported large
-  system condition is diagnostic rather than certified;
+  system condition is diagnostic rather than certified and a solved status is
+  not a nonsingularity proof;
 - normal equations square the sampling operator's condition and PCG may
   break down, hit its iteration limit, or meet residual tolerance despite an
   imperfect condition estimate;
@@ -843,9 +853,11 @@ change and consistent-grid quadratic energy are numerical diagnostics only.
 - `projection full static cycle preserves center linear and orbital moments`
 - `projection PIC and FMPM1 are identical and translation is reproduced`
 - `projection FMPM recurrence satisfies residual identity at every frozen order`
+- `projection production assembly and FMPM recurrence match rational cross-wire`
 - `projection smooth nonaffine field is not falsely claimed exact`
 - `projection singular systems and solver limits fail closed`
 - `projection rejects invalid zero duplicate overflow and nonfinite inputs`
+- `projection failed steps preserve unsorted center state byte-for-byte`
 - `projection trapezoid step uses exact clock and has no numerical energy ledger`
 - `projection checkpoint is canonical corruptible and excludes solver state`
 - `projection checkpoint restart reproduces continued center evolution exactly`

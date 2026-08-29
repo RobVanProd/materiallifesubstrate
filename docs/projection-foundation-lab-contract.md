@@ -121,7 +121,7 @@ returns a failed status, complete diagnostics, and unchanged particle state.
 
 Required statuses include `solved`, `empty`, `structurally_rank_deficient`,
 `numerically_rank_deficient`, `ill_conditioned`, `breakdown`,
-`iteration_limit`, and `residual_failed`.
+`iteration_limit`, `residual_failed`, and `numerical_overflow`.
 
 Required diagnostics include:
 
@@ -129,17 +129,21 @@ Required diagnostics include:
   node-order digest;
 - exact mass before and after;
 - structural rank upper bound `min(particles,active_nodes)`;
-- numerical rank method and estimate, with an explicit `estimated` flag;
-- smallest/largest pivot or Ritz value and raw/preconditioned condition
+- numerical rank method and value, with explicit estimated/certified flags;
+  truncated large-system diagnostics report rank as unknown rather than
+  assigning the matrix dimension;
+- smallest/largest spectral or Ritz value and raw/preconditioned condition
   estimate;
 - matrix symmetry, row-sum, partition-unity, and linear-reproduction residuals;
 - per-component absolute and normalized `Mv-q` residuals;
 - iteration counts and named termination reason.
 
 `active_nodes > particles` is a proof of rank deficiency. It is not the only
-possible singularity. Dense pivot diagnostics are used for preregistered small
-cases. Larger cases use deterministic scaled Lanczos/PCG diagnostics and must
-label condition/rank values as estimates. An unresolved, nonfinite, or
+possible singularity. Bounded dense cases use a complete symmetric Jacobi
+spectrum for condition estimates, an explicit off-diagonal convergence check,
+and Cholesky pivots only for floating rank evidence. Larger cases use
+deterministic scaled Lanczos/PCG diagnostics, label condition as estimated, and
+leave rank explicitly unknown. An unresolved, nonfinite, or
 threshold-exceeding condition fails closed.
 
 The frozen full-solve numerical policy is:
@@ -154,6 +158,7 @@ The frozen full-solve numerical policy is:
 | normalized component residual | `<= 5e-12` |
 | iterations | at most `min(4*n,10000)` |
 | Lanczos diagnostic steps | `min(n,64)` |
+| dense Jacobi sweeps | at most `128`; unresolved fails |
 
 These thresholds diagnose this reference implementation; they are not
 properties supplied by the literature. A low residual cannot override a rank
@@ -165,7 +170,7 @@ After projection, every path uses the same Nairn–Hammerquist trapezoidal
 center update with `alpha=1/2`:
 
 \[
-x_p^{n+1}=x_p^n+rac{\Delta t}{2}(V_p^n+V_p^{n+1}).
+x_p^{n+1}=x_p^n+\frac{\Delta t}{2}(V_p^n+V_p^{n+1}).
 \]
 
 The grid is discarded and rebuilt at the next step from center state only.
