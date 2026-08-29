@@ -93,6 +93,28 @@ set_tests_properties(
     PASS_REGULAR_EXPRESSION "Moving APIC Limit smoke evidence written"
     TIMEOUT 180)
 
+add_test(
+  NAME mls.projection_foundation.smoke.a
+  COMMAND
+    mls_projection_foundation_diagnostic
+    --smoke
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/projection-foundation-smoke-a")
+add_test(
+  NAME mls.projection_foundation.smoke.b
+  COMMAND
+    mls_projection_foundation_diagnostic
+    --smoke
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/projection-foundation-smoke-b")
+set_tests_properties(
+  mls.projection_foundation.smoke.a
+  mls.projection_foundation.smoke.b
+  PROPERTIES
+    LABELS "deterministic;projection-foundation;smoke"
+    PASS_REGULAR_EXPRESSION "Projection Foundation smoke evidence written"
+    TIMEOUT 180)
+
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
   add_test(
@@ -149,6 +171,20 @@ if(Python3_Interpreter_FOUND)
     mls.moving_apic_limit.exact.oracle
     PROPERTIES
       LABELS "deterministic;exact;moving-apic-limit;independent"
+      PASS_REGULAR_EXPRESSION "result_sha256_before_hash_field"
+      TIMEOUT 60)
+
+  add_test(
+    NAME mls.projection_foundation.exact.oracle
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/reference/projection_foundation_oracle.py"
+      --verify
+      "${CMAKE_CURRENT_SOURCE_DIR}/projection_foundation_oracle.canonical.json")
+  set_tests_properties(
+    mls.projection_foundation.exact.oracle
+    PROPERTIES
+      LABELS "deterministic;exact;projection-foundation;independent"
       PASS_REGULAR_EXPRESSION "result_sha256_before_hash_field"
       TIMEOUT 60)
 
@@ -220,6 +256,41 @@ if(Python3_Interpreter_FOUND)
       DEPENDS "mls.moving_apic_limit.smoke.a"
       LABELS "deterministic;moving-apic-limit;validator;independent"
       PASS_REGULAR_EXPRESSION "Moving APIC limit bundle validator regression: PASS"
+      TIMEOUT 180)
+
+  add_test(
+    NAME mls.projection_foundation.smoke.verify
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/reference/validate_projection_foundation_bundle.py"
+      --bundle
+      "${CMAKE_CURRENT_BINARY_DIR}/projection-foundation-smoke-a"
+      --compare
+      "${CMAKE_CURRENT_BINARY_DIR}/projection-foundation-smoke-b"
+      --smoke-provisional)
+  set_tests_properties(
+    mls.projection_foundation.smoke.verify
+    PROPERTIES
+      DEPENDS "mls.projection_foundation.smoke.a;mls.projection_foundation.smoke.b"
+      LABELS "deterministic;projection-foundation;smoke;independent"
+      PASS_REGULAR_EXPRESSION "PROJECTION FOUNDATION BUNDLE SMOKE PROVISIONAL"
+      TIMEOUT 180)
+
+  add_test(
+    NAME mls.projection_foundation.validator.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/projection_foundation_bundle_validator_test.py"
+      --bundle
+      "${CMAKE_CURRENT_BINARY_DIR}/projection-foundation-smoke-a"
+      --validator
+      "${PROJECT_SOURCE_DIR}/reference/validate_projection_foundation_bundle.py")
+  set_tests_properties(
+    mls.projection_foundation.validator.regression
+    PROPERTIES
+      DEPENDS "mls.projection_foundation.smoke.a"
+      LABELS "deterministic;projection-foundation;validator;independent"
+      PASS_REGULAR_EXPRESSION "Projection foundation bundle validator regression: PASS"
       TIMEOUT 180)
 
   add_test(

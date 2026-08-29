@@ -8,6 +8,7 @@ on:
       - time-transfer-lab
       - affine-advection-lab
       - moving-apic-limit-lab
+      - projection-foundation-lab
   pull_request:
   workflow_dispatch:
 
@@ -155,6 +156,9 @@ jobs:
           python reference/moving_apic_limit_oracle.py \
             --verify tests/moving_apic_limit_oracle.canonical.json \
             2>&1 | tee ci-artifacts/moving-apic-limit-oracle.txt
+          python reference/projection_foundation_oracle.py \
+            --verify tests/projection_foundation_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/projection-foundation-oracle.txt
 
       - name: Preserve exact-oracle evidence
         if: always()
