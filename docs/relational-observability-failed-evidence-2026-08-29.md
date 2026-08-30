@@ -155,3 +155,27 @@ changing escaping behavior, numerical operators, registered configurations,
 tolerances, or decision logic. The failed workflow remains public and is not
 rerun or rewritten. All final numerical, formal, compiler, and provenance
 evidence must be regenerated at a later source SHA.
+
+## First full independent-validator failure
+
+The next exact-source candidate,
+`e9ef68606e259440cfa32d678ed6b5bf6302e98d`, passed the five-job public CI
+matrix, the complete 64-test local suite, formal gates, and byte-identical full
+Candidate-C producers. It is not sealable. The full independent validator
+rejected `base.filament.r205.original.rotation` because its independently
+constructed rigid-motion basis had the wrong rank.
+
+The failure was in the validator's diagnostic arithmetic. It declared a
+90-digit Decimal path but constructed rotational candidates before entering
+that context, so Python's default 28-digit Decimal arithmetic introduced a
+spurious residual of approximately `1.76e-28` into an exactly dependent rigid
+generator. The same construction entirely inside the already declared
+90-digit context leaves a residual of approximately `3.28e-90` and the exact
+five-dimensional realized rigid rank. The correction changes no registered
+tolerance, Candidate-C operator, configuration, spectrum, or decision rule. It
+selects independent rigid generators using exact arithmetic over the emitted
+dyadic coordinates, uses the existing 90-digit path only to normalize/project
+that exact-selected span, removes the unregistered absolute Decimal rank
+cutoff, and adds explicit generic-rotation/collinear and full-affine rank
+regressions. All evidence must be regenerated at a later source SHA, and the
+failed validator receipt remains preserved.
