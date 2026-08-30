@@ -2729,30 +2729,75 @@ def decimal_dot(
         )
 
 
-def decimal_rigid_basis(positions: Mapping[int, Vec3D]) -> tuple[tuple[Decimal, ...], ...]:
+def exact_independent_rigid_generator_indices(
+    positions: Mapping[int, Vec3Q],
+) -> tuple[int, ...]:
     packet_ids = sorted(positions)
-    zero, one = Decimal(0), Decimal(1)
-    axes = ((one, zero, zero), (zero, one, zero), (zero, zero, one))
-    candidates: list[list[Decimal]] = [
+    axes: tuple[Vec3Q, ...] = (
+        (Q(1), Q(0), Q(0)),
+        (Q(0), Q(1), Q(0)),
+        (Q(0), Q(0), Q(1)),
+    )
+    candidates: list[list[Q]] = [
         [axis[component] for _packet_id in packet_ids for component in range(3)]
         for axis in axes
     ]
     for omega in axes:
-        candidate: list[Decimal] = []
-        for packet_id in packet_ids:
-            point = positions[packet_id]
-            candidate.extend(
-                (
-                    omega[1] * point[2] - omega[2] * point[1],
-                    omega[2] * point[0] - omega[0] * point[2],
-                    omega[0] * point[1] - omega[1] * point[0],
-                )
-            )
-        candidates.append(candidate)
-    basis: list[tuple[Decimal, ...]] = []
+        candidates.append(
+            [
+                component
+                for packet_id in packet_ids
+                for component in cross_q(omega, positions[packet_id])
+            ]
+        )
+    selected: list[list[Q]] = []
+    selected_indices: list[int] = []
+    rank = 0
+    for index, candidate in enumerate(candidates):
+        trial = [*selected, candidate]
+        trial_rank = q_rref_rank(
+            [
+                [column[row] for column in trial]
+                for row in range(3 * len(packet_ids))
+            ]
+        )
+        if trial_rank > rank:
+            selected.append(candidate)
+            selected_indices.append(index)
+            rank = trial_rank
+    return tuple(selected_indices)
+
+
+def decimal_rigid_basis(
+    positions: Mapping[int, Vec3D], exact_positions: Mapping[int, Vec3Q]
+) -> tuple[tuple[Decimal, ...], ...]:
+    packet_ids = sorted(positions)
+    if packet_ids != sorted(exact_positions):
+        reject("decimal/exact rigid-basis packet inventory mismatch")
+    selected_indices = exact_independent_rigid_generator_indices(exact_positions)
     with localcontext() as context:
         context.prec = DECIMAL_DIGITS
-        for candidate in candidates:
+        zero, one = Decimal(0), Decimal(1)
+        axes = ((one, zero, zero), (zero, one, zero), (zero, zero, one))
+        candidates: list[list[Decimal]] = [
+            [axis[component] for _packet_id in packet_ids for component in range(3)]
+            for axis in axes
+        ]
+        for omega in axes:
+            candidate: list[Decimal] = []
+            for packet_id in packet_ids:
+                point = positions[packet_id]
+                candidate.extend(
+                    (
+                        omega[1] * point[2] - omega[2] * point[1],
+                        omega[2] * point[0] - omega[0] * point[2],
+                        omega[0] * point[1] - omega[1] * point[0],
+                    )
+                )
+            candidates.append(candidate)
+        basis: list[tuple[Decimal, ...]] = []
+        for index in selected_indices:
+            candidate = candidates[index]
             work = list(candidate)
             for vector in basis:
                 coefficient = decimal_dot(work, vector)
@@ -2761,8 +2806,9 @@ def decimal_rigid_basis(positions: Mapping[int, Vec3D]) -> tuple[tuple[Decimal, 
                     for left, right in zip(work, vector, strict=True)
                 ]
             norm = decimal_l2(work)
-            if norm > Decimal("1e-70"):
-                basis.append(tuple(value / norm for value in work))
+            if norm == 0:
+                reject("exactly independent rigid generator vanished numerically")
+            basis.append(tuple(value / norm for value in work))
     return tuple(basis)
 
 
@@ -2772,6 +2818,7 @@ def validate_nullspace(
     configurations: Mapping[str, Mapping[str, str]],
     observability: Mapping[str, Mapping[str, str]],
     positions: Mapping[str, Mapping[int, Vec3D]],
+    exact_positions: Mapping[str, Mapping[int, Vec3Q]],
     edges: Mapping[str, Sequence[tuple[int, int]]],
     tolerances: Mapping[str, float],
     audit: Audit,
@@ -2816,7 +2863,9 @@ def validate_nullspace(
             positions[configuration_id], edges[configuration_id]
         )
         matrix_norm = decimal_l2(entry for row in matrix for entry in row)
-        rigid_basis = decimal_rigid_basis(positions[configuration_id])
+        rigid_basis = decimal_rigid_basis(
+            positions[configuration_id], exact_positions[configuration_id]
+        )
         audit.require(
             len(rigid_basis) == int(observability[configuration_id]["rigid_rank"]),
             f"{configuration_id}: independent rigid basis rank",
@@ -3744,6 +3793,7 @@ def validate_bundle(root: pathlib.Path, allow_dirty: bool) -> tuple[int, dict[st
         configurations,
         observability,
         positions_d,
+        positions_q,
         edges,
         tolerances,
         audit,

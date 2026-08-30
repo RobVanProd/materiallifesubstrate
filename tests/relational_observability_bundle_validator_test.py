@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from typing import Callable
 
 
@@ -43,6 +43,70 @@ def exercise_direct_svd_regression(validator: pathlib.Path) -> None:
     )
     if not converged or zeros != (0.0,) * 7:
         raise RuntimeError("direct SVD zero-row structural tail failed")
+
+    # A generic rotation of an exactly collinear packet set realizes only five
+    # independent rigid-motion generators.  Candidate construction must occur
+    # in the validator's declared high-precision context: Decimal otherwise
+    # defaults to 28 digits and can manufacture a sixth direction at ~1e-28.
+    with localcontext() as context:
+        context.prec = module.DECIMAL_DIGITS
+        direction = tuple(
+            Decimal.from_float(value)
+            for value in (
+                0.3713906763541037,
+                -0.5570860145311556,
+                0.7427813527082074,
+            )
+        )
+        collinear = {
+            packet_id + 1: tuple(
+                Decimal(packet_id) * component for component in direction
+            )
+            for packet_id in range(8)
+        }
+        collinear_exact = {
+            packet_id + 1: tuple(
+                module.Q.from_float(value) * packet_id
+                for value in (
+                    0.3713906763541037,
+                    -0.5570860145311556,
+                    0.7427813527082074,
+                )
+            )
+            for packet_id in range(8)
+        }
+    collinear_basis = module.decimal_rigid_basis(collinear, collinear_exact)
+    if module.rigid_generator_rank(collinear_exact) != 5 or len(collinear_basis) != 5:
+        raise RuntimeError("high-precision rotated-collinear rigid rank failed")
+    tetrahedron_exact = {
+        1: (module.Q(0), module.Q(0), module.Q(0)),
+        2: (module.Q(1), module.Q(0), module.Q(0)),
+        3: (module.Q(0), module.Q(1), module.Q(0)),
+        4: (module.Q(0), module.Q(0), module.Q(1)),
+    }
+    tetrahedron = {
+        packet_id: tuple(Decimal(value.numerator) / Decimal(value.denominator) for value in point)
+        for packet_id, point in tetrahedron_exact.items()
+    }
+    tetrahedron_basis = module.decimal_rigid_basis(tetrahedron, tetrahedron_exact)
+    if module.rigid_generator_rank(tetrahedron_exact) != 6 or len(tetrahedron_basis) != 6:
+        raise RuntimeError("high-precision full-affine rigid rank failed")
+    for name, basis in (
+        ("rotated-collinear", collinear_basis),
+        ("full-affine", tetrahedron_basis),
+    ):
+        dimension = max(6, len(basis[0]))
+        tolerance = Decimal(4096) * Decimal(dimension) * module.EPSILON64
+        residual = max(
+            abs(
+                module.decimal_dot(first, second)
+                - (Decimal(1) if first_index == second_index else Decimal(0))
+            )
+            for first_index, first in enumerate(basis)
+            for second_index, second in enumerate(basis)
+        )
+        if residual > tolerance:
+            raise RuntimeError(f"{name} rigid basis lost orthonormality")
 
 
 def run(
