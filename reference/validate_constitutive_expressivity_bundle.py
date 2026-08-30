@@ -1731,6 +1731,7 @@ def main() -> int:
                 reject("twin bundles are not byte-for-byte identical")
             if summary != other_summary:
                 reject("twin summaries differ")
+            print("byte comparison: PASS")
         print(
             "CONSTITUTIVE EXPRESSIVITY BUNDLE VALID: "
             f"{checks} checks; high_precision_spectra={spectra}; "
