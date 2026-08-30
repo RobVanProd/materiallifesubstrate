@@ -14,6 +14,7 @@ add_executable(
   mechanical_observability_tests.cpp
   projection_exactness_nullspace_tests.cpp
   projection_foundation_tests.cpp
+  relational_observability_confirmation_tests.cpp
   transfer_lab_tests.cpp
   time_checkpoint_tests.cpp)
 
@@ -29,6 +30,53 @@ endif()
 
 add_test(NAME mls.validation COMMAND mls_validation)
 set_tests_properties(mls.validation PROPERTIES LABELS "deterministic;core")
+
+add_test(
+  NAME mls.relational_observability.schema.audit
+  COMMAND mls_relational_observability_diagnostic --schema-audit)
+add_test(
+  NAME mls.relational_observability.logic.audit
+  COMMAND mls_relational_observability_diagnostic --logic-audit)
+set_tests_properties(
+  mls.relational_observability.schema.audit
+  PROPERTIES
+    LABELS "deterministic;relational-observability;schema"
+    PASS_REGULAR_EXPRESSION
+      "Relational Observability Confirmation schema audit: PASS"
+    TIMEOUT 30)
+set_tests_properties(
+  mls.relational_observability.logic.audit
+  PROPERTIES
+    LABELS "deterministic;relational-observability;logic"
+    PASS_REGULAR_EXPRESSION
+      "Relational Observability Confirmation logic audit: PASS"
+    TIMEOUT 30)
+
+add_test(
+  NAME mls.relational_observability.smoke.a
+  COMMAND
+    mls_relational_observability_diagnostic
+    --smoke
+    --fixture-bundle
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/relational_observability_smoke"
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/relational-observability-smoke-a")
+add_test(
+  NAME mls.relational_observability.smoke.b
+  COMMAND
+    mls_relational_observability_diagnostic
+    --smoke
+    --fixture-bundle
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/relational_observability_smoke"
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/relational-observability-smoke-b")
+set_tests_properties(
+  mls.relational_observability.smoke.a
+  mls.relational_observability.smoke.b
+  PROPERTIES
+    LABELS "deterministic;relational-observability;smoke"
+    PASS_REGULAR_EXPRESSION "Relational Observability evidence written"
+    TIMEOUT 300)
 
 add_test(
   NAME mls.transfer.bakeoff.smoke.a
@@ -259,6 +307,57 @@ set_tests_properties(
 
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
+  add_test(
+    NAME mls.relational_observability.smoke.verify
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/reference/validate_relational_observability_bundle.py"
+      --bundle
+      "${CMAKE_CURRENT_BINARY_DIR}/relational-observability-smoke-a"
+      --compare
+      "${CMAKE_CURRENT_BINARY_DIR}/relational-observability-smoke-b"
+      --allow-dirty)
+  set_tests_properties(
+    mls.relational_observability.smoke.verify
+    PROPERTIES
+      DEPENDS
+        "mls.relational_observability.smoke.a;mls.relational_observability.smoke.b"
+      LABELS "deterministic;relational-observability;smoke;independent"
+      PASS_REGULAR_EXPRESSION
+        "RELATIONAL OBSERVABILITY BUNDLE VALID.*byte comparison: PASS"
+      TIMEOUT 300)
+
+  add_test(
+    NAME mls.relational_observability.validator.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/relational_observability_bundle_validator_test.py"
+      --validator
+      "${PROJECT_SOURCE_DIR}/reference/validate_relational_observability_bundle.py"
+      --bundle
+      "${CMAKE_CURRENT_BINARY_DIR}/relational-observability-smoke-a")
+  set_tests_properties(
+    mls.relational_observability.validator.regression
+    PROPERTIES
+      DEPENDS "mls.relational_observability.smoke.a"
+      LABELS "deterministic;relational-observability;validator;independent"
+      PASS_REGULAR_EXPRESSION
+        "relational observability bundle validator regression: PASS"
+      TIMEOUT 300)
+
+  add_test(
+    NAME mls.relational_observability.seal.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/relational_observability_seal_test.py")
+  set_tests_properties(
+    mls.relational_observability.seal.regression
+    PROPERTIES
+      LABELS "deterministic;relational-observability;seal;independent"
+      PASS_REGULAR_EXPRESSION
+        "relational observability outer-seal mutation regression: PASS"
+      TIMEOUT 60)
+
   add_test(
     NAME mls.kelvin_covariance.smoke.byte_compare
     COMMAND
