@@ -96,12 +96,28 @@ and dimensionless steps relative to characteristic length
 h/L in {10^-8,10^-12,10^-16,10^-20}.
 ```
 
-It compares `dU/dalpha` with `-f dot d`.  A direction passes when the analytic
-value agrees with the best pre-roundoff high-precision estimate to relative
-`1e-45` or absolute `1e-55 J` after the registered dimensional normalisation,
-and at least the first three nonzero truncation errors decrease.  Translation
+It compares `dU/dalpha` with `-f dot d`.  The four raw centred estimates are
+retained.  The registered numerical estimate is their deterministic
+Richardson extrapolation to `h^2=0`: interpolate the four `(h_k^2,D(h_k))`
+pairs with exact high-precision arithmetic and evaluate that degree-three
+polynomial at zero.  This removes the registered `h^2`, `h^4`, and `h^6`
+terms without changing or adding sample levels.  A direction passes when the
+analytic value agrees with that extrapolated estimate to relative `1e-45` or
+absolute `1e-55 J` after the registered dimensional normalisation, and at
+least the first three nonzero raw truncation errors decrease.  Translation
 and rotation directions also require the analytic derivative to satisfy the
 high-precision zero-work bound `1e-55 J`.
+
+### Pre-final estimator consistency amendment
+
+Before any final sweep, an implementation-audit K4 sample showed the expected
+second-order raw residual sequence of approximately `1.279e-18`, `1.279e-26`,
+`1.279e-34`, and `1.279e-42` at the four registered levels.  Therefore a raw
+`h=1e-20` centred difference cannot by itself satisfy `1e-45`; treating it as
+the oracle would make the preregistration internally inconsistent.  The
+Richardson definition above makes the already named "best pre-roundoff
+high-precision estimate" explicit.  This amendment does not relax a
+tolerance, omit a raw row, add a smaller step, or use final-sweep results.
 
 Ordinary binary64 finite differences are recorded only as diagnostics and
 cannot satisfy the independent-gradient gate.
@@ -185,6 +201,10 @@ the force Jacobian with symmetric directional differences at
 - high-precision directional agreement to relative `1e-40` or absolute
   `1e-50 N/m` after dimensional normalisation.
 
+The finite-tangent numerical estimate uses the same registered polynomial
+extrapolation in `h^2` over all four raw centred levels.  Every raw level and
+its residual remains in evidence; extrapolation cannot hide nonconvergence.
+
 Material and geometric terms remain separate in evidence.  No normal-equation
 or nonsymmetric approximation can replace the scalar-potential Hessian.
 
@@ -267,4 +287,3 @@ evidence and may not be filtered from the final tables.
    `retain_conservative_relational_force_for_research`.
 
 Every result is `NO_PROMOTION` to dynamics.  The lab stops after sealing.
-
