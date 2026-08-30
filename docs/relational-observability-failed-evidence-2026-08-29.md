@@ -140,3 +140,18 @@ statement, premise, conclusion, trust boundary, or decision gate changed. A
 fresh full build, numerical twin run, CI run, and outer seal are required at the
 new source SHA; none of the `4a35e8a` output can be promoted or relabeled as
 final evidence.
+
+## First public cross-compiler candidate failure
+
+The first pushed candidate after the Lean correction,
+`af4010152c4441e129d2666d6b99c897a5d885ba`, failed the Linux/Clang job in
+GitHub Actions run `33293438157`. Clang's warnings-as-errors gate rejected an
+implicit signed-`char` to `unsigned char` conversion in the JSON string escaping
+loop (`-Wsign-conversion`). The other jobs and any local work at that SHA do not
+override the failed required compiler gate, so the SHA is not sealable.
+
+The correction makes the byte conversion explicit inside the loop without
+changing escaping behavior, numerical operators, registered configurations,
+tolerances, or decision logic. The failed workflow remains public and is not
+rerun or rewritten. All final numerical, formal, compiler, and provenance
+evidence must be regenerated at a later source SHA.
