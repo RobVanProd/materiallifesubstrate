@@ -7,6 +7,7 @@ add_executable(
   angular_momentum_tests.cpp
   authoritative_api_tests.cpp
   compound_identity_tests.cpp
+  constitutive_expressivity_tests.cpp
   physical_support_tests.cpp
   affine_advection_tests.cpp
   moving_apic_limit_tests.cpp
