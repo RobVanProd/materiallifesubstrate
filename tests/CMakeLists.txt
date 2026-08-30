@@ -359,6 +359,19 @@ if(Python3_Interpreter_FOUND)
       TIMEOUT 30)
 
   add_test(
+    NAME mls.constitutive_expressivity.seal.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/constitutive_expressivity_seal_test.py")
+  set_tests_properties(
+    mls.constitutive_expressivity.seal.regression
+    PROPERTIES
+      LABELS "deterministic;constitutive-expressivity;seal;independent"
+      PASS_REGULAR_EXPRESSION
+        "constitutive expressivity outer-seal mutation regression: PASS"
+      TIMEOUT 60)
+
+  add_test(
     NAME mls.relational_observability.smoke.verify
     COMMAND
       "${Python3_EXECUTABLE}"

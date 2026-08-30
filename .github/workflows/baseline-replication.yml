@@ -201,6 +201,13 @@ jobs:
             2>&1 | tee ci-artifacts/constitutive-expressivity-oracle.txt
           python tests/constitutive_expressivity_oracle_test.py \
             2>&1 | tee ci-artifacts/constitutive-expressivity-oracle-regression.txt
+          python -m py_compile \
+            reference/validate_constitutive_expressivity_bundle.py \
+            tests/constitutive_expressivity_bundle_validator_test.py \
+            tools/seal_constitutive_expressivity_evidence.py \
+            2>&1 | tee ci-artifacts/constitutive-expressivity-seal-compile.txt
+          python tests/constitutive_expressivity_seal_test.py \
+            2>&1 | tee ci-artifacts/constitutive-expressivity-seal.txt
 
       - name: Preserve exact-oracle evidence
         if: always()
