@@ -9,6 +9,7 @@ and an immutable public tag.  It never promotes mechanics or dynamics.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -403,6 +404,8 @@ def validate_receipt(receipt: dict[str, Any], source_sha: str,
                      filename: str) -> str:
     require(set(receipt) == RECEIPT_FIELDS, f"receipt fields mismatch: {filename}")
     require(receipt["schema"] == RECEIPT_SCHEMA, f"receipt schema: {filename}")
+    require(receipt["label"] == pathlib.Path(filename).stem,
+            f"receipt label/filename mismatch: {filename}")
     require(receipt["source_sha"] == source_sha and receipt["branch"] == BRANCH,
             f"receipt source binding: {filename}")
     require(type(receipt["exit_code"]) is int and receipt["exit_code"] == 0,
@@ -421,6 +424,59 @@ def validate_receipt(receipt: dict[str, Any], source_sha: str,
             isinstance(receipt["ended_at_utc"], str),
             f"receipt timestamps missing: {filename}")
     return receipt["output"]
+
+
+def record_command(args: argparse.Namespace) -> int:
+    """Execute one command and atomically preserve its exact structured receipt."""
+    repo = args.repo.resolve()
+    source_sha = args.source_sha
+    require(SHA1_RE.fullmatch(source_sha) is not None, "invalid receipt source SHA")
+    require(git_text(repo, "rev-parse", "HEAD") == source_sha,
+            "receipt repository HEAD/source mismatch")
+    require(git_text(repo, "branch", "--show-current") == BRANCH,
+            "receipt repository branch mismatch")
+    require(git_text(repo, "status", "--porcelain=v1", "--untracked-files=all") == "",
+            "receipt repository is dirty")
+    command = list(args.command)
+    if command and command[0] == "--":
+        command.pop(0)
+    require(command, "receipt command is empty")
+    destination = args.receipt.resolve()
+    require(destination.name == f"{args.label}.json",
+            "receipt filename must equal <label>.json")
+    require(not destination.exists(), "receipt already exists; preserve prior evidence")
+    cwd = args.cwd.resolve() if args.cwd is not None else repo
+    started = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    completed = subprocess.run(
+        command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace", check=False,
+    )
+    ended = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    output = completed.stdout
+    payload = output.encode("utf-8")
+    value = {
+        "schema": RECEIPT_SCHEMA,
+        "label": args.label,
+        "source_sha": source_sha,
+        "branch": BRANCH,
+        "cwd": str(cwd),
+        "command": command,
+        "started_at_utc": started,
+        "ended_at_utc": ended,
+        "exit_code": completed.returncode,
+        "output_bytes": len(payload),
+        "output_sha256": sha256_bytes(payload),
+        "output": output,
+    }
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(destination.name + ".tmp")
+    require(not temporary.exists(), "temporary receipt path already exists")
+    temporary.write_text(
+        json.dumps(value, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+    )
+    os.replace(temporary, destination)
+    sys.stdout.write(output)
+    return completed.returncode
 
 
 def require_receipts(logs: pathlib.Path, source_sha: str) -> None:
@@ -727,7 +783,7 @@ def create(args: argparse.Namespace) -> dict[str, Any]:
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser()
-    subcommands = result.add_subparsers(dest="command", required=True)
+    subcommands = result.add_subparsers(dest="operation", required=True)
     create_parser = subcommands.add_parser("create")
     create_parser.add_argument("--repo", type=pathlib.Path, required=True)
     create_parser.add_argument("--bundle-a", type=pathlib.Path, required=True)
@@ -743,13 +799,22 @@ def parser() -> argparse.ArgumentParser:
     verify_parser.add_argument("--seal-dir", type=pathlib.Path, required=True)
     verify_parser.add_argument("--expected-pre-hash")
     verify_parser.add_argument("--offline", action="store_true")
+    record_parser = subcommands.add_parser("record")
+    record_parser.add_argument("--repo", type=pathlib.Path, required=True)
+    record_parser.add_argument("--cwd", type=pathlib.Path)
+    record_parser.add_argument("--source-sha", required=True)
+    record_parser.add_argument("--label", required=True)
+    record_parser.add_argument("--receipt", type=pathlib.Path, required=True)
+    record_parser.add_argument("command", nargs=argparse.REMAINDER)
     return result
 
 
 def main() -> int:
     args = parser().parse_args()
     try:
-        if args.command == "create":
+        if args.operation == "record":
+            return record_command(args)
+        if args.operation == "create":
             manifest = create(args)
         else:
             manifest = verify(args.seal_dir, args.expected_pre_hash,
