@@ -34,6 +34,7 @@ BRANCH = "constitutive-expressivity-lab"
 PARENT_SHA = "101296f936f8473effb316b1f9ae4040b5768349"
 TAG = "constitutive-expressivity-lab-evidence-v1"
 DECISION = "retain_local_collective_relational_energy_for_research"
+NO_PROMOTION = "NO_PROMOTION"
 ORACLE_PRE_HASH = "010d1452010d534445e63b2acfb83374a92b1958e6a62afbf240a8f3121e36bf"
 SELECTED_SUBSET_SHA256 = {
     "mode": "accepted_parent_subset",
@@ -667,8 +668,33 @@ def record_command(args: argparse.Namespace) -> int:
         json.dumps(value, sort_keys=True, indent=2) + "\n", encoding="utf-8"
     )
     os.replace(temporary, destination)
-    sys.stdout.write(output)
+    replay_console_output(output)
     return completed.returncode
+
+
+def replay_console_output(output: str, stream: Any = None) -> None:
+    """Replay captured UTF-8 output without making console encoding evidentiary.
+
+    The receipt above is written from ``output`` itself.  Console replay is only
+    a convenience and must not turn an otherwise valid recorded command into a
+    failure when a Windows console uses a restrictive encoding such as cp1252.
+    Unrepresentable characters are therefore emitted as deterministic Python
+    backslash escapes on that console; the receipt retains the original text.
+    """
+    destination = sys.stdout if stream is None else stream
+    encoding = getattr(destination, "encoding", None) or "utf-8"
+    try:
+        printable = output.encode(encoding, errors="backslashreplace").decode(encoding)
+    except (LookupError, UnicodeError):
+        printable = output.encode("ascii", errors="backslashreplace").decode("ascii")
+    try:
+        destination.write(printable)
+    except UnicodeEncodeError:
+        # A wrapper may advertise an encoding different from the encoder used
+        # by its underlying sink.  ASCII backslash escapes remain replayable.
+        destination.write(
+            output.encode("ascii", errors="backslashreplace").decode("ascii")
+        )
 
 
 def require_receipts(
@@ -776,9 +802,12 @@ def require_receipts(
     all_output = "\n".join(outputs.values()).lower()
     require("0 tests failed" in outputs["ctest.json"].lower(),
             "CTest did not report zero failures")
-    require("no promotion" in outputs["producer-a.json"].lower() and
-            "no promotion" in outputs["producer-b.json"].lower(),
-            "producer receipts omit NO PROMOTION")
+    explicit_no_promotion = re.compile(
+        rf"(?<![A-Za-z0-9_]){re.escape(NO_PROMOTION)}(?![A-Za-z0-9_])"
+    )
+    require(explicit_no_promotion.search(outputs["producer-a.json"]) is not None and
+            explicit_no_promotion.search(outputs["producer-b.json"]) is not None,
+            f"producer receipts omit exact {NO_PROMOTION} token")
     require(not any(token in all_output for token in (
         "sorryax found", "declaration uses 'sorry'", "custom axiom found",
         "tests failed, 0 tests passed")), "receipt output contains a trust failure")

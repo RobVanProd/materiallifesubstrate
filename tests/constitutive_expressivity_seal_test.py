@@ -6,6 +6,7 @@ import importlib.util
 import json
 import pathlib
 import tempfile
+from types import SimpleNamespace
 from typing import Callable
 
 
@@ -104,8 +105,8 @@ def valid_receipts(tool, source_sha: str, root: pathlib.Path) -> dict[str, dict]
         "configure.json": "Build files have been written\n",
         "build.json": "mls_constitutive_expressivity_diagnostic\n",
         "ctest.json": "100% tests passed, 0 tests failed\n",
-        "producer-a.json": tool.DECISION + " NO PROMOTION\n",
-        "producer-b.json": tool.DECISION + " NO PROMOTION\n",
+        "producer-a.json": tool.DECISION + " " + tool.NO_PROMOTION + "\n",
+        "producer-b.json": tool.DECISION + " " + tool.NO_PROMOTION + "\n",
         "twin-compare.json": "PASS\n",
         "validator.json": "CONSTITUTIVE EXPRESSIVITY BUNDLE VALID\n",
         "validator-regression.json": "PASS\n",
@@ -412,6 +413,86 @@ def main() -> int:
         changed["ctest.json"]["command"].remove("--test-dir")
         expect_rejection(tool, lambda: evaluate(changed), "substring-only option")
         mutations += 1
+
+        # The producer's explicit publication boundary is the exact,
+        # case-sensitive NO_PROMOTION token.  Keep receipt integrity internally
+        # consistent so these mutations exercise the semantic gate itself.
+        for label, marker in (
+            ("missing producer NO_PROMOTION marker", ""),
+            ("altered producer NO_PROMOTION marker", "NOT_PROMOTED"),
+        ):
+            changed = json.loads(json.dumps(source))
+            output = tool.DECISION + (f" {marker}" if marker else "") + "\n"
+            changed["producer-a.json"]["output"] = output
+            payload = output.encode("utf-8")
+            changed["producer-a.json"]["output_bytes"] = len(payload)
+            changed["producer-a.json"]["output_sha256"] = tool.sha256_bytes(payload)
+            expect_rejection(tool, lambda changed=changed: evaluate(changed), label)
+            mutations += 1
+
+    # The command receipt must retain exact UTF-8 even when stdout cannot
+    # represent Lean's informational symbol.  Exercise record_command itself,
+    # not just the console helper, using an encoding-strict platform-neutral
+    # stream and deterministic process/git substitutes.
+    class RestrictiveStdout:
+        encoding = "cp1252"
+
+        def __init__(self) -> None:
+            self.value = ""
+
+        def write(self, value: str) -> int:
+            value.encode(self.encoding, errors="strict")
+            self.value += value
+            return len(value)
+
+    with tempfile.TemporaryDirectory(prefix="mls-constitutive-record-") as temporary:
+        root = pathlib.Path(temporary)
+        repo = root / "repo"
+        repo.mkdir()
+        destination = root / "unicode-replay.json"
+        original_git_text = tool.git_text
+        original_run = tool.subprocess.run
+        original_stdout = tool.sys.stdout
+        restrictive = RestrictiveStdout()
+        captured = "Lean \u2139: declaration uses only permitted axioms\n"
+
+        def fake_git_text(_repo, *arguments):
+            if arguments == ("rev-parse", "HEAD"):
+                return source_sha
+            if arguments == ("branch", "--show-current"):
+                return tool.BRANCH
+            if arguments == ("status", "--porcelain=v1", "--untracked-files=all"):
+                return ""
+            raise RuntimeError(f"unexpected git fixture command: {arguments}")
+
+        try:
+            tool.git_text = fake_git_text
+            tool.subprocess.run = lambda *args, **kwargs: SimpleNamespace(
+                stdout=captured, returncode=0
+            )
+            tool.sys.stdout = restrictive
+            return_code = tool.record_command(SimpleNamespace(
+                repo=repo,
+                source_sha=source_sha,
+                command=["synthetic-lean"],
+                receipt=destination,
+                label="unicode-replay",
+                cwd=repo,
+            ))
+        finally:
+            tool.sys.stdout = original_stdout
+            tool.subprocess.run = original_run
+            tool.git_text = original_git_text
+
+        if return_code != 0:
+            raise RuntimeError("restrictive stdout changed the recorded exit code")
+        recorded = json.loads(destination.read_text(encoding="utf-8"))
+        if recorded["output"] != captured:
+            raise RuntimeError("restrictive stdout changed UTF-8 receipt output")
+        if recorded["output_sha256"] != tool.sha256_bytes(captured.encode("utf-8")):
+            raise RuntimeError("restrictive stdout changed receipt output digest")
+        if "\\u2139" not in restrictive.value or "\u2139" in restrictive.value:
+            raise RuntimeError("restrictive stdout replay was not safely escaped")
 
     # Annotated and lightweight tag resolution must both land on the source.
     direct, peeled = tool.parse_remote_refs(
