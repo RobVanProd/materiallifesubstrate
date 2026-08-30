@@ -90,6 +90,16 @@ Lean kernel build is authoritative for theorem acceptance.
   state. Its rigid generator has six parameters, but its sampled image need not
   have dimension six for degenerate point configurations such as a collinear
   filament.
+- `ConstitutiveExpressivity.lean`: a finite exact-rational energy layer with
+  relation extensions `e = R u`, experimental relation-coordinate data `H`,
+  energy `E = 1/2 eᵀ H e`, and the literal stiffness composition
+  `K = Rᵀ H R`. It proves symmetry of `K` for symmetric `H`, preservation of
+  every `R`-kernel mode, and equality `ker(K) = ker(R)` when the quadratic form
+  is strictly positive on every nonzero element of `im(R)`. A corollary derives
+  the rigid-only stiffness kernel from a mechanically observable `R`; it does
+  not assume that target equality, add packet state, apply forces, or evolve
+  time. Exact extension-coordinate objectivity and quadratic scaling contracts
+  are stated separately.
 - `AxiomReport.lean`: committed `#print axioms` coverage for every theorem
   exported by all project modules; CI checks declarations against this list.
 

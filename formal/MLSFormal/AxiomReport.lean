@@ -12,6 +12,7 @@ import MLSFormal.ProjectionNullspace
 import MLSFormal.MechanicalObservability
 import MLSFormal.KelvinCovariance
 import MLSFormal.RelationalObservability
+import MLSFormal.ConstitutiveExpressivity
 
 /-!
 Complete kernel axiom report for every theorem exported by the MLSFormal
@@ -125,3 +126,12 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.centralRigidityOperator_rigid_objective
 #print axioms MLSFormal.relabeledRationalTetraK4_mechanicallyObservable
 #print axioms MLSFormal.relabeledRationalTetraMissingRelation_not_mechanicallyObservable
+#print axioms MLSFormal.relationalStiffness_quadratic_identity
+#print axioms MLSFormal.relationalQuadraticEnergy_eq_stiffness_quadratic
+#print axioms MLSFormal.relationalStiffness_symmetric
+#print axioms MLSFormal.relationKernel_le_relationalStiffnessKernel
+#print axioms MLSFormal.relationalStiffness_kernel_eq_relationKernel
+#print axioms MLSFormal.rigidRelationMotion_in_relationalStiffnessKernel
+#print axioms MLSFormal.observableRelationalStiffness_has_only_rigid_kernel
+#print axioms MLSFormal.relationalQuadraticEnergy_objective_of_extension_eq
+#print axioms MLSFormal.relationalQuadraticEnergy_extension_scale
