@@ -33,6 +33,38 @@ add_test(NAME mls.validation COMMAND mls_validation)
 set_tests_properties(mls.validation PROPERTIES LABELS "deterministic;core")
 
 add_test(
+  NAME mls.constitutive_expressivity.schema.audit
+  COMMAND mls_constitutive_expressivity_diagnostic --schema-audit)
+set_tests_properties(
+  mls.constitutive_expressivity.schema.audit
+  PROPERTIES
+    LABELS "deterministic;constitutive-expressivity;schema"
+    PASS_REGULAR_EXPRESSION "Constitutive Expressivity schema audit: PASS"
+    TIMEOUT 30)
+
+add_test(
+  NAME mls.constitutive_expressivity.smoke.a
+  COMMAND
+    mls_constitutive_expressivity_diagnostic
+    --smoke
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/constitutive-expressivity-smoke-a")
+add_test(
+  NAME mls.constitutive_expressivity.smoke.b
+  COMMAND
+    mls_constitutive_expressivity_diagnostic
+    --smoke
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/constitutive-expressivity-smoke-b")
+set_tests_properties(
+  mls.constitutive_expressivity.smoke.a
+  mls.constitutive_expressivity.smoke.b
+  PROPERTIES
+    LABELS "deterministic;constitutive-expressivity;smoke"
+    PASS_REGULAR_EXPRESSION "retain_local_collective_relational_energy_for_research NO_PROMOTION"
+    TIMEOUT 180)
+
+add_test(
   NAME mls.relational_observability.schema.audit
   COMMAND mls_relational_observability_diagnostic --schema-audit)
 add_test(
@@ -308,6 +340,24 @@ set_tests_properties(
 
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
+  add_test(
+    NAME mls.constitutive_expressivity.smoke.compare
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/compare_evidence_directories.py"
+      --first
+      "${CMAKE_CURRENT_BINARY_DIR}/constitutive-expressivity-smoke-a"
+      --second
+      "${CMAKE_CURRENT_BINARY_DIR}/constitutive-expressivity-smoke-b")
+  set_tests_properties(
+    mls.constitutive_expressivity.smoke.compare
+    PROPERTIES
+      DEPENDS
+        "mls.constitutive_expressivity.smoke.a;mls.constitutive_expressivity.smoke.b"
+      LABELS "deterministic;constitutive-expressivity;smoke;twin"
+      PASS_REGULAR_EXPRESSION "byte comparison: PASS"
+      TIMEOUT 30)
+
   add_test(
     NAME mls.relational_observability.smoke.verify
     COMMAND

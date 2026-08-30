@@ -310,6 +310,39 @@ else()
   endif()
 endif()
 
+add_executable(
+  mls_constitutive_expressivity_diagnostic
+  apps/constitutive_expressivity_diagnostic.cpp)
+target_link_libraries(
+  mls_constitutive_expressivity_diagnostic PRIVATE mls_core)
+target_compile_features(
+  mls_constitutive_expressivity_diagnostic PRIVATE cxx_std_20)
+target_compile_definitions(
+  mls_constitutive_expressivity_diagnostic
+  PRIVATE
+    MLS_CONFIGURED_SOURCE_SHA="${MLS_CONFIGURED_SOURCE_SHA}"
+    MLS_CONFIGURED_SOURCE_BRANCH="${MLS_CONFIGURED_SOURCE_BRANCH}"
+    MLS_CONFIGURED_SOURCE_DIRTY="${MLS_CONFIGURED_SOURCE_DIRTY}"
+    MLS_CONFIGURED_COMPILER_ID="${CMAKE_CXX_COMPILER_ID}"
+    MLS_CONFIGURED_COMPILER_VERSION="${CMAKE_CXX_COMPILER_VERSION}")
+if(MSVC)
+  target_compile_options(
+    mls_constitutive_expressivity_diagnostic
+    PRIVATE /W4 /permissive- /Zc:__cplusplus)
+  if(MLS_WARNINGS_AS_ERRORS)
+    target_compile_options(
+      mls_constitutive_expressivity_diagnostic PRIVATE /WX)
+  endif()
+else()
+  target_compile_options(
+    mls_constitutive_expressivity_diagnostic
+    PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+  if(MLS_WARNINGS_AS_ERRORS)
+    target_compile_options(
+      mls_constitutive_expressivity_diagnostic PRIVATE -Werror)
+  endif()
+endif()
+
 include(CTest)
 if(BUILD_TESTING AND MLS_BUILD_TESTS)
   add_subdirectory(tests)
