@@ -91,13 +91,22 @@ a nonzero `H` entry, including diagonal entries. A dense global `H` is allowed
 only as an algebraic upper-bound diagnostic and is permanently ineligible for
 the decision.
 
+The bounded finite-graph inputs are provenance-bound twice: first to the
+complete accepted parent tables, then to frozen SHA-256 commitments for the
+exact selected producer-format configuration, packet, and relation payloads.
+The evidence exports the complete rigid and accepted `R`-null bases used by
+its energy residual checks so independent review can recompute those claims
+without trusting summary fields.
+
 ## Conservation, objectivity, and dimension law
 
 The evaluator creates no physical energy and performs no transition. It
 computes a scalar stored-energy candidate from a supplied configuration.
 Because the finite evaluator depends only on actual/reference lengths,
-translation and proper rotation leave it invariant. Packet-ID renaming and
-packet/relation permutation cannot change it.
+translation and proper rotation of current geometry leave it invariant while
+the reference geometry remains fixed. A separate common reference/current
+transform checks coordinate covariance. Packet-ID renaming and packet/relation
+permutation cannot change energy.
 
 When reference and current coordinates are both scaled by positive `s`, every
 length and extension scales by `s`, `m_i` and `q_i` scale by `s^2`, and both

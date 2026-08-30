@@ -470,6 +470,40 @@ MLS_TEST("constitutive finite energy is objective label free and dimensioned") {
     MLS_REQUIRE(rotated.finite);
     MLS_REQUIRE(close(rotated.total_j, baseline.total_j, 2.0e-13));
 
+    // Finite objectivity also holds when the material reference is fixed and
+    // only the current placement receives a rigid motion. This is distinct
+    // from common reference/current coordinate covariance above.
+    const Vec3d current_translation{7.0 / 13.0, -5.0 / 11.0, 3.0 / 17.0};
+    const auto current_only_translated = affine_configuration(
+        current, Matrix3d::identity(), current_translation);
+    const auto current_only_rotated = affine_configuration(current, rotation, {});
+    const auto translated_collective = constitutive::evaluate_finite_energy(
+        model, reference, current_only_translated);
+    const auto rotated_collective = constitutive::evaluate_finite_energy(
+        model, reference, current_only_rotated);
+    MLS_REQUIRE(translated_collective.finite);
+    MLS_REQUIRE(rotated_collective.finite);
+    MLS_REQUIRE(close(translated_collective.total_j, baseline.total_j, 2.0e-13));
+    MLS_REQUIRE(close(rotated_collective.total_j, baseline.total_j, 2.0e-13));
+
+    std::vector<constitutive::PairRelationCoefficient> pair_coefficients;
+    for (const auto relation : k4()) {
+        pair_coefficients.push_back({relation, 1.0});
+    }
+    const auto pair_model = constitutive::build_pair_separable_energy(
+        reference, pair_coefficients);
+    const auto pair_baseline = constitutive::evaluate_finite_energy(
+        pair_model, reference, current);
+    const auto pair_translated = constitutive::evaluate_finite_energy(
+        pair_model, reference, current_only_translated);
+    const auto pair_rotated = constitutive::evaluate_finite_energy(
+        pair_model, reference, current_only_rotated);
+    MLS_REQUIRE(pair_baseline.finite);
+    MLS_REQUIRE(pair_translated.finite);
+    MLS_REQUIRE(pair_rotated.finite);
+    MLS_REQUIRE(close(pair_translated.total_j, pair_baseline.total_j, 2.0e-13));
+    MLS_REQUIRE(close(pair_rotated.total_j, pair_baseline.total_j, 2.0e-13));
+
     // With weights and J/m^2 coefficients held fixed, scaling every reference
     // and current length by s scales extension^2 and therefore energy by s^2.
     constexpr auto scale = 2.5;

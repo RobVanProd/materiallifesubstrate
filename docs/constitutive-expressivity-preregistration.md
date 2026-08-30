@@ -142,14 +142,37 @@ no resolved non-rigid zero-energy mode. The K4-minus-edge graph must retain
 its accepted non-rigid nullity. Pair response is measured but is not eligible
 for selection.
 
+### Parent-subset provenance clarification
+
+The full producer binds both the complete accepted parent tables and the
+exact bounded producer-format subset above. The latter is independently
+derived by selecting the eight registered IDs, retained relations, and
+canonical packet/relation order from the accepted parent fixture. Its frozen
+SHA-256 commitments are:
+
+| Exported subset table | SHA-256 |
+|---|---|
+| `configurations.csv` | `45d162381ec723dd9ce744f2cc23c4d21435a52b7c7e60a182073ee19a08d60e` |
+| `packets.csv` | `843c9cb22c0b55e07c207135125a8334b0dd170a0f708aa1fb50f34d4c5d7363` |
+| `relations.csv` | `0b2e21dcbf26454af316bec9323627aa1488ebc7aa1f14c006bfb41a231e0e6f` |
+
+A full run fails before evidence emission when any selected payload differs.
+A smoke run has no parent fixture and records the explicit `builtin_smoke`
+marker rather than claiming this parent-subset binding. The standalone
+`tools/derive_constitutive_parent_subset.py` command is the independent
+derivation path.
+
 ## 5. Finite objectivity and metamorphic inventory
 
 Finite tests use actual reference/current lengths. For each bounded graph,
 the following are registered:
 
-- translation `(7/13,-5/11,3/17)`;
-- proper rotation: axis `(1,2,3)` and angle `0.731` radians;
-- rotation followed by the registered translation;
+- common reference/current translation `(7/13,-5/11,3/17)` covariance;
+- common reference/current proper-rotation covariance: axis `(1,2,3)` and
+  angle `0.731` radians;
+- common reference/current rotation followed by translation covariance;
+- current-only translation objectivity with the reference held fixed;
+- current-only proper-rotation objectivity with the reference held fixed;
 - uniform reference/current similarities `s in {1/2,2}`;
 - reverse and SplitMix64(`260828`) packet permutations;
 - reverse and SplitMix64 relation permutations;
@@ -179,6 +202,8 @@ For every graph and ratio, diagnostics include:
 - `rank(R)`, `rank(LR)`, and their nullities using direct rectangular paths;
 - complete accepted null-vector energy residuals;
 - rigid translation/rotation energy residuals;
+- complete exported rigid and accepted R-null bases, independently checked for
+  dimensions, orthonormality, semantics, and the reported residual energies;
 - positive energy on every accepted non-rigid resolved mode;
 - equality of the collective-energy kernel and the accepted `R` kernel.
 
@@ -212,10 +237,12 @@ be byte-identical.
 A Python implementation independently reconstructs the seven-direction
 moments, pair Cauchy ratio, collective energies/tangents, finite length
 energies, graph locality, selected exact rational Hessian ranks, high-
-precision spectra, metamorphic transformations, and final decision. It does
-not accept C++ summary fields as premises. Mutation tests must demonstrate
-rejection of altered energy, locality, target ratio, ID mapping, kernel,
-source provenance, twin bytes, and decision.
+not accept C++ summary fields as premises. Every selected large graph is
+checked through a direct high-precision LR spectrum/rank path at both
+collective-coefficient extremes. Mutation tests must demonstrate rejection of
+altered energy, locality, target ratio, ID mapping, basis/residual data,
+kernel, bounded-parent-subset commitment, source provenance, twin bytes, and
+decision.
 
 The final seal requires a clean exact source SHA; complete source snapshot;
 warning-as-error GCC, Clang, and MSVC builds; unfiltered CTest; distinct twin
@@ -243,3 +270,9 @@ tag. Failed runs are preserved outside the canonical seal.
    `retain_local_collective_relational_energy_for_research`.
 
 Every result is `NO PROMOTION` to mechanics or dynamics.
+
+The producer instantiates zero dense/global rows, so decision step 4 is
+unreachable in this lab's emitted evidence. It remains a preregistered logical
+case only; a collective bulk-span failure with no implementation/Cauchy
+failure is classified as
+`local_collective_constitutive_parameterization_or_locality_failure`.

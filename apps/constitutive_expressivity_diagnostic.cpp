@@ -71,6 +71,15 @@ constexpr std::string_view accepted_packets_hash =
     "dfd22994678333125b90f658d5b228c09f45e4564f52e02d6f38a3b2f3c924f7";
 constexpr std::string_view accepted_relations_hash =
     "14afdb0ac5822294a5d5437b3e622dffdc9f886dda395d0bfef5ae9b13c73093";
+// These are SHA-256 commitments to the producer-format bounded subset
+// deterministically derived from the three accepted parent tables above.
+// tools/derive_constitutive_parent_subset.py independently reproduces them.
+constexpr std::string_view selected_configurations_hash =
+    "45d162381ec723dd9ce744f2cc23c4d21435a52b7c7e60a182073ee19a08d60e";
+constexpr std::string_view selected_packets_hash =
+    "843c9cb22c0b55e07c207135125a8334b0dd170a0f708aa1fb50f34d4c5d7363";
+constexpr std::string_view selected_relations_hash =
+    "0b2e21dcbf26454af316bec9323627aa1488ebc7aa1f14c006bfb41a231e0e6f";
 
 constexpr std::array<std::string_view, 8> registered_configuration_ids{
     "exact.tetrahedron_k4",
@@ -713,6 +722,8 @@ struct Tables final {
         "configuration_id,packet_index,packet_id,mass_quanta,x_m,y_m,z_m"};
     Csv relations{
         "configuration_id,relation_index,first_id,second_id,reference_length_m"};
+    Csv basis_vectors{
+        "configuration_id,basis_kind,basis_index,packet_id,x,y,z"};
     Csv bulk{
         "control_id,cubature,family,target_k_over_g,a_j_per_m2,b_j_per_m2,"
         "weighted_moment_m2,second_moment,fourth_moment_coefficient,"
@@ -784,13 +795,68 @@ void emit_selected_inputs(std::span<const GraphConfiguration> configurations,
 struct RunCounts final {
     std::size_t bulk_rows{0U};
     std::size_t bulk_failures{0U};
+    std::size_t pair_control_rows{0U};
+    std::size_t pair_control_failures{0U};
+    std::size_t collective_bulk_rows{0U};
+    std::size_t collective_bulk_failures{0U};
     std::size_t graph_rows{0U};
     std::size_t graph_failures{0U};
+    std::size_t basis_vector_rows{0U};
     std::size_t metamorphic_rows{0U};
     std::size_t metamorphic_failures{0U};
     std::size_t checkpoint_rows{0U};
     std::size_t checkpoint_failures{0U};
 };
+
+struct DecisionInputs final {
+    std::size_t pair_control_failures{0U};
+    std::size_t collective_bulk_failures{0U};
+    std::size_t implementation_failures{0U};
+    std::size_t dense_global_rows{0U};
+    std::size_t dense_global_failures{0U};
+};
+
+[[nodiscard]] constexpr std::string_view classify_decision(
+    const DecisionInputs& input) noexcept {
+    if (input.pair_control_failures != 0U ||
+        input.implementation_failures != 0U) {
+        return "stop_inconclusive_or_implementation_failure";
+    }
+    if (input.collective_bulk_failures != 0U) {
+        if (input.dense_global_rows != 0U &&
+            input.dense_global_failures == 0U) {
+            return "representation_expressive_but_local_constitutive_law_unresolved";
+        }
+        return "local_collective_constitutive_parameterization_or_locality_failure";
+    }
+    return "retain_local_collective_relational_energy_for_research";
+}
+
+void audit_decision_logic() {
+    const auto expect = [](const DecisionInputs& input,
+                           std::string_view expected) {
+        if (classify_decision(input) != expected) {
+            throw std::runtime_error("decision classification audit failed");
+        }
+    };
+    expect({}, "retain_local_collective_relational_energy_for_research");
+    expect({.pair_control_failures = 1U},
+           "stop_inconclusive_or_implementation_failure");
+    expect({.implementation_failures = 1U},
+           "stop_inconclusive_or_implementation_failure");
+    expect({.collective_bulk_failures = 1U},
+           "local_collective_constitutive_parameterization_or_locality_failure");
+    expect({.collective_bulk_failures = 1U,
+            .dense_global_rows = 1U,
+            .dense_global_failures = 0U},
+           "representation_expressive_but_local_constitutive_law_unresolved");
+    // Pair-control/implementation failures have priority over a dense upper
+    // bound. The actual producer never instantiates dense-global rows.
+    expect({.pair_control_failures = 1U,
+            .collective_bulk_failures = 1U,
+            .dense_global_rows = 1U},
+           "stop_inconclusive_or_implementation_failure");
+}
 
 [[nodiscard]] std::array<std::array<double, 6>, 6> tangent_matrix(
     const std::function<double(const Matrix3d&)>& energy) {
@@ -983,6 +1049,8 @@ void emit_bulk_controls(Tables& tables, RunCounts& counts) {
         });
         ++counts.bulk_rows;
         counts.bulk_failures += pair_pass ? 0U : 1U;
+        ++counts.pair_control_rows;
+        counts.pair_control_failures += pair_pass ? 0U : 1U;
 
         for (const auto ratio : ratios) {
             constexpr auto shear = 1.0;
@@ -1134,6 +1202,8 @@ void emit_bulk_controls(Tables& tables, RunCounts& counts) {
             });
             ++counts.bulk_rows;
             counts.bulk_failures += pass ? 0U : 1U;
+            ++counts.collective_bulk_rows;
+            counts.collective_bulk_failures += pass ? 0U : 1U;
         }
     }
 }
@@ -1249,6 +1319,40 @@ struct RankResult final {
     return result;
 }
 
+void emit_basis_matrix(
+    const GraphConfiguration& configuration, std::string_view basis_kind,
+    std::span<const std::uint64_t> packet_ids, const DenseMatrix& basis,
+    Tables& tables, RunCounts& counts) {
+    if (packet_ids.size() != configuration.packets.size() ||
+        basis.row_count() != 3U * packet_ids.size()) {
+        throw std::runtime_error("basis export dimensions do not match packets");
+    }
+    std::set<std::uint64_t> expected_ids;
+    for (const auto& packet : configuration.packets) {
+        expected_ids.insert(packet.id);
+    }
+    if (std::set<std::uint64_t>(packet_ids.begin(), packet_ids.end()) !=
+        expected_ids) {
+        throw std::runtime_error("basis export packet IDs do not match graph");
+    }
+    for (std::size_t basis_index = 0U;
+         basis_index < basis.column_count(); ++basis_index) {
+        for (std::size_t packet_index = 0U;
+             packet_index < packet_ids.size(); ++packet_index) {
+            tables.basis_vectors.row({
+                configuration.id,
+                std::string(basis_kind),
+                std::to_string(basis_index),
+                std::to_string(packet_ids[packet_index]),
+                hex64(basis(3U * packet_index, basis_index)),
+                hex64(basis(3U * packet_index + 1U, basis_index)),
+                hex64(basis(3U * packet_index + 2U, basis_index)),
+            });
+            ++counts.basis_vector_rows;
+        }
+    }
+}
+
 void emit_graph_controls(std::span<const GraphConfiguration> configurations,
                          Tables& tables, RunCounts& counts) {
     const std::array ratios{1.0 / 3.0, 1.0, 2.0, 10.0};
@@ -1257,6 +1361,24 @@ void emit_graph_controls(std::span<const GraphConfiguration> configurations,
             configuration.packets, configuration.relations);
         const auto r_diagnostic = confirmation::analyze_raw_central_rigidity(
             configuration.packets, configuration.relations);
+        if (r_diagnostic.status != observation::RankStatus::analyzed ||
+            !r_diagnostic.cpqr.basis_complete ||
+            !r_diagnostic.all_null_modes_accepted ||
+            r_diagnostic.rigid.orthonormal_basis.column_count() !=
+                r_diagnostic.realized_rigid_rank ||
+            r_diagnostic.cpqr.nullspace_basis.column_count() !=
+                r_diagnostic.nullity) {
+            throw std::runtime_error(
+                "accepted rigid/null basis is unavailable for export");
+        }
+        emit_basis_matrix(
+            configuration, "rigid_orthonormal",
+            r_diagnostic.rigid.packet_ids,
+            r_diagnostic.rigid.orthonormal_basis, tables, counts);
+        emit_basis_matrix(
+            configuration, "r_nullspace_accepted_cpqr",
+            rigidity.linearized.packet_ids,
+            r_diagnostic.cpqr.nullspace_basis, tables, counts);
         struct ModelCase final {
             std::string family{};
             double ratio{0.0};
@@ -1549,18 +1671,27 @@ void emit_metamorphic_controls(
                 double expected_ratio{1.0};
             };
             std::vector<Probe> probes;
-            probes.push_back({"translation",
+            probes.push_back({"reference_current_translation_covariance",
                 transform_packets(configuration.packets, Matrix3d::identity(),
                                   translation),
                 transform_packets(current, Matrix3d::identity(), translation),
                 configuration.relations, 1.0});
-            probes.push_back({"rotation",
+            probes.push_back({"reference_current_rotation_covariance",
                 transform_packets(configuration.packets, rotation, {}),
                 transform_packets(current, rotation, {}),
                 configuration.relations, 1.0});
-            probes.push_back({"rotation_translation",
+            probes.push_back({
+                "reference_current_rotation_translation_covariance",
                 transform_packets(configuration.packets, rotation, translation),
                 transform_packets(current, rotation, translation),
+                configuration.relations, 1.0});
+            probes.push_back({"current_only_translation_objectivity",
+                configuration.packets,
+                transform_packets(current, Matrix3d::identity(), translation),
+                configuration.relations, 1.0});
+            probes.push_back({"current_only_rotation_objectivity",
+                configuration.packets,
+                transform_packets(current, rotation, {}),
                 configuration.relations, 1.0});
             for (const auto scale : {0.5, 2.0}) {
                 Matrix3d scale_map = Matrix3d::identity();
@@ -1721,8 +1852,17 @@ void emit_checkpoints(
            << "  \"dense_global_rows\": 0,\n"
            << "  \"bulk_rows\": " << counts.bulk_rows << ",\n"
            << "  \"bulk_failures\": " << counts.bulk_failures << ",\n"
+           << "  \"pair_control_rows\": " << counts.pair_control_rows << ",\n"
+           << "  \"pair_control_failures\": "
+           << counts.pair_control_failures << ",\n"
+           << "  \"collective_bulk_rows\": "
+           << counts.collective_bulk_rows << ",\n"
+           << "  \"collective_bulk_failures\": "
+           << counts.collective_bulk_failures << ",\n"
            << "  \"graph_rows\": " << counts.graph_rows << ",\n"
            << "  \"graph_failures\": " << counts.graph_failures << ",\n"
+           << "  \"basis_vector_rows\": " << counts.basis_vector_rows
+           << ",\n"
            << "  \"metamorphic_rows\": " << counts.metamorphic_rows << ",\n"
            << "  \"metamorphic_failures\": "
            << counts.metamorphic_failures << ",\n"
@@ -1752,11 +1892,14 @@ void emit_checkpoints(
         return found == fixture_hashes.end() ? std::string("builtin_smoke")
                                              : found->second;
     };
+    const auto selected_hash_or = [&](std::string_view digest) {
+        return smoke ? std::string("builtin_smoke") : std::string(digest);
+    };
     std::ostringstream output;
     output << "{\n"
            << "  \"parent_sha\": \"" << parent_sha << "\",\n"
            << "  \"exact_oracle_pre_hash\": "
-              "\"463fd3f58c5ab5693207ed1a127300434bd76f6d03074f7217fd50e5511ad3d2\",\n"
+              "\"010d1452010d534445e63b2acfb83374a92b1958e6a62afbf240a8f3121e36bf\",\n"
            << "  \"source_sha\": \"" << MLS_CONFIGURED_SOURCE_SHA << "\",\n"
            << "  \"source_branch\": \"" << MLS_CONFIGURED_SOURCE_BRANCH
            << "\",\n"
@@ -1781,6 +1924,17 @@ void emit_checkpoints(
            << "\",\n"
            << "    \"relations.csv\": \"" << hash_or("relations.csv")
            << "\"\n"
+           << "  },\n"
+           << "  \"selected_subset_sha256\": {\n"
+           << "    \"mode\": \""
+           << (smoke ? "builtin_smoke" : "accepted_parent_subset")
+           << "\",\n"
+           << "    \"configurations.csv\": \""
+           << selected_hash_or(selected_configurations_hash) << "\",\n"
+           << "    \"packets.csv\": \""
+           << selected_hash_or(selected_packets_hash) << "\",\n"
+           << "    \"relations.csv\": \""
+           << selected_hash_or(selected_relations_hash) << "\"\n"
            << "  }\n"
            << "}\n";
     return output.str();
@@ -1837,12 +1991,37 @@ struct Arguments final {
     return result;
 }
 
+void verify_selected_subset(const Tables& tables, bool smoke) {
+    if (smoke) {
+        return;
+    }
+    const std::array checks{
+        std::pair{std::string_view{"configurations.csv"},
+                  std::pair{sha256(tables.configurations.contents()),
+                            selected_configurations_hash}},
+        std::pair{std::string_view{"packets.csv"},
+                  std::pair{sha256(tables.packets.contents()),
+                            selected_packets_hash}},
+        std::pair{std::string_view{"relations.csv"},
+                  std::pair{sha256(tables.relations.contents()),
+                            selected_relations_hash}},
+    };
+    for (const auto& [name, digests] : checks) {
+        if (digests.first != digests.second) {
+            throw std::runtime_error(
+                "selected parent subset commitment mismatch: " +
+                std::string(name));
+        }
+    }
+}
+
 int run(const Arguments& arguments) {
     if (arguments.schema_audit) {
         if (sha256("abc") !=
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") {
             throw std::runtime_error("SHA-256 self-test failed");
         }
+        audit_decision_logic();
         std::cout << "Constitutive Expressivity schema audit: PASS\n";
         return 0;
     }
@@ -1855,24 +2034,41 @@ int run(const Arguments& arguments) {
     Tables tables{};
     RunCounts counts{};
     emit_selected_inputs(input.configurations, tables);
+    verify_selected_subset(tables, arguments.smoke);
     emit_bulk_controls(tables, counts);
     emit_graph_controls(input.configurations, tables, counts);
+    if (tables.basis_vectors.size() == 0U ||
+        tables.basis_vectors.size() != counts.basis_vector_rows) {
+        throw std::runtime_error("basis-vector evidence inventory mismatch");
+    }
     emit_metamorphic_controls(input.configurations, tables, counts);
+    constexpr std::size_t registered_probes_per_family = 15U;
+    constexpr std::size_t registered_family_count = 2U;
+    if (counts.metamorphic_rows != input.configurations.size() *
+            registered_family_count * registered_probes_per_family) {
+        throw std::runtime_error("metamorphic probe inventory mismatch");
+    }
     std::map<std::string, std::vector<std::uint8_t>> checkpoint_payloads;
     emit_checkpoints(
         input.configurations, tables, counts, checkpoint_payloads);
-    const auto all_green = counts.bulk_failures == 0U &&
-        counts.graph_failures == 0U && counts.metamorphic_failures == 0U &&
-        counts.checkpoint_failures == 0U;
-    const std::string decision = all_green
-        ? "retain_local_collective_relational_energy_for_research"
-        : "stop_inconclusive_or_implementation_failure";
+    // No dense/global H is instantiated. The dense-only preregistration branch
+    // is therefore deliberately unreachable in an emitted producer run.
+    const DecisionInputs decision_inputs{
+        .pair_control_failures = counts.pair_control_failures,
+        .collective_bulk_failures = counts.collective_bulk_failures,
+        .implementation_failures = counts.graph_failures +
+            counts.metamorphic_failures + counts.checkpoint_failures,
+        .dense_global_rows = 0U,
+        .dense_global_failures = 0U,
+    };
+    const std::string decision{classify_decision(decision_inputs)};
 
     std::filesystem::create_directories(arguments.output);
     std::map<std::string, std::string> payloads{
         {"configurations.csv", tables.configurations.contents()},
         {"packets.csv", tables.packets.contents()},
         {"relations.csv", tables.relations.contents()},
+        {"basis_vectors.csv", tables.basis_vectors.contents()},
         {"bulk_expressivity.csv", tables.bulk.contents()},
         {"tangent.csv", tables.tangent.contents()},
         {"strain_energy.csv", tables.strain.contents()},
