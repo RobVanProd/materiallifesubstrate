@@ -2,33 +2,39 @@
 
 The canonical bundle is closed and self-contained.  All binary64 values use
 canonical hexadecimal text.  High-precision decimal values include their
-declared precision and scale.  CSV rows have a fixed canonical order.
+declared precision and scale.  CSV rows have a fixed canonical order.  The
+final bundle preserves the complete closed C++ producer bundle under
+`producer/`; the independent stage never rewrites those bytes.
 
-| Path | Required contents |
+| Final path | Required contents |
 |---|---|
 | `summary.json` | bounded decision, row/failure counts, domain and prohibited-feature boundary |
-| `provenance.json` | source/parent/evidence identity, inherited blobs, seed, tool and schema versions |
+| `provenance.json` | independent-stage identity plus source/parent/evidence identity, inherited blobs, seed, tool and schema versions |
 | `manifest.json` | SHA-256 of every payload and canonical pre-hash |
-| `configurations.csv` | registered graph identity, role, packet/relation counts |
-| `reference_packets.csv` | canonical and semantic packet IDs, mass quanta, reference coordinates |
-| `relations.csv` | canonical/semantic endpoints, reference lengths, weights, relation index |
-| `operators.csv` | operator ID, graph, family, target `K/G`, frozen coefficients |
-| `h_matrix.csv` | complete `m*m` parent and frozen-symmetric H values plus correction, including exact exported zero entries |
-| `current_packets.csv` | evaluation-bound current coordinates and velocity probes |
-| `force_evaluations.csv` | energy, power, total force/torque, domain status, scales and gates |
-| `relation_forces.csv` | relation extension, length, direction and one computed conjugate `g_a` |
-| `packet_forces.csv` | complete semantic packet-force vector for every valid evaluation |
-| `directional_derivatives.csv` | analytic/high-precision directional derivatives and convergence data |
-| `reference_tangent.csv` | registered epsilon sequence and `-R0^T H R0` convergence |
-| `finite_tangent.csv` | complete material/geometric/total Hessian and force-Jacobian entries |
-| `metamorphic.csv` | objectivity, similarity, order, endpoint and ID probes |
-| `compression.csv` | positive length-ratio path, conditioning/sensitivity, exact-coincidence status |
+| `independent_directional_derivatives.csv` | every registered raw 100-decimal step, extrapolated derivative, analytic work and convergence gate |
+| `independent_finite_tangent.csv` | every registered raw 100-decimal step and extrapolated material/geometric/total/Jacobian comparison |
+| `producer/manifest.json` | exact closed manifest emitted by C++ before independent work |
+| `producer/raw_summary.json` | raw counts, explicit pending high-precision stage, no final decision |
+| `producer/raw_provenance.json` | source/parent/inherited-blob/compiler/raw-schema identity |
+| `producer/configurations.csv` | registered graph identity, role, packet/relation counts |
+| `producer/reference_packets.csv` | canonical and semantic packet IDs, mass quanta, reference coordinates |
+| `producer/relations.csv` | canonical/semantic endpoints, reference lengths, weights, relation index |
+| `producer/operators.csv` | operator ID, graph, family, target `K/G`, frozen coefficients |
+| `producer/h_matrix.csv` | complete `m*m` parent and frozen-symmetric H values plus correction, including zeros |
+| `producer/current_packets.csv` | evaluation-bound current coordinates and velocity/direction probes |
+| `producer/force_evaluations.csv` | binary64 energy, power, total force/torque, domain status, scales and gates |
+| `producer/relation_forces.csv` | relation extension, length, direction and one computed conjugate `g_a` |
+| `producer/packet_forces.csv` | complete semantic packet-force vector for every valid evaluation |
+| `producer/reference_tangent.csv` | registered epsilon sequence and binary64 `-R0^T H R0` convergence |
+| `producer/finite_tangent.csv` | material/geometric/total Hessian, force Jacobian, and binary64 raw steps |
+| `producer/metamorphic.csv` | objectivity, similarity, order, endpoint and ID probes with explicit maps |
+| `producer/compression.csv` | positive length-ratio path, conditioning/sensitivity, exact-coincidence status |
 
-The manifest inventory is exact; undeclared files fail validation.  The
+Both manifest inventories are exact; undeclared files fail validation.  The
 independent validator reconstructs semantic graphs, frozen `H`, finite energy,
 analytic gradient, continuous balance identities, tangent terms, and selected
-high-precision checks.  It may not accept producer pass fields or summary
-counts as premises.
+high-precision checks.  It may not accept producer or materialiser pass fields
+or summary counts as premises.
 
 `H` is relation-coordinate data.  The validator first reconstructs and checks
 the registered `(H_parent+H_parent^T)/2` freeze, its correction bound, and

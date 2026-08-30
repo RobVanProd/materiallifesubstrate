@@ -31,9 +31,9 @@ modify the inherited energy builder or accepted producer.
 
 ### Pre-final symmetric-storage audit
 
-The sealed parent reports small nonzero binary64 `H` symmetry residuals (for
-example `2^-58` through approximately `2^-54` across inspected collective
-rows).  Therefore directly treating the two independently accumulated
+The sealed parent reports small nonzero binary64 `H` symmetry residuals (from
+zero through `2^-53` across the 24 registered graph/policy rows).  Therefore
+directly treating the two independently accumulated
 triangles as an exactly symmetric matrix would make `g=H e` disagree in high
 precision with the derivative of `U=(1/2)e^THe`.
 
@@ -281,7 +281,9 @@ not by itself a claim of physical validity.
 The final evidence requires:
 
 - a clean exact source SHA and frozen inherited blobs;
-- deterministic twin full producers with byte-identical closed bundles;
+- deterministic twin C++ producer bundles;
+- a deterministic independent Python materialisation stage applied separately
+  to each producer bundle, followed by byte-identical final bundles;
 - independent Python reconstruction and mutation tests;
 - high-precision gradient/tangent controls;
 - warning-as-error GCC, Clang, and MSVC builds with unfiltered CTest;
@@ -293,6 +295,26 @@ The final evidence requires:
 
 Failures are preserved outside canonical evidence.  Failed solves/checks are
 evidence and may not be filtered from the final tables.
+
+### Two-stage evidence boundary
+
+The C++ producer is forbidden to populate or pass the registered 100-decimal
+fields.  It emits a closed raw producer bundle containing frozen inputs,
+binary64 analytic force/tangent results and registered binary64 tangent step
+rows, an explicit `high_precision_stage=pending` marker, and no final
+scientific decision.  The independent directional-derivative table does not
+exist in the raw inventory; its directions are bound through the exported
+evaluation/current-packet rows and are materialised only by Python.
+
+An independent Python materialiser first validates that raw manifest, copies
+the complete producer tree byte-for-byte under `producer/`, computes the
+registered high-precision rows from exported inputs, and writes a distinct
+final manifest/summary.  The final validator recomputes the finite energy,
+gradient, tangent, and high-precision controls from `producer/` rather than
+accepting either C++ pass fields or materialised pass fields as premises.
+Both full pipelines are executed independently and the final trees must be
+byte-identical.  This division is preregistered before the first full sweep;
+it prevents binary64 C++ from claiming an impossible decimal oracle result.
 
 ## 11. Decision order
 
