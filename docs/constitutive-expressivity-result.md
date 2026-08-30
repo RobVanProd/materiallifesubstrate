@@ -92,19 +92,23 @@ These theorems establish finite algebraic contracts. They do not prove a
 continuum limit, a material calibration, physical dynamics, numerical time
 integration, or useful fracture/contact behavior.
 
-Four pre-seal CI failures remain public and immutable rather than being
+Five pre-seal checkpoints remain public and immutable rather than being
 discarded. Commit `11e6393` failed during the first proof integration; commit
 `a8aea10` failed because matrix reassociation was followed by a rewrite in the
 wrong direction; commit `e09dd99` used a nonexistent namespaced dot-product
 theorem and still preceded the hardened evidence inventory; and commit
 `acaeabf` compiled Lean and passed the exact oracle but exposed the stale
 manifest inventory on all C++ jobs plus a Windows path-resolution defect in
-the seal regression. Their tags are
+the seal regression. Commit `9610083` passed the complete public CI matrix but
+the final local seal audit correctly rejected a mismatch between the
+producer's explicit `NO_PROMOTION` token and the sealer's spaced marker; it was
+not relabeled as final evidence. Their tags are
 `constitutive-expressivity-formal-failed-11e6393`,
 `constitutive-expressivity-formal-failed-a8aea10`,
 `constitutive-expressivity-formal-failed-e09dd99`, and
-`constitutive-expressivity-ci-failed-acaeabf`. None of these failed runs is
-admissible evidence for the bounded decision.
+`constitutive-expressivity-ci-failed-acaeabf`, plus
+`constitutive-expressivity-preseal-failed-9610083`. None of these checkpoints
+is admissible evidence for the bounded decision.
 
 ## Interpretation and limitations
 
