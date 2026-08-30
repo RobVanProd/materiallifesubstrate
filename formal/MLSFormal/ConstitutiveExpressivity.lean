@@ -78,9 +78,12 @@ theorem relationalStiffness_quadratic_identity
         relationalStiffness relationOperator constitutiveOperator *ᵥ displacement =
       relationExtension relationOperator displacement ⬝ᵥ
         constitutiveOperator *ᵥ relationExtension relationOperator displacement := by
-  rw [relationalStiffness, Matrix.mul_assoc, Matrix.mulVec_mulVec,
-    Matrix.mulVec_mulVec, Matrix.dotProduct_transpose_mulVec]
-  rfl
+  rw [relationalStiffness, ← Matrix.mulVec_mulVec,
+    ← Matrix.mulVec_mulVec, Matrix.dotProduct_transpose_mulVec]
+  simpa [relationExtension] using
+    (Matrix.dotProduct_comm
+      (constitutiveOperator *ᵥ relationOperator *ᵥ displacement)
+      (relationOperator *ᵥ displacement))
 
 /-- The packet-coordinate and relation-coordinate energy formulas agree. -/
 theorem relationalQuadraticEnergy_eq_stiffness_quadratic
@@ -114,8 +117,8 @@ theorem relationKernel_le_relationalStiffnessKernel
     (displacement : Degree → ℚ)
     (inRelationKernel : relationOperator *ᵥ displacement = 0) :
     relationalStiffness relationOperator constitutiveOperator *ᵥ displacement = 0 := by
-  rw [relationalStiffness, Matrix.mul_assoc, Matrix.mulVec_mulVec,
-    Matrix.mulVec_mulVec, inRelationKernel]
+  rw [relationalStiffness, ← Matrix.mulVec_mulVec,
+    ← Matrix.mulVec_mulVec, inRelationKernel]
   simp
 
 /--
