@@ -245,11 +245,15 @@ r/l0 in {1,2^-4,2^-8,2^-12,2^-16,2^-20,2^-24,2^-28,2^-32}.
 
 Additional diagnostic-only ratios `{2^-36,2^-40,2^-44,2^-48}` probe the
 binary64 boundary but cannot weaken the registered `2^-32` domain floor.
-Each row records force magnitude, material/geometric/total tangent norms,
-condition estimate, independent gradient error, and one-ulp coordinate
-sensitivity.  Any nonfinite result, direction loss, failed high-precision
-gradient, or failure to distinguish adjacent positive lengths at or above
-`2^-32` records numerical degeneracy before the registered limit.
+Each raw producer row records force magnitude,
+material/geometric/total tangent norms, condition estimate, a
+`binary64_gradient_error_n` diagnostic, and one-ulp coordinate sensitivity.
+The producer may not label that diagnostic independent or high precision.  The
+final validator independently recomputes the registered high-precision
+collapse-gradient checks from exported inputs and binds their result in its
+validation receipt and decision.  Any nonfinite result, direction loss, failed
+high-precision gradient, or failure to distinguish adjacent positive lengths
+at or above `2^-32` records numerical degeneracy before the registered limit.
 
 At `r=0` the evaluator must return the explicit `coincident_relation` domain
 failure before emitting partial energy or force.  No epsilon direction,

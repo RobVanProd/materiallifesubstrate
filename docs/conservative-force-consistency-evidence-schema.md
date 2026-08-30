@@ -28,13 +28,20 @@ final bundle preserves the complete closed C++ producer bundle under
 | `producer/reference_tangent.csv` | registered epsilon sequence and binary64 `-R0^T H R0` convergence |
 | `producer/finite_tangent.csv` | material/geometric/total Hessian, force Jacobian, and binary64 raw steps |
 | `producer/metamorphic.csv` | objectivity, similarity, order, endpoint and ID probes with explicit maps |
-| `producer/compression.csv` | positive length-ratio path, conditioning/sensitivity, exact-coincidence status |
+| `producer/compression.csv` | positive length-ratio path, conditioning/sensitivity, exact-coincidence status, and producer-only `binary64_gradient_error_n` diagnostic |
 
 Both manifest inventories are exact; undeclared files fail validation.  The
 independent validator reconstructs semantic graphs, frozen `H`, finite energy,
 analytic gradient, continuous balance identities, tangent terms, and selected
 high-precision checks.  It may not accept producer or materialiser pass fields
 or summary counts as premises.
+
+The raw compression table must not contain a field named
+`independent_gradient_error_n` or otherwise claim a high-precision oracle.
+High-precision collapse-gradient verification is recomputed by the final
+validator from producer inputs and recorded in the validator receipt/decision;
+it is not a trusted C++ field.  This pre-data clarification changes no case,
+tolerance, or decision rule.
 
 `H` is relation-coordinate data.  The validator first reconstructs and checks
 the registered `(H_parent+H_parent^T)/2` freeze, its correction bound, and
