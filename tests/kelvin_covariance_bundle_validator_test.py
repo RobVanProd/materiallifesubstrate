@@ -12,9 +12,17 @@ import sys
 import tempfile
 
 
-def run(validator: pathlib.Path, bundle: pathlib.Path, expect_success: bool) -> None:
+def run(
+    validator: pathlib.Path,
+    bundle: pathlib.Path,
+    expected_source_branch: str,
+    expect_success: bool,
+) -> None:
     completed = subprocess.run(
-        [sys.executable, str(validator), "--bundle", str(bundle), "--allow-dirty"],
+        [
+            sys.executable, str(validator), "--bundle", str(bundle),
+            "--allow-dirty", "--expected-source-branch", expected_source_branch,
+        ],
         text=True, capture_output=True, check=False)
     if (completed.returncode == 0) != expect_success:
         raise RuntimeError(
@@ -26,8 +34,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--validator", type=pathlib.Path, required=True)
     parser.add_argument("--bundle", type=pathlib.Path, required=True)
+    parser.add_argument(
+        "--expected-source-branch", default="kelvin-covariance-audit"
+    )
     args = parser.parse_args()
-    run(args.validator, args.bundle, True)
+    run(args.validator, args.bundle, args.expected_source_branch, True)
     with tempfile.TemporaryDirectory(prefix="mls-kelvin-validator-") as temp:
         root = pathlib.Path(temp)
         mutations = []
@@ -65,7 +76,7 @@ def main() -> int:
 
         for name, target in mutations:
             try:
-                run(args.validator, target, False)
+                run(args.validator, target, args.expected_source_branch, False)
             except RuntimeError as error:
                 raise RuntimeError(f"mutation {name}: {error}") from error
     print("kelvin covariance bundle validator regression: PASS (5 mutations)")

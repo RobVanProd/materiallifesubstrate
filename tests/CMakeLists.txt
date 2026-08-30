@@ -384,7 +384,9 @@ if(Python3_Interpreter_FOUND)
       "${CMAKE_CURRENT_BINARY_DIR}/kelvin-covariance-smoke-a"
       --compare
       "${CMAKE_CURRENT_BINARY_DIR}/kelvin-covariance-smoke-b"
-      --allow-dirty)
+      --allow-dirty
+      --expected-source-branch
+      "${MLS_CONFIGURED_SOURCE_BRANCH}")
   set_tests_properties(
     mls.kelvin_covariance.smoke.verify
     PROPERTIES
@@ -401,7 +403,9 @@ if(Python3_Interpreter_FOUND)
       --validator
       "${PROJECT_SOURCE_DIR}/reference/validate_kelvin_covariance_bundle.py"
       --bundle
-      "${CMAKE_CURRENT_BINARY_DIR}/kelvin-covariance-smoke-a")
+      "${CMAKE_CURRENT_BINARY_DIR}/kelvin-covariance-smoke-a"
+      --expected-source-branch
+      "${MLS_CONFIGURED_SOURCE_BRANCH}")
   set_tests_properties(
     mls.kelvin_covariance.validator.regression
     PROPERTIES

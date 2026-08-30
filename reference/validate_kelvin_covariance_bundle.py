@@ -123,7 +123,9 @@ def parse_checkpoint(path: pathlib.Path, expected_count: int,
     audit.require(offset == len(data), f"{path.name} trailing bytes")
 
 
-def validate_bundle(root: pathlib.Path, allow_dirty: bool) -> tuple[int, dict]:
+def validate_bundle(
+    root: pathlib.Path, allow_dirty: bool, expected_source_branch: str
+) -> tuple[int, dict]:
     audit = Audit()
     audit.require(root.is_dir(), "bundle directory missing")
     tree = canonical_tree(root)
@@ -136,7 +138,7 @@ def validate_bundle(root: pathlib.Path, allow_dirty: bool) -> tuple[int, dict]:
     audit.require(summary.get("schema_version") == 1, "schema version")
     audit.require(summary.get("producer") == "cpp_kelvin_covariance_audit",
                   "producer")
-    audit.require(summary.get("source_branch") == "kelvin-covariance-audit",
+    audit.require(summary.get("source_branch") == expected_source_branch,
                   "source branch")
     source_sha = summary.get("source_sha")
     audit.require(isinstance(source_sha, str) and len(source_sha) == 40 and
@@ -270,11 +272,20 @@ def main() -> int:
     parser.add_argument("--bundle", type=pathlib.Path, required=True)
     parser.add_argument("--compare", type=pathlib.Path)
     parser.add_argument("--allow-dirty", action="store_true")
+    parser.add_argument(
+        "--expected-source-branch", default="kelvin-covariance-audit",
+        help=("exact branch recorded by the input; the default preserves the "
+              "sealed Kelvin-audit contract"),
+    )
     args = parser.parse_args()
     try:
-        checks, summary = validate_bundle(args.bundle, args.allow_dirty)
+        checks, summary = validate_bundle(
+            args.bundle, args.allow_dirty, args.expected_source_branch
+        )
         if args.compare is not None:
-            other_checks, other_summary = validate_bundle(args.compare, args.allow_dirty)
+            other_checks, other_summary = validate_bundle(
+                args.compare, args.allow_dirty, args.expected_source_branch
+            )
             checks += other_checks
             if canonical_tree(args.bundle) != canonical_tree(args.compare):
                 raise ValidationError("twin bundles are not byte-for-byte identical")
