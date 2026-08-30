@@ -146,3 +146,43 @@ MLS_TEST("Kelvin covariance audit rejects invalid transformations and blocks") {
     MLS_REQUIRE(!normalized.complete);
     MLS_REQUIRE_EQ(normalized.first_invalid_block, std::size_t{0});
 }
+
+MLS_TEST("Kelvin direct spectrum retains null tails without normal equations") {
+    observation::DenseMatrix rank_deficient(6U, 3U);
+    for (std::size_t row = 0; row < 6U; ++row) {
+        const double first = static_cast<double>(row + 1U);
+        const double second = static_cast<double>((row % 3U) + 1U);
+        rank_deficient(row, 0U) = first;
+        rank_deficient(row, 1U) = second;
+        rank_deficient(row, 2U) = first + second;
+    }
+    const auto transformed = audit::expected_transformed_operator(
+        rank_deficient, rational_rotation(), 0.5);
+    const auto base_spectrum = audit::singular_values(rank_deficient);
+    const auto transformed_spectrum = audit::singular_values(transformed);
+    MLS_REQUIRE_EQ(base_spectrum.size(), std::size_t{3});
+    MLS_REQUIRE_EQ(transformed_spectrum.size(), std::size_t{3});
+    MLS_REQUIRE(audit::normalized_spectrum_difference(
+        transformed_spectrum, base_spectrum, 0.5) <=
+        tolerance(rank_deficient, 65536.0));
+    MLS_REQUIRE(base_spectrum.back() <=
+        tolerance(rank_deficient, 65536.0) * base_spectrum.front());
+
+    observation::DenseMatrix extreme(4U, 3U);
+    extreme(0U, 0U) = 1.0e300;
+    extreme(1U, 1U) = 5.0e299;
+    const auto extreme_spectrum = audit::singular_values(extreme);
+    MLS_REQUIRE_EQ(extreme_spectrum.size(), std::size_t{3});
+    MLS_REQUIRE(std::ranges::all_of(
+        extreme_spectrum, [](const double value) {
+            return std::isfinite(value);
+        }));
+    MLS_REQUIRE(extreme_spectrum[0] == 1.0e300);
+    MLS_REQUIRE(extreme_spectrum[1] == 5.0e299);
+    MLS_REQUIRE(extreme_spectrum[2] == 0.0);
+
+    observation::DenseMatrix nonfinite(2U, 2U);
+    nonfinite(0U, 0U) = std::numeric_limits<double>::infinity();
+    MLS_REQUIRE_THROWS(std::invalid_argument,
+        audit::singular_values(nonfinite));
+}

@@ -34,7 +34,8 @@ fingerprint that caused the accepted parent lab's global STOP.
 | `abs(det(Q)-1)` | `0` | `0` |
 | Kelvin-map orthogonality residual | `3.14018e-16` | recorded per row |
 | raw operator covariance residual | `5.96975e-16` | `1.02923e-6` |
-| scaled raw spectrum delta | `1.54847e-10` | `0.221687` |
+| scaled raw spectrum delta (GCC direct SVD) | `4.18692e-16` | `5.32820e-7` |
+| scaled raw spectrum delta (local MSVC direct SVD) | `4.64076e-15` | `2.66410e-6` |
 | block-scalar covariance residual | `5.71238e-16` | `4.68175e-7` |
 
 Across the 16 rotation-containing physical configurations, the legacy
@@ -42,9 +43,25 @@ row-normalized spectrum delta ranged from `2.15634e-2` to `1.87007e-1`, many
 orders of magnitude above the registered binary64 tolerance.
 
 The standalone actual-Kelvin counterexample used an anisotropic diagonal raw
-operator. Its raw transform residual and raw spectrum delta were both exactly
-zero in the C++ diagnostic, while the independently row-normalized spectrum
-delta was approximately `0.700`.
+operator. Its raw transform residual was exactly zero and its direct-SVD raw
+spectrum delta was approximately `7.40e-17` in the C++ diagnostic, while the
+independently row-normalized spectrum delta was approximately `0.700`.
+
+## Preserved failed compiler replication
+
+The first public replication, CI run `33281716611` at source
+`ce374ac3b38e5b9c3b26c4e6aac1b059ab120b05`, is intentionally preserved as a
+failure. GCC, Clang, Python, and Lean passed; MSVC failed four cascading tests
+because 17 of the 24 raw spectrum rows failed while every raw operator and
+block-scalar row passed. A local MSVC reproduction measured the unit-test row
+at `8.81355` times tolerance.
+
+The failure was in the C++ diagnostic's former Gram/square-root singular-value
+path, not in the raw corrected-gradient covariance law. The direct one-sided
+Jacobi path now acts on the rectangular matrix and retains every tail value.
+It passes the same frozen tolerance without a rank cutoff, zeroing, deletion,
+regularization, or decision-rule change. This correction does not erase or
+reinterpret the failed run.
 
 ## Independent exact/high-precision result
 

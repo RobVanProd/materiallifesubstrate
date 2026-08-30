@@ -101,10 +101,33 @@ choice and has no physical or promotion status.
 ## Numerical approximation and failure modes
 
 The C++ builder and matrix comparison use binary64, with long-double
-accumulation in dense products and Gram construction. Singular values are
-diagnostic eigenvalues of the smaller Gram matrix using deterministic cyclic
-Jacobi sweeps. The complete `min(rows,columns)` spectrum is emitted; the audit
-does not infer rank or discard a tail.
+accumulation where the implementation supports additional precision. The
+gating spectrum is computed by deterministic cyclic one-sided Jacobi sweeps
+on the max-entry-scaled raw rectangular matrix. It never forms `R^T R` or
+`R R^T`. The direct path uses fixed pivot order, emits the complete
+`min(rows,columns)` spectrum, does not infer rank or discard a tail, and fails
+closed after 256 sweeps or on nonfinite input. Scaling is restored only after
+the column norms are evaluated.
+
+The first public compiler replication exposed why that distinction matters.
+At source `ce374ac3b38e5b9c3b26c4e6aac1b059ab120b05`, CI run
+`33281716611` passed GCC, Clang, Python, and Lean but failed the MSVC raw
+spectrum gate in 17 of 24 comparisons. The raw operator identity, Kelvin
+block identity, independent exact oracle, bundle determinism, and mutation
+tests all passed. The same source reproduced locally with MSVC 19.44: the
+registered cube/half-scale row reported `6.1561904142817656e-9` against an
+unchanged `6.9849193096160889e-10` tolerance.
+
+That source obtained singular values by diagonalizing a Gram matrix and then
+taking square roots. On MSVC, `long double` has binary64 precision, so
+roundoff-sized eigenvalues in the exact null tail became
+`O(sqrt(epsilon))` singular artifacts. GNU extended precision masked the same
+diagnostic defect. The failed CI run remains public evidence. The correction
+changes only the spectrum algorithm: the preregistered comparison, full-tail
+requirement, tolerances, operators, transformations, and decision logic are
+unchanged. A direct rank-deficient regression prevents a return to normal
+equations, and extreme finite/nonfinite controls exercise scaling and
+fail-closed behavior.
 
 Failures preserved by the evidence include invalid rotations/scales,
 unavailable corrected moments, nonfinite or zero Kelvin blocks, failure of

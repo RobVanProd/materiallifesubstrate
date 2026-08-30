@@ -45,8 +45,10 @@ struct BlockNormalization final {
     const observation::DenseMatrix& actual,
     const observation::DenseMatrix& reference);
 
-// Deterministic dense diagnostic spectrum, descending, including the complete
-// min(rows,columns) tail.  It does not set a rank or discard a mode.
+// Deterministic direct one-sided-Jacobi diagnostic spectrum, descending and
+// including the complete min(rows,columns) tail.  It does not form normal
+// equations, set a rank, or discard a mode; nonfinite input/nonconvergence
+// fails closed.
 [[nodiscard]] std::vector<double> singular_values(
     const observation::DenseMatrix& matrix);
 

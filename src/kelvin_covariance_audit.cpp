@@ -270,80 +270,102 @@ double normalized_frobenius_difference(
 std::vector<double> singular_values(const DenseMatrix& matrix) {
     const std::size_t rows = matrix.row_count();
     const std::size_t columns = matrix.column_count();
-    const bool column_gram = columns <= rows;
-    const std::size_t dimension = column_gram ? columns : rows;
-    std::vector<long double> gram(dimension * dimension, 0.0L);
-    for (std::size_t first = 0; first < dimension; ++first) {
-        for (std::size_t second = first; second < dimension; ++second) {
-            long double value = 0.0L;
-            const std::size_t count = column_gram ? rows : columns;
-            for (std::size_t entry = 0; entry < count; ++entry) {
-                const double lhs = column_gram ? matrix(entry, first) :
-                    matrix(first, entry);
-                const double rhs = column_gram ? matrix(entry, second) :
-                    matrix(second, entry);
-                value += static_cast<long double>(lhs) * rhs;
-            }
-            gram[first * dimension + second] = value;
-            gram[second * dimension + first] = value;
+    const bool transpose_input = rows < columns;
+    const std::size_t working_rows = transpose_input ? columns : rows;
+    const std::size_t dimension = transpose_input ? rows : columns;
+    if (dimension == 0U) {
+        return {};
+    }
+    double maximum_entry = 0.0;
+    for (const double value : matrix.entries()) {
+        if (!std::isfinite(value)) {
+            throw std::invalid_argument(
+                "singular-spectrum diagnostic requires finite entries");
+        }
+        maximum_entry = std::max(maximum_entry, std::abs(value));
+    }
+    if (maximum_entry == 0.0) {
+        return std::vector<double>(dimension, 0.0);
+    }
+    std::vector<long double> work(working_rows * dimension, 0.0L);
+    for (std::size_t row = 0; row < working_rows; ++row) {
+        for (std::size_t column = 0; column < dimension; ++column) {
+            work[row * dimension + column] = static_cast<long double>(
+                (transpose_input ? matrix(column, row) : matrix(row, column)) /
+                maximum_entry);
         }
     }
-    for (std::size_t sweep = 0; sweep < 192U; ++sweep) {
-        long double maximum_off_diagonal = 0.0L;
-        long double maximum_diagonal = 0.0L;
-        for (std::size_t row = 0; row < dimension; ++row) {
-            maximum_diagonal = std::max(maximum_diagonal,
-                std::abs(gram[row * dimension + row]));
-            for (std::size_t column = row + 1U; column < dimension; ++column) {
-                maximum_off_diagonal = std::max(maximum_off_diagonal,
-                    std::abs(gram[row * dimension + column]));
-            }
-        }
-        if (maximum_off_diagonal <= 16.0L *
-                std::numeric_limits<long double>::epsilon() *
-                std::max(maximum_diagonal,
-                    std::numeric_limits<long double>::min())) {
-            break;
-        }
+
+    // A deterministic one-sided Jacobi SVD acts on the matrix directly.
+    // Forming A^T A first squares the condition number and promotes binary64
+    // roundoff in an exact null tail from O(epsilon) to O(sqrt(epsilon)) when
+    // its eigenvalues are square-rooted.  That platform-dependent artifact is
+    // large enough to masquerade as a covariance failure on implementations
+    // where long double has the same precision as double (notably MSVC).
+    constexpr std::size_t maximum_sweeps = 256U;
+    constexpr long double correlation_factor = 32.0L;
+    bool converged = dimension < 2U;
+    for (std::size_t sweep = 0; sweep < maximum_sweeps; ++sweep) {
+        bool rotated = false;
         for (std::size_t p = 0; p < dimension; ++p) {
             for (std::size_t q = p + 1U; q < dimension; ++q) {
-                const long double apq = gram[p * dimension + q];
-                if (apq == 0.0L) {
+                long double alpha = 0.0L;
+                long double beta = 0.0L;
+                long double gamma = 0.0L;
+                for (std::size_t row = 0; row < working_rows; ++row) {
+                    const long double lhs = work[row * dimension + p];
+                    const long double rhs = work[row * dimension + q];
+                    alpha += lhs * lhs;
+                    beta += rhs * rhs;
+                    gamma += lhs * rhs;
+                }
+                if (alpha == 0.0L || beta == 0.0L) {
                     continue;
                 }
-                const long double app = gram[p * dimension + p];
-                const long double aqq = gram[q * dimension + q];
-                const long double angle = 0.5L *
-                    std::atan2(2.0L * apq, aqq - app);
-                const long double cosine = std::cos(angle);
-                const long double sine = std::sin(angle);
-                for (std::size_t index = 0; index < dimension; ++index) {
-                    if (index == p || index == q) {
-                        continue;
-                    }
-                    const long double aip = gram[index * dimension + p];
-                    const long double aiq = gram[index * dimension + q];
-                    const long double updated_p = cosine * aip - sine * aiq;
-                    const long double updated_q = sine * aip + cosine * aiq;
-                    gram[index * dimension + p] = updated_p;
-                    gram[p * dimension + index] = updated_p;
-                    gram[index * dimension + q] = updated_q;
-                    gram[q * dimension + index] = updated_q;
+                const long double threshold = correlation_factor *
+                    std::numeric_limits<long double>::epsilon() *
+                    std::sqrt(alpha) * std::sqrt(beta);
+                if (std::abs(gamma) <= threshold) {
+                    continue;
                 }
-                gram[p * dimension + p] = cosine * cosine * app -
-                    2.0L * sine * cosine * apq + sine * sine * aqq;
-                gram[q * dimension + q] = sine * sine * app +
-                    2.0L * sine * cosine * apq + cosine * cosine * aqq;
-                gram[p * dimension + q] = 0.0L;
-                gram[q * dimension + p] = 0.0L;
+                const long double zeta = (beta - alpha) / (2.0L * gamma);
+                const long double tangent = zeta == 0.0L ? 1.0L :
+                    std::copysign(1.0L, zeta) /
+                        (std::abs(zeta) + std::hypot(1.0L, zeta));
+                const long double cosine =
+                    1.0L / std::sqrt(1.0L + tangent * tangent);
+                const long double sine = cosine * tangent;
+                for (std::size_t row = 0; row < working_rows; ++row) {
+                    const auto index_p = row * dimension + p;
+                    const auto index_q = row * dimension + q;
+                    const long double lhs = work[index_p];
+                    const long double rhs = work[index_q];
+                    work[index_p] = cosine * lhs - sine * rhs;
+                    work[index_q] = sine * lhs + cosine * rhs;
+                }
+                rotated = true;
             }
         }
+        if (!rotated) {
+            converged = true;
+            break;
+        }
     }
+    if (!converged) {
+        throw std::runtime_error(
+            "one-sided Jacobi singular-spectrum diagnostic did not converge");
+    }
+
     std::vector<double> result;
     result.reserve(dimension);
-    for (std::size_t index = 0; index < dimension; ++index) {
-        result.push_back(std::sqrt(std::max(0.0,
-            static_cast<double>(gram[index * dimension + index]))));
+    for (std::size_t column = 0; column < dimension; ++column) {
+        long double squared_norm = 0.0L;
+        for (std::size_t row = 0; row < working_rows; ++row) {
+            const long double value = work[row * dimension + column];
+            squared_norm += value * value;
+        }
+        result.push_back(maximum_entry *
+            static_cast<double>(std::sqrt(squared_norm)));
     }
     std::ranges::sort(result, std::greater<>{});
     return result;
