@@ -65,6 +65,7 @@ REQUIRED_SOURCE_FILES = {
     "src/kelvin_covariance_audit.cpp",
     "tests/constitutive_expressivity_tests.cpp",
     "tests/constitutive_expressivity_oracle_test.py",
+    "tests/constitutive_expressivity_oracle.canonical.json",
     "tests/constitutive_expressivity_bundle_validator_test.py",
     "tests/constitutive_expressivity_seal_test.py",
     "reference/constitutive_expressivity_oracle.py",
@@ -75,6 +76,7 @@ REQUIRED_SOURCE_FILES = {
     "formal/lake-manifest.json",
     "formal/lean-toolchain",
     "docs/constitutive-expressivity-preregistration.md",
+    "docs/constitutive-expressivity-lab-contract.md",
     "docs/constitutive-expressivity-evidence-schema.md",
     "docs/constitutive-expressivity-source-audit.md",
     "tools/formal_trust_scan.py",
@@ -235,6 +237,15 @@ def validate_bundle_claims(bundle: pathlib.Path, source_sha: str) -> dict[str, A
             "Candidate D entered the decision")
     require(summary.get("dense_global_rows") == 0,
             "dense global H entered selectable evidence")
+    require(summary.get("pair_control_rows") == 2 and
+            summary.get("pair_control_failures") == 0,
+            "pair-separable control failed or inventory changed")
+    require(summary.get("collective_bulk_rows") == 8 and
+            summary.get("collective_bulk_failures") == 0,
+            "collective bulk inventory failed or changed")
+    require(isinstance(summary.get("basis_vector_rows"), int) and
+            summary.get("basis_vector_rows") > 0,
+            "basis-vector evidence missing")
     require(all(summary.get(name) == 0 for name in (
         "bulk_failures", "graph_failures", "metamorphic_failures",
         "checkpoint_failures")), "bundle contains failed gates")
