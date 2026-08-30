@@ -1084,9 +1084,100 @@ pass.
 Passing these software checks cannot establish physical validity, a
 constitutive response, or eligibility to begin mechanics.
 
+## 10. Constitutive-expressivity laboratory
+
+**Implementation:** `include/mls/constitutive_expressivity_lab.hpp` and
+`src/constitutive_expressivity_lab.cpp`. This is an isolated, read-only energy
+experiment over the retained central-distance relations. It is not an
+authoritative material model, force API, stress update, or dynamics solver.
+
+### State variables and units
+
+Inputs are stable packet labels, reference/current packet centers in metres,
+explicit undirected relation endpoints, positive dimensionless relation
+weights, and positive experimental coefficients in J/m2. Linearized and
+finite extension coordinates are in metres. The relation-space operator `H`
+has units J/m2 and its explicit Gram factor `L` has units sqrt(J)/m.
+
+`H`, `L`, local weighted length moment, dilatational projection, deviatoric
+extension, energy, packet Hessian, and all spectra are transient laboratory
+results. They are not packet fields or checkpointed kinematic history.
+
+### Energy laws
+
+The pair-separable negative control is
+
+```
+E_pair = 0.5 sum_a h_a e_a^2.
+```
+
+For each packet's one-relation-star, the selectable collective diagnostic is
+
+```
+m_i=sum_a w_a l_a^2, q_i=sum_a w_a l_a e_a, d_i=q_i/m_i,
+E_i=0.5 A_i q_i^2/m_i + 0.5 B_i sum_a w_a(e_a-d_i l_a)^2.
+```
+
+All local quantities are rebuilt from current/reference distance relations on
+every call. An off-diagonal relation-space coupling is legal only when the two
+relations share a packet. The implementation emits `H=L^T L` and the direct
+energy-observability operator `L R`; forming `K=R^T H R` is a verification-only
+Hessian path. No operation applies `-grad E` to a packet.
+
+### Conservation and accounting boundary
+
+There is no state transition, clock, force, work transaction, damping, or
+ledger write. The scalar output is a candidate stored-energy evaluation for a
+supplied displacement/configuration, not energy created by the world. A
+floating residual cannot be converted to heat or any other physical channel.
+
+Actual-length evaluation is translation and proper-rotation objective. With
+fixed coefficients in J/m2, a positive common similarity scale `s` applied to
+both reference and current geometry gives the explicitly registered finite-
+graph dimension law `E -> s^2 E`. Packet-ID and input ordering cannot affect
+the result.
+
+### Numerical approximation
+
+- binary64 positions, extensions, matrices, and finite-length evaluation;
+- long-double accumulation for quadratic forms;
+- explicit Gram-factor construction for nonnegative sum-of-squares energy;
+- direct `L R` analysis to avoid squaring conditioning merely to compare
+  energy and relation kernels;
+- two independently shaped symmetric bulk cubatures and six Kelvin strain
+  directions for tangent reconstruction; and
+- an independent exact `Fraction`/`Q(sqrt(2))` oracle for moments, Cauchy
+  restriction, two-modulus maps, objectivity, scaling, and selected graph
+  ranks.
+
+No shift, regularization, pseudoinverse, surface correction, stiffness
+restoration, or numerical stabilization is permitted. Removing a relation
+removes its active terms; the registered `q^2/m` law makes uniform-dilation
+energy decrease with surviving weighted relation length rather than silently
+restoring the missing response.
+
+### Failure modes and tests
+
+The evaluator rejects duplicate/missing endpoints, nonpositive/nonfinite
+weights or coefficients, zero/nonfinite reference lengths, incompatible
+extension ordering/reference lengths, and nonfinite energy. Scientific gates
+also fail on a broken isotropic moment control, pair response outside its
+registered Cauchy ratio, bulk/shear cross coupling, nonpositive relation
+energy, nonlocal `H`, a new non-rigid energy zero mode, removal of an existing
+floppy mode, objectivity/scale/ID/permutation mismatch, or independent-oracle
+disagreement.
+
+Mapped tests include the two pair Cauchy controls, both four-ratio collective
+bulk/shear inventories, six-by-six Kelvin tangents, deleted-relation response,
+K4 and missing-edge kernel controls, finite objectivity/similarity/ID tests,
+malformed-input fail-closed cases, exact-oracle deterministic verification,
+and exact-oracle mutation rejection. Passing them establishes only the
+registered algebraic expressivity claim; it cannot promote mechanics or
+dynamics.
+
 ## Review rule
 
-All records (the nine numbered records here plus the dedicated physical-support,
+All records (the ten numbered records here plus the dedicated physical-support,
 time/checkpoint, transfer-lab, and angular contracts) must be updated when their
 public state, operation, formula, or test mapping changes. Changes to point
 interaction, boundary, or ledger semantics must also update the cross-cutting
