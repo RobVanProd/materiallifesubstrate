@@ -256,6 +256,56 @@ def main() -> int:
         )
         mutations += 1
 
+    # CI capture validates the exact public object before atomically creating
+    # ci-run.json and refuses both invalid records and overwrite attempts.
+    with tempfile.TemporaryDirectory(prefix="mls-constitutive-ci-") as temporary:
+        root = pathlib.Path(temporary)
+        destination = root / "logs" / "ci-run.json"
+        tool.write_ci_capture(destination, ci, source_sha, "77", 1)
+        if json.loads(destination.read_text(encoding="utf-8")) != ci:
+            raise RuntimeError("CI capture bytes did not preserve the validated object")
+        expect_rejection(
+            tool,
+            lambda: tool.write_ci_capture(destination, ci, source_sha, "77", 1),
+            "CI capture overwrite",
+        )
+        mutations += 1
+
+        wrong_source = root / "wrong-source" / "ci-run.json"
+        expect_rejection(
+            tool,
+            lambda: tool.write_ci_capture(
+                wrong_source, ci, "2" * 40, "77", 1
+            ),
+            "CI capture source",
+        )
+        if wrong_source.exists():
+            raise RuntimeError("invalid CI source created evidence")
+        mutations += 1
+
+        incomplete = json.loads(json.dumps(ci))
+        incomplete["jobs"].pop()
+        wrong_matrix = root / "wrong-matrix" / "ci-run.json"
+        expect_rejection(
+            tool,
+            lambda: tool.write_ci_capture(
+                wrong_matrix, incomplete, source_sha, "77", 1
+            ),
+            "CI capture matrix",
+        )
+        if wrong_matrix.exists():
+            raise RuntimeError("invalid CI matrix created evidence")
+        mutations += 1
+
+        expect_rejection(
+            tool,
+            lambda: tool.write_ci_capture(
+                root / "wrong-name.json", ci, source_sha, "77", 1
+            ),
+            "CI capture filename",
+        )
+        mutations += 1
+
     # Receipt argv is parsed token-by-token and the exact build/bundle path
     # relationships are integrity-bound.  Markers cannot substitute for those
     # relationships, and the receipts do not authenticate OS execution.

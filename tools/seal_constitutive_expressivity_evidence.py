@@ -42,6 +42,10 @@ SELECTED_SUBSET_SHA256 = {
     "relations.csv": "0b2e21dcbf26454af316bec9323627aa1488ebc7aa1f14c006bfb41a231e0e6f",
 }
 WORKFLOW_NAME = "MLS-0 baseline replication"
+CI_FIELDS = {
+    "attempt", "conclusion", "databaseId", "headBranch", "headSha", "jobs",
+    "name", "status", "workflowName", "url",
+}
 SHA1_RE = re.compile(r"[0-9a-f]{40}")
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
@@ -815,7 +819,52 @@ def fetch_ci_run(repository_url: str, run_id: str, attempt: int) -> dict[str, An
     except json.JSONDecodeError as error:
         raise SealError("public CI returned invalid JSON") from error
     require(isinstance(value, dict), "public CI result is not an object")
+    require(set(value) == CI_FIELDS, "public CI result field inventory mismatch")
     return value
+
+
+def write_ci_capture(destination: pathlib.Path, ci: dict[str, Any],
+                     source_sha: str, run_id: str, attempt: int) -> None:
+    """Validate and atomically create one integrity-bound public CI record."""
+    require(destination.name == "ci-run.json",
+            "CI capture destination must be named ci-run.json")
+    require(SHA1_RE.fullmatch(source_sha) is not None,
+            "invalid CI capture source SHA")
+    require(type(attempt) is int and attempt > 0, "invalid CI capture attempt")
+    require(set(ci) == CI_FIELDS, "CI capture field inventory mismatch")
+    validate_ci(ci, source_sha, run_id, attempt)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    require(not destination.exists(), "CI capture already exists; preserve it")
+    temporary = destination.with_name(destination.name + ".tmp")
+    require(not temporary.exists(), "temporary CI capture path already exists")
+    payload = (json.dumps(ci, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    try:
+        with temporary.open("xb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        # Hard-link publication is fail-if-exists on all supported hosts.  A
+        # rename would overwrite on POSIX and would weaken the no-overwrite gate.
+        os.link(temporary, destination)
+        temporary.unlink()
+    except FileExistsError as error:
+        temporary.unlink(missing_ok=True)
+        raise SealError("CI capture destination appeared during publication") from error
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def capture_ci(args: argparse.Namespace) -> int:
+    ci = fetch_ci_run(args.repository_url, args.run_id, args.attempt)
+    destination = args.destination.resolve()
+    write_ci_capture(destination, ci, args.source_sha, args.run_id, args.attempt)
+    print(
+        "CONSTITUTIVE EXPRESSIVITY CI CAPTURED: "
+        f"run={args.run_id}; attempt={args.attempt}; "
+        f"source_sha={args.source_sha}; path={destination}"
+    )
+    return 0
 
 
 def parse_remote_refs(output: str, tag: str) -> tuple[str | None, str | None]:
@@ -1040,6 +1089,12 @@ def parser() -> argparse.ArgumentParser:
     record_parser.add_argument("--label", required=True)
     record_parser.add_argument("--receipt", type=pathlib.Path, required=True)
     record_parser.add_argument("command", nargs=argparse.REMAINDER)
+    capture_parser = subcommands.add_parser("capture-ci")
+    capture_parser.add_argument("--repository-url", required=True)
+    capture_parser.add_argument("--run-id", required=True)
+    capture_parser.add_argument("--attempt", type=int, default=1)
+    capture_parser.add_argument("--source-sha", required=True)
+    capture_parser.add_argument("--destination", type=pathlib.Path, required=True)
     return result
 
 
@@ -1048,6 +1103,8 @@ def main() -> int:
     try:
         if args.operation == "record":
             return record_command(args)
+        if args.operation == "capture-ci":
+            return capture_ci(args)
         if args.operation == "create":
             manifest = create(args)
         else:
