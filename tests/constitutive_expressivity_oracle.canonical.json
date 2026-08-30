@@ -1,0 +1,1077 @@
+{
+  "candidate_promotion_permitted": false,
+  "exact_oracle_controls_passed": true,
+  "finite_length_objectivity_and_dimension": {
+    "arithmetic": "Fraction exact finite reference/current lengths",
+    "base_collective_energy_K_over_G_2": "557/6000",
+    "base_pair_energy": "33/100",
+    "packet_id_bijections_invariant_exact": true,
+    "packet_permutation_invariant_exact": true,
+    "proper_rotation_determinant": "1/1",
+    "relation_permutations_and_orientations_invariant_exact": true,
+    "scale_controls": {
+      "1/2": {
+        "collective_energy": "557/24000",
+        "energy_ratio": "1/4",
+        "pair_energy": "33/400"
+      },
+      "2/1": {
+        "collective_energy": "557/1500",
+        "energy_ratio": "4/1",
+        "pair_energy": "33/25"
+      }
+    },
+    "similarity_dimension_law": "E(sX,sx)=s^2 E(X,x)",
+    "stable_ids_supply_no_orientation": true,
+    "translation_proper_rotation_invariant_exact": true
+  },
+  "force_or_time_integration_present": false,
+  "global_dense_H_used": false,
+  "implementation": "independent Python standard-library Fraction and Q(sqrt(2)) algebra; no C++ result is accepted as a premise",
+  "independent_face_diagonal_bulk_control": {
+    "axis_weights": [
+      1,
+      1,
+      1
+    ],
+    "collective_identities": {
+      "coefficient_map": "A=3K/5, B=G",
+      "deviatoric_extension_norm_coefficient": "2/1",
+      "m": "15/1",
+      "q_over_trace": "5/1"
+    },
+    "collective_targets": [
+      {
+        "A_equals_3K_over_5": "1/5",
+        "B_equals_G": "1/1",
+        "K_over_G": "1/3",
+        "kelvin_basis_energies": [
+          "5/6",
+          "5/6",
+          "5/6",
+          "1/1",
+          "1/1",
+          "1/1"
+        ],
+        "kelvin_tangent": [
+          [
+            "5/3",
+            "-1/3",
+            "-1/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "-1/3",
+            "5/3",
+            "-1/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "-1/3",
+            "-1/3",
+            "5/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1"
+          ]
+        ],
+        "mixed_affine_strain_energies": {
+          "M1": "255205858/676350675",
+          "M2": "11221/64800",
+          "M3": "11221669/36018675"
+        },
+        "positive_energy_exact": true,
+        "positive_kelvin_eigenchannels": {
+          "five_deviatoric_2G": "2/1",
+          "volumetric_3K": "1/1"
+        },
+        "recovered_bulk": "1/3",
+        "recovered_shear": "1/1",
+        "tangent_symmetric_exact": true,
+        "volumetric_deviatoric_cross_coupling": "0/1"
+      },
+      {
+        "A_equals_3K_over_5": "3/5",
+        "B_equals_G": "1/1",
+        "K_over_G": "1/1",
+        "kelvin_basis_energies": [
+          "7/6",
+          "7/6",
+          "7/6",
+          "1/1",
+          "1/1",
+          "1/1"
+        ],
+        "kelvin_tangent": [
+          [
+            "7/3",
+            "1/3",
+            "1/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "1/3",
+            "7/3",
+            "1/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "1/3",
+            "1/3",
+            "7/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1"
+          ]
+        ],
+        "mixed_affine_strain_energies": {
+          "M1": "259213862/676350675",
+          "M2": "11221/64800",
+          "M3": "11406569/36018675"
+        },
+        "positive_energy_exact": true,
+        "positive_kelvin_eigenchannels": {
+          "five_deviatoric_2G": "2/1",
+          "volumetric_3K": "3/1"
+        },
+        "recovered_bulk": "1/1",
+        "recovered_shear": "1/1",
+        "tangent_symmetric_exact": true,
+        "volumetric_deviatoric_cross_coupling": "0/1"
+      },
+      {
+        "A_equals_3K_over_5": "6/5",
+        "B_equals_G": "1/1",
+        "K_over_G": "2/1",
+        "kelvin_basis_energies": [
+          "5/3",
+          "5/3",
+          "5/3",
+          "1/1",
+          "1/1",
+          "1/1"
+        ],
+        "kelvin_tangent": [
+          [
+            "10/3",
+            "4/3",
+            "4/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "4/3",
+            "10/3",
+            "4/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "4/3",
+            "4/3",
+            "10/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1"
+          ]
+        ],
+        "mixed_affine_strain_energies": {
+          "M1": "265225868/676350675",
+          "M2": "11221/64800",
+          "M3": "11683919/36018675"
+        },
+        "positive_energy_exact": true,
+        "positive_kelvin_eigenchannels": {
+          "five_deviatoric_2G": "2/1",
+          "volumetric_3K": "6/1"
+        },
+        "recovered_bulk": "2/1",
+        "recovered_shear": "1/1",
+        "tangent_symmetric_exact": true,
+        "volumetric_deviatoric_cross_coupling": "0/1"
+      },
+      {
+        "A_equals_3K_over_5": "6/1",
+        "B_equals_G": "1/1",
+        "K_over_G": "10/1",
+        "kelvin_basis_energies": [
+          "17/3",
+          "17/3",
+          "17/3",
+          "1/1",
+          "1/1",
+          "1/1"
+        ],
+        "kelvin_tangent": [
+          [
+            "34/3",
+            "28/3",
+            "28/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "28/3",
+            "34/3",
+            "28/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "28/3",
+            "28/3",
+            "34/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1"
+          ]
+        ],
+        "mixed_affine_strain_energies": {
+          "M1": "313321916/676350675",
+          "M2": "11221/64800",
+          "M3": "13902719/36018675"
+        },
+        "positive_energy_exact": true,
+        "positive_kelvin_eigenchannels": {
+          "five_deviatoric_2G": "2/1",
+          "volumetric_3K": "30/1"
+        },
+        "recovered_bulk": "10/1",
+        "recovered_shear": "1/1",
+        "tangent_symmetric_exact": true,
+        "volumetric_deviatoric_cross_coupling": "0/1"
+      }
+    ],
+    "direction_count": 9,
+    "expected_fourth_moment": "delta_ij delta_kl + delta_ik delta_jl + delta_il delta_jk",
+    "expected_second_moment": "5 delta_ij",
+    "face_diagonal_line_weights": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "fourth_moment_nonzero_entries": {
+      "0000": "3/1",
+      "0011": "1/1",
+      "0022": "1/1",
+      "0101": "1/1",
+      "0110": "1/1",
+      "0202": "1/1",
+      "0220": "1/1",
+      "1001": "1/1",
+      "1010": "1/1",
+      "1100": "1/1",
+      "1111": "3/1",
+      "1122": "1/1",
+      "1212": "1/1",
+      "1221": "1/1",
+      "2002": "1/1",
+      "2020": "1/1",
+      "2112": "1/1",
+      "2121": "1/1",
+      "2200": "1/1",
+      "2211": "1/1",
+      "2222": "3/1"
+    },
+    "independent_two_channel_control_exact": true,
+    "moments_exact": true,
+    "pair_cauchy_control": {
+      "G": "1/1",
+      "K": "5/3",
+      "K_over_G": "5/3",
+      "kelvin_tangent_derived_from_extensions": [
+        [
+          "3/1",
+          "1/1",
+          "1/1",
+          "0/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "1/1",
+          "3/1",
+          "1/1",
+          "0/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "1/1",
+          "1/1",
+          "3/1",
+          "0/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "0/1",
+          "0/1",
+          "0/1",
+          "2/1",
+          "0/1",
+          "0/1"
+        ],
+        [
+          "0/1",
+          "0/1",
+          "0/1",
+          "0/1",
+          "2/1",
+          "0/1"
+        ],
+        [
+          "0/1",
+          "0/1",
+          "0/1",
+          "0/1",
+          "0/1",
+          "2/1"
+        ]
+      ],
+      "lambda": "1/1",
+      "mixed_affine_strain_energies": {
+        "M1": "9748958/25050025",
+        "M2": "11221/64800",
+        "M3": "1287941/4002075"
+      },
+      "poisson_ratio_3d": "1/4",
+      "registered_cauchy_restriction_reproduced": true,
+      "tangent_symmetric_exact": true,
+      "volumetric_deviatoric_cross_coupling": "0/1"
+    },
+    "second_moment": [
+      [
+        "5/1",
+        "0/1",
+        "0/1"
+      ],
+      [
+        "0/1",
+        "5/1",
+        "0/1"
+      ],
+      [
+        "0/1",
+        "0/1",
+        "5/1"
+      ]
+    ],
+    "total_weight_and_moment_m": "15/1"
+  },
+  "local_collective_bulk_shear_controls": {
+    "coefficient_map": "A=3K/20, B=G/4",
+    "derived_cubature_identities": {
+      "deviatoric_extension_norm_coefficient": "8/1",
+      "m": "60/1",
+      "q_over_trace": "20/1"
+    },
+    "independent_two_channel_control_exact": true,
+    "targets": [
+      {
+        "A_equals_3K_over_20": "1/20",
+        "B_equals_G_over_4": "1/4",
+        "K_over_G": "1/3",
+        "kelvin_basis_energies": [
+          "5/6",
+          "5/6",
+          "5/6",
+          "1/1",
+          "1/1",
+          "1/1"
+        ],
+        "kelvin_tangent": [
+          [
+            "5/3",
+            "-1/3",
+            "-1/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "-1/3",
+            "5/3",
+            "-1/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "-1/3",
+            "-1/3",
+            "5/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1"
+          ]
+        ],
+        "mixed_affine_strain_energies": {
+          "M1": "255205858/676350675",
+          "M2": "11221/64800",
+          "M3": "11221669/36018675"
+        },
+        "positive_energy_exact": true,
+        "positive_kelvin_eigenchannels": {
+          "five_deviatoric_2G": "2/1",
+          "volumetric_3K": "1/1"
+        },
+        "recovered_bulk": "1/3",
+        "recovered_shear": "1/1",
+        "tangent_symmetric_exact": true,
+        "volumetric_deviatoric_cross_coupling": "0/1"
+      },
+      {
+        "A_equals_3K_over_20": "3/20",
+        "B_equals_G_over_4": "1/4",
+        "K_over_G": "1/1",
+        "kelvin_basis_energies": [
+          "7/6",
+          "7/6",
+          "7/6",
+          "1/1",
+          "1/1",
+          "1/1"
+        ],
+        "kelvin_tangent": [
+          [
+            "7/3",
+            "1/3",
+            "1/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "1/3",
+            "7/3",
+            "1/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "1/3",
+            "1/3",
+            "7/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1"
+          ]
+        ],
+        "mixed_affine_strain_energies": {
+          "M1": "259213862/676350675",
+          "M2": "11221/64800",
+          "M3": "11406569/36018675"
+        },
+        "positive_energy_exact": true,
+        "positive_kelvin_eigenchannels": {
+          "five_deviatoric_2G": "2/1",
+          "volumetric_3K": "3/1"
+        },
+        "recovered_bulk": "1/1",
+        "recovered_shear": "1/1",
+        "tangent_symmetric_exact": true,
+        "volumetric_deviatoric_cross_coupling": "0/1"
+      },
+      {
+        "A_equals_3K_over_20": "3/10",
+        "B_equals_G_over_4": "1/4",
+        "K_over_G": "2/1",
+        "kelvin_basis_energies": [
+          "5/3",
+          "5/3",
+          "5/3",
+          "1/1",
+          "1/1",
+          "1/1"
+        ],
+        "kelvin_tangent": [
+          [
+            "10/3",
+            "4/3",
+            "4/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "4/3",
+            "10/3",
+            "4/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "4/3",
+            "4/3",
+            "10/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1"
+          ]
+        ],
+        "mixed_affine_strain_energies": {
+          "M1": "265225868/676350675",
+          "M2": "11221/64800",
+          "M3": "11683919/36018675"
+        },
+        "positive_energy_exact": true,
+        "positive_kelvin_eigenchannels": {
+          "five_deviatoric_2G": "2/1",
+          "volumetric_3K": "6/1"
+        },
+        "recovered_bulk": "2/1",
+        "recovered_shear": "1/1",
+        "tangent_symmetric_exact": true,
+        "volumetric_deviatoric_cross_coupling": "0/1"
+      },
+      {
+        "A_equals_3K_over_20": "3/2",
+        "B_equals_G_over_4": "1/4",
+        "K_over_G": "10/1",
+        "kelvin_basis_energies": [
+          "17/3",
+          "17/3",
+          "17/3",
+          "1/1",
+          "1/1",
+          "1/1"
+        ],
+        "kelvin_tangent": [
+          [
+            "34/3",
+            "28/3",
+            "28/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "28/3",
+            "34/3",
+            "28/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "28/3",
+            "28/3",
+            "34/3",
+            "0/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1",
+            "0/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1",
+            "0/1"
+          ],
+          [
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "0/1",
+            "2/1"
+          ]
+        ],
+        "mixed_affine_strain_energies": {
+          "M1": "313321916/676350675",
+          "M2": "11221/64800",
+          "M3": "13902719/36018675"
+        },
+        "positive_energy_exact": true,
+        "positive_kelvin_eigenchannels": {
+          "five_deviatoric_2G": "2/1",
+          "volumetric_3K": "30/1"
+        },
+        "recovered_bulk": "10/1",
+        "recovered_shear": "1/1",
+        "tangent_symmetric_exact": true,
+        "volumetric_deviatoric_cross_coupling": "0/1"
+      }
+    ]
+  },
+  "numerical_regularization_used": false,
+  "pair_separable_cauchy_control": {
+    "G": "4/1",
+    "K": "20/3",
+    "K_over_G": "5/3",
+    "kelvin_tangent_derived_from_extensions": [
+      [
+        "12/1",
+        "4/1",
+        "4/1",
+        "0/1",
+        "0/1",
+        "0/1"
+      ],
+      [
+        "4/1",
+        "12/1",
+        "4/1",
+        "0/1",
+        "0/1",
+        "0/1"
+      ],
+      [
+        "4/1",
+        "4/1",
+        "12/1",
+        "0/1",
+        "0/1",
+        "0/1"
+      ],
+      [
+        "0/1",
+        "0/1",
+        "0/1",
+        "8/1",
+        "0/1",
+        "0/1"
+      ],
+      [
+        "0/1",
+        "0/1",
+        "0/1",
+        "0/1",
+        "8/1",
+        "0/1"
+      ],
+      [
+        "0/1",
+        "0/1",
+        "0/1",
+        "0/1",
+        "0/1",
+        "8/1"
+      ]
+    ],
+    "lambda": "4/1",
+    "lambda_equals_G": true,
+    "mixed_affine_strain_energies": {
+      "M1": "38995832/25050025",
+      "M2": "11221/16200",
+      "M3": "5151764/4002075"
+    },
+    "negative_control_only": true,
+    "poisson_ratio_3d": "1/4",
+    "registered_cauchy_restriction_reproduced": true,
+    "tangent_symmetric_exact": true,
+    "volumetric_deviatoric_cross_coupling": "0/1"
+  },
+  "persistent_kinematic_state_added": false,
+  "result_boundary": "NO PROMOTION to mechanics or dynamics",
+  "result_sha256_before_hash_field": "463fd3f58c5ab5693207ed1a127300434bd76f6d03074f7217fd50e5511ad3d2",
+  "schema": "mls.constitutive-expressivity.exact-oracle.v1",
+  "scope": "energy-only exact oracle; no force, stress, or dynamics",
+  "seed": 260828,
+  "selected_exact_graph_H_kernel_controls": {
+    "H_locality": "off-diagonal coupling only for relations sharing a packet",
+    "eligible_rigid_graphs_gain_no_nonrigid_zero_mode": true,
+    "field": "Q(sqrt(2)) exact Gaussian elimination",
+    "graphs": [
+      {
+        "collective_targets": [
+          {
+            "H_nonlocal_entries": 0,
+            "H_nonzero_entries": 30,
+            "K_over_G": "1/3",
+            "nullity_K": 6,
+            "rank_H": 6,
+            "rank_K": 6,
+            "strict_positive_on_relation_coordinates": true
+          },
+          {
+            "H_nonlocal_entries": 0,
+            "H_nonzero_entries": 30,
+            "K_over_G": "1/1",
+            "nullity_K": 6,
+            "rank_H": 6,
+            "rank_K": 6,
+            "strict_positive_on_relation_coordinates": true
+          },
+          {
+            "H_nonlocal_entries": 0,
+            "H_nonzero_entries": 30,
+            "K_over_G": "2/1",
+            "nullity_K": 6,
+            "rank_H": 6,
+            "rank_K": 6,
+            "strict_positive_on_relation_coordinates": true
+          },
+          {
+            "H_nonlocal_entries": 0,
+            "H_nonzero_entries": 30,
+            "K_over_G": "10/1",
+            "nullity_K": 6,
+            "rank_H": 6,
+            "rank_K": 6,
+            "strict_positive_on_relation_coordinates": true
+          }
+        ],
+        "configuration": "exact.tetrahedron_k4",
+        "non_rigid_nullity": 0,
+        "nullity_R": 6,
+        "packet_count": 4,
+        "pair_gram_rank_K": 6,
+        "rank_R": 6,
+        "realized_rigid_rank": 6,
+        "relation_count": 6
+      },
+      {
+        "collective_targets": [
+          {
+            "H_nonlocal_entries": 0,
+            "H_nonzero_entries": 21,
+            "K_over_G": "1/3",
+            "nullity_K": 7,
+            "rank_H": 5,
+            "rank_K": 5,
+            "strict_positive_on_relation_coordinates": true
+          },
+          {
+            "H_nonlocal_entries": 0,
+            "H_nonzero_entries": 21,
+            "K_over_G": "1/1",
+            "nullity_K": 7,
+            "rank_H": 5,
+            "rank_K": 5,
+            "strict_positive_on_relation_coordinates": true
+          },
+          {
+            "H_nonlocal_entries": 0,
+            "H_nonzero_entries": 21,
+            "K_over_G": "2/1",
+            "nullity_K": 7,
+            "rank_H": 5,
+            "rank_K": 5,
+            "strict_positive_on_relation_coordinates": true
+          },
+          {
+            "H_nonlocal_entries": 0,
+            "H_nonzero_entries": 21,
+            "K_over_G": "10/1",
+            "nullity_K": 7,
+            "rank_H": 5,
+            "rank_K": 5,
+            "strict_positive_on_relation_coordinates": true
+          }
+        ],
+        "configuration": "exact.tetrahedron_k4_minus_edge",
+        "non_rigid_nullity": 1,
+        "nullity_R": 7,
+        "packet_count": 4,
+        "pair_gram_rank_K": 5,
+        "rank_R": 5,
+        "realized_rigid_rank": 6,
+        "relation_count": 5
+      },
+      {
+        "collective_targets": [
+          {
+            "H_nonlocal_entries": 0,
+            "H_nonzero_entries": 84,
+            "K_over_G": "1/3",
+            "nullity_K": 6,
+            "rank_H": 12,
+            "rank_K": 12,
+            "strict_positive_on_relation_coordinates": true
+          },
+          {
+            "H_nonlocal_entries": 0,
+            "H_nonzero_entries": 84,
+            "K_over_G": "1/1",
+            "nullity_K": 6,
+            "rank_H": 12,
+            "rank_K": 12,
+            "strict_positive_on_relation_coordinates": true
+          },
+          {
+            "H_nonlocal_entries": 0,
+            "H_nonzero_entries": 84,
+            "K_over_G": "2/1",
+            "nullity_K": 6,
+            "rank_H": 12,
+            "rank_K": 12,
+            "strict_positive_on_relation_coordinates": true
+          },
+          {
+            "H_nonlocal_entries": 0,
+            "H_nonzero_entries": 84,
+            "K_over_G": "10/1",
+            "nullity_K": 6,
+            "rank_H": 12,
+            "rank_K": 12,
+            "strict_positive_on_relation_coordinates": true
+          }
+        ],
+        "configuration": "exact.octahedron_graph",
+        "non_rigid_nullity": 0,
+        "nullity_R": 6,
+        "packet_count": 6,
+        "pair_gram_rank_K": 12,
+        "rank_R": 12,
+        "realized_rigid_rank": 6,
+        "relation_count": 12
+      }
+    ],
+    "intentionally_floppy_graph_remains_floppy": true,
+    "unit_direction_rigidity_rows": true
+  },
+  "seven_direction_cubature": {
+    "axis_weights": [
+      8,
+      8,
+      8
+    ],
+    "body_diagonal_line_weights": [
+      9,
+      9,
+      9,
+      9
+    ],
+    "direction_count": 7,
+    "expected_fourth_moment": "4(delta_ij delta_kl + delta_ik delta_jl + delta_il delta_jk)",
+    "expected_second_moment": "20 delta_ij",
+    "fourth_moment_nonzero_entries": {
+      "0000": "12/1",
+      "0011": "4/1",
+      "0022": "4/1",
+      "0101": "4/1",
+      "0110": "4/1",
+      "0202": "4/1",
+      "0220": "4/1",
+      "1001": "4/1",
+      "1010": "4/1",
+      "1100": "4/1",
+      "1111": "12/1",
+      "1122": "4/1",
+      "1212": "4/1",
+      "1221": "4/1",
+      "2002": "4/1",
+      "2020": "4/1",
+      "2112": "4/1",
+      "2121": "4/1",
+      "2200": "4/1",
+      "2211": "4/1",
+      "2222": "12/1"
+    },
+    "second_and_fourth_moments_exact": true,
+    "second_moment": [
+      [
+        "20/1",
+        "0/1",
+        "0/1"
+      ],
+      [
+        "0/1",
+        "20/1",
+        "0/1"
+      ],
+      [
+        "0/1",
+        "0/1",
+        "20/1"
+      ]
+    ],
+    "total_weight_and_moment_m": "60/1"
+  }
+}
