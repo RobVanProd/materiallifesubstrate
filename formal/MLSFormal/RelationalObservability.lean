@@ -6,6 +6,8 @@ set_option autoImplicit false
 
 namespace MLSFormal
 
+open scoped Matrix
+
 /-!
 # Relational observability confirmation
 
@@ -86,7 +88,7 @@ theorem relationSquaredLength_vertex_relabel
     relationSquaredLength (relabelRelationEndpoints rename relations)
         (relabelVertexField rename position) edge =
       relationSquaredLength relations position edge := by
-  rw [relationSquaredLength, relationOffset_vertex_relabel]
+  simp [relationSquaredLength, relationOffset_vertex_relabel]
 
 /-- Every exact central-distance row is vertex-label invariant. -/
 theorem centralRigidityRate_vertex_relabel
@@ -99,7 +101,7 @@ theorem centralRigidityRate_vertex_relabel
         (relabelVertexField rename position)
         (relabelVertexField rename motion) edge =
       centralRigidityRate relations position motion edge := by
-  rw [centralRigidityRate, relationOffset_vertex_relabel,
+  simp [centralRigidityRate, relationOffset_vertex_relabel,
     relationMotion_vertex_relabel]
 
 /-- The complete finite rigidity operator is unchanged by packet-ID renaming. -/
@@ -127,8 +129,9 @@ theorem centralRigidityMatrix_vertex_relabel
     centralRigidityMatrix (relabelRelationEndpoints rename relations)
         (relabelVertexField rename position) edge (rename vertex, axis) =
       centralRigidityMatrix relations position edge (vertex, axis) := by
-  simp [centralRigidityMatrix, relationOffset_vertex_relabel,
-    relabelRelationEndpoints]
+  simp only [centralRigidityMatrix]
+  rw [relationOffset_vertex_relabel rename relations position edge]
+  simp [relabelRelationEndpoints]
 
 /-- Corresponding motions have exactly equivalent kernel membership. -/
 theorem centralRigidity_kernel_vertex_relabel_iff
