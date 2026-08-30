@@ -121,6 +121,10 @@ Every raw relation row must have Euclidean norm `sqrt(2)` within
 64 eps sqrt(2).
 ```
 
+The wire tables report the equivalent relative error and relative tolerance,
+`abs(norm-sqrt(2))/sqrt(2) <= 64 eps`; this is the same gate, not a changed
+tolerance.
+
 No row is normalized before rank or spectrum analysis. Similarity spectrum
 and operator comparisons use `16384 d eps`. Twin deterministic output must
 be byte-identical.
@@ -259,4 +263,3 @@ additional diagnostic and never as a decision premise.
 Even outcome 4 is **NO PROMOTION** to mechanics. If outcome 2 occurs,
 Candidate D may be constructed only in a later explicitly amended run; this
 confirmation stops and does not instantiate D after seeing the failure.
-
