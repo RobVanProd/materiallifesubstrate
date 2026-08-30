@@ -522,7 +522,13 @@ def receipt_path_bindings(
     expected_bundle_b: pathlib.Path | None = None,
     expected_parent_bundle: pathlib.Path | None = None,
 ) -> dict[str, Any]:
-    """Validate exact argv relationships and return their sealed path binding."""
+    """Validate exact argv relationships and return their sealed path binding.
+
+    Expected live paths are resolved once by ``create`` before they reach this
+    function.  Do not resolve them again here: on Windows, a second filesystem
+    resolution can expand a short name or traverse a runner alias on only one
+    side of an otherwise identical lexical receipt binding.
+    """
     commands = {name: value["command"] for name, value in receipts.items()}
 
     require(executable_is(commands["configure.json"], "cmake"),
@@ -577,24 +583,24 @@ def receipt_path_bindings(
         "parent-subset.json")
 
     if expected_repo is not None:
-        expected = canonical_recorded_path(str(expected_repo.resolve()),
-                                           str(expected_repo.resolve()))
+        expected = canonical_recorded_path(str(expected_repo),
+                                           str(expected_repo))
         require(configure_source == expected,
                 "configured source directory does not equal the sealed repository")
     if expected_bundle_a is not None:
-        expected = canonical_recorded_path(str(expected_bundle_a.resolve()),
-                                           str(expected_bundle_a.resolve().parent))
+        expected = canonical_recorded_path(str(expected_bundle_a),
+                                           str(expected_bundle_a.parent))
         require(producer_a == expected,
                 "producer-a output does not equal --bundle-a")
     if expected_bundle_b is not None:
-        expected = canonical_recorded_path(str(expected_bundle_b.resolve()),
-                                           str(expected_bundle_b.resolve().parent))
+        expected = canonical_recorded_path(str(expected_bundle_b),
+                                           str(expected_bundle_b.parent))
         require(producer_b == expected,
                 "producer-b output does not equal --bundle-b")
     if expected_parent_bundle is not None:
         expected = canonical_recorded_path(
-            str(expected_parent_bundle.resolve()),
-            str(expected_parent_bundle.resolve().parent),
+            str(expected_parent_bundle),
+            str(expected_parent_bundle.parent),
         )
         require(parent_bundle == expected,
                 "parent subset input does not equal --parent-bundle")

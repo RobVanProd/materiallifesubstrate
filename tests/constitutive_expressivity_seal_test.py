@@ -332,6 +332,44 @@ def main() -> int:
         if bindings["semantics"] != (
                 "integrity-bound-command-receipts-not-execution-authentication"):
             raise RuntimeError("receipt semantics overclaim execution authentication")
+
+        # ``create`` resolves every live expected path exactly once before
+        # receipt validation.  A second resolve here used to expand Windows
+        # short names / runner aliases on only the expected side.  Model that
+        # spelling change explicitly and require the lexical binding to remain
+        # exact without consulting the filesystem again.
+        class ResolutionChangingPath(type(pathlib.Path())):
+            resolve_calls = 0
+
+            def resolve(self, *args, **kwargs):
+                type(self).resolve_calls += 1
+                return type(self)(str(self) + "-different-resolved-spelling")
+
+        lexical_root = ResolutionChangingPath(root)
+        lexical_bindings = tool.receipt_path_bindings(
+            source,
+            expected_repo=lexical_root / "repo",
+            expected_bundle_a=lexical_root / "bundle-a",
+            expected_bundle_b=lexical_root / "bundle-b",
+            expected_parent_bundle=lexical_root / "accepted-parent",
+        )
+        if ResolutionChangingPath.resolve_calls != 0:
+            raise RuntimeError("receipt validation re-resolved a live path")
+        if lexical_bindings != bindings:
+            raise RuntimeError("lexically identical receipt bindings changed")
+        expect_rejection(
+            tool,
+            lambda: tool.receipt_path_bindings(
+                source,
+                expected_repo=lexical_root / "different-repo",
+                expected_bundle_a=lexical_root / "bundle-a",
+                expected_bundle_b=lexical_root / "bundle-b",
+                expected_parent_bundle=lexical_root / "accepted-parent",
+            ),
+            "lexically different live repository",
+        )
+        mutations += 1
+
         forged_bindings = json.loads(json.dumps(bindings))
         forged_bindings["semantics"] = "authenticated-operating-system-execution"
         expect_rejection(
