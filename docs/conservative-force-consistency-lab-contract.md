@@ -35,10 +35,22 @@ K, df/dx        reference energy Hessian / finite force Jacobian   [N/m]
 Packet IDs are labels only.  Graph topology, canonical relation coordinates,
 reference lengths, relation weights, coefficients, and `H` are reference
 constitutive data.  They are created from the reference configuration and
-then frozen.  A force evaluation may not rebuild or renormalise them from the
-current geometry.  A semantic relation permutation acts through an explicit
-coordinate permutation of `e`, `g`, and `H`; it is not permission to create a
-different constitutive operator.
+then frozen.  The accepted binary64 builder can accumulate a tiny
+antisymmetric roundoff component even though its declared quadratic operator
+is symmetric.  At force-lab setup, exactly once, define
+
+```text
+H_force = (H_parent+H_parent^T)/2.
+```
+
+Both source and canonical values and their correction are evidence.  Setup
+fails if the correction exceeds the accepted parent symmetry tolerance.  This
+is not regularisation: `e^T H_parent e = e^T H_force e` in exact real
+arithmetic because an antisymmetric quadratic form is zero.  A force
+evaluation may not rebuild or renormalise any reference data from current
+geometry.  A semantic relation permutation acts through an explicit
+coordinate permutation of `e`, `g`, and `H_force`; it is not permission to
+create a different constitutive operator.
 
 The evaluator has no persistent current strain, dilatation, direction,
 gradient, tensor, force, or history state.  All current quantities are derived
@@ -49,10 +61,10 @@ afresh from the supplied positions and frozen reference data.
 The frozen scalar energy is
 
 ```text
-U(x) = (1/2) e(x)^T H e(x).
+U(x) = (1/2) e(x)^T H_force e(x).
 ```
 
-The evaluator computes `g=H e` once in canonical relation coordinates.  For
+The evaluator computes `g=H_force e` once in canonical relation coordinates.  For
 each noncoincident relation it then assembles
 
 ```text
@@ -64,7 +76,7 @@ With the current central rigidity operator `R(x)` mapping packet velocity to
 length rate, this is
 
 ```text
-f = -R(x)^T H e = -grad_x U.
+f = -R(x)^T H_force e = -grad_x U.
 ```
 
 Although each packet contribution is central, `g_a` is generally collective:
@@ -160,4 +172,3 @@ sign errors, partial output at coincidence, cancellation in force/torque
 sums, dropped geometric tangent terms, hidden ID orientation, and loss of
 resolution near collapse.  A unit test alone does not establish physical
 validity.
-

@@ -27,7 +27,8 @@ On the declared domain `r_a>0`, a virtual displacement gives
 delta e_a = n_a dot (delta x_j-delta x_i).
 ```
 
-Stacking these rows defines `R(x)`.  With
+Stacking these rows defines `R(x)`.  With the canonical symmetric reference
+operator `H_force`, abbreviated `H` below,
 
 ```text
 U=(1/2)e^THe,  g=He,
@@ -48,6 +49,18 @@ f=-R^Tg.
 In endpoint form the `i` packet receives `+g_a n_a` and `j` receives
 `-g_a n_a`.  This sign convention is checked directly rather than inferred
 from a test tolerance.
+
+The parent builder's two stored triangles can differ by binary64 accumulation
+roundoff.  The force lab records those parent entries and freezes
+`H_force=(H_parent+H_parent^T)/2` once.  For any real vector `e`,
+
+```text
+e^T H_parent e = e^T H_force e,
+```
+
+because `H_parent-H_force` is antisymmetric.  This makes the stored matrix
+match the symmetric mathematical operator required by the derivative without
+changing the quadratic form or introducing a current-state correction.
 
 ## Internal force, torque, and power
 
@@ -121,4 +134,3 @@ gradient there.  Returning an arbitrary force direction would therefore add
 an unregistered constitutive choice.  The force evaluator fails closed before
 physical output at exact coincidence and only reports positive approaches as
 conditioning diagnostics.
-

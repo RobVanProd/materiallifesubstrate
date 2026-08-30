@@ -29,6 +29,30 @@ The force lab consumes the accepted `RelationEnergyOperator` and its canonical
 relation ordering.  It may add a separate read-only evaluator, but it may not
 modify the inherited energy builder or accepted producer.
 
+### Pre-final symmetric-storage audit
+
+The sealed parent reports small nonzero binary64 `H` symmetry residuals (for
+example `2^-58` through approximately `2^-54` across inspected collective
+rows).  Therefore directly treating the two independently accumulated
+triangles as an exactly symmetric matrix would make `g=H e` disagree in high
+precision with the derivative of `U=(1/2)e^THe`.
+
+Before final data, force-lab setup creates one canonical reference matrix:
+
+```text
+H_force[i,j] = H_force[j,i]
+             = (H_parent[i,j]+H_parent[j,i])/2.
+```
+
+Each unordered pair is evaluated once with one binary64 addition followed by
+multiplication by exactly representable `1/2`, then mirrored byte-for-byte;
+the diagonal is copied unchanged.  Evidence records both parent entries, the
+frozen entry, and maximum correction.  Setup fails if the correction exceeds
+`32768 d eps max(max_abs(H_parent),tiny)`, the accepted parent-class symmetry
+scale.  This preserves the exact quadratic form because the removed component
+is antisymmetric.  It does not shift eigenvalues, add a diagonal, alter
+locality, or use current geometry.  All evaluations use only `H_force`.
+
 Only the local incident-collective family is selectable.  The three registered
 policies use `G=1`, `B=1/4`, and `A=3(K/G)/20` in the accepted finite-graph
 convention:
@@ -39,9 +63,10 @@ K/G = 2:   A=3/10, B=1/4
 K/G = 10:  A=3/2,  B=1/4.
 ```
 
-No coefficient is fitted after results are inspected.  The complete `H`,
-reference lengths, weights, coefficients, graph, and semantic coordinate map
-are exported and integrity-bound.
+No coefficient is fitted after results are inspected.  The complete parent
+`H`, canonical `H_force`, correction, reference lengths, weights,
+coefficients, graph, and semantic coordinate map are exported and
+integrity-bound.
 
 ## 2. Bounded graph and deformation inventory
 
