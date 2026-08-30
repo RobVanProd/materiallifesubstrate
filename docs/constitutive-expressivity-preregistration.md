@@ -167,8 +167,10 @@ row sign/order changes may not affect energy.
 Evidence records the complete relation-space `H` sparsity pattern. For the
 local candidate an off-diagonal entry is allowed only for relations sharing a
 packet. It records nonzeros, density, maximum graph-hop coupling radius
-(`<=1`), and maximum Euclidean endpoint coupling radius. Any nonlocal entry is
-a decisive implementation failure.
+(`<=1`), and the maximum Euclidean distance between any endpoints of every
+relation-coordinate pair coupled by a nonzero `H` entry. Diagonal entries are
+included, so a pair-separable relation reports its bond length rather than
+zero. Any nonlocal entry is a decisive implementation failure.
 
 For every graph and ratio, diagnostics include:
 

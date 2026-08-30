@@ -359,6 +359,47 @@ if(Python3_Interpreter_FOUND)
       TIMEOUT 30)
 
   add_test(
+    NAME mls.constitutive_expressivity.smoke.verify
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/reference/validate_constitutive_expressivity_bundle.py"
+      --bundle
+      "${CMAKE_CURRENT_BINARY_DIR}/constitutive-expressivity-smoke-a"
+      --compare
+      "${CMAKE_CURRENT_BINARY_DIR}/constitutive-expressivity-smoke-b"
+      --allow-dirty)
+  set_tests_properties(
+    mls.constitutive_expressivity.smoke.verify
+    PROPERTIES
+      DEPENDS
+        "mls.constitutive_expressivity.smoke.a;mls.constitutive_expressivity.smoke.b"
+      LABELS "deterministic;constitutive-expressivity;smoke;independent"
+      PASS_REGULAR_EXPRESSION
+        "CONSTITUTIVE EXPRESSIVITY BUNDLE VALID.*NO_PROMOTION"
+      TIMEOUT 300)
+
+  add_test(
+    NAME mls.constitutive_expressivity.validator.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/constitutive_expressivity_bundle_validator_test.py"
+      --validator
+      "${PROJECT_SOURCE_DIR}/reference/validate_constitutive_expressivity_bundle.py"
+      --bundle
+      "${CMAKE_CURRENT_BINARY_DIR}/constitutive-expressivity-smoke-a"
+      --compare
+      "${CMAKE_CURRENT_BINARY_DIR}/constitutive-expressivity-smoke-b")
+  set_tests_properties(
+    mls.constitutive_expressivity.validator.regression
+    PROPERTIES
+      DEPENDS
+        "mls.constitutive_expressivity.smoke.a;mls.constitutive_expressivity.smoke.b"
+      LABELS "deterministic;constitutive-expressivity;validator;independent"
+      PASS_REGULAR_EXPRESSION
+        "constitutive expressivity bundle validator regression: PASS"
+      TIMEOUT 300)
+
+  add_test(
     NAME mls.constitutive_expressivity.seal.regression
     COMMAND
       "${Python3_EXECUTABLE}"

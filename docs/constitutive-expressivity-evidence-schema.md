@@ -16,7 +16,7 @@ producer's external parent fixture after production.
 | `bulk_expressivity.csv` | pair Cauchy and collective two-modulus summary rows |
 | `tangent.csv` | complete 6x6 actual/expected Kelvin tangents and gates |
 | `strain_energy.csv` | Kelvin, mixed, and rotated-control energies |
-| `graph_energy.csv` | finite-graph locality, positivity bounds, R/LR rank/kernel diagnostics |
+| `graph_energy.csv` | finite-graph locality, Euclidean H-support extent, positivity bounds, R/LR rank/kernel diagnostics |
 | `spectra.csv` | every direct `L R` singular value and classification |
 | `metamorphic.csv` | objectivity, similarity, order, endpoint-orientation, and ID controls |
 | `checkpoints.csv` | canonical checkpoint size/hash/round-trip rows |
@@ -53,6 +53,12 @@ finite energies, local `H`, direct factor `L`, `R`, selected exact/high-
 precision ranks and spectra, locality, checkpoint decoding/round trip,
 metamorphic transformations, and decision ordering. C++ summary fields are
 observations to compare, never premises.
+
+The Euclidean locality field is the maximum distance between any endpoints of
+every relation-coordinate pair coupled by a nonzero `H` entry. Diagonal
+entries count, so pair-separable relations report their bond length rather
+than zero. Relation-space adjacency is reported separately by the `H`
+sparsity and graph-hop fields.
 
 Twin full bundles must be byte-identical. Mutation regression must reject at
 least altered energy/tangent, locality, target ratio, ID mapping, kernel/rank,

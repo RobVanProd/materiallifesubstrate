@@ -85,10 +85,11 @@ assumptions rather than importing numerical positivity.
 
 Pair response has diagonal `H`. Local collective response couples two
 relation coordinates only when their relations share a packet. Its graph
-radius is one incident-relation star; the largest Euclidean endpoint-to-
-endpoint coupling distance is reported from the reference geometry. A dense
-global `H` is allowed only as an algebraic upper-bound diagnostic and is
-permanently ineligible for the decision.
+radius is one incident-relation star. Its Euclidean support diagnostic is the
+maximum distance between any endpoints of each relation-coordinate pair with
+a nonzero `H` entry, including diagonal entries. A dense global `H` is allowed
+only as an algebraic upper-bound diagnostic and is permanently ineligible for
+the decision.
 
 ## Conservation, objectivity, and dimension law
 
@@ -116,4 +117,3 @@ constitutive coefficients, relation-coordinate modes not covered by a local
 star, hidden ID-dependent orientation, incorrect double counting, and
 loss of positive semidefiniteness through roundoff. Intentionally floppy
 graphs must remain floppy; energy cannot fabricate absent observables.
-
