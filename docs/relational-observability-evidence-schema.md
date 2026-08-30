@@ -19,10 +19,11 @@ fields.
 | `relations.csv` | complete Candidate-C edge topology and raw-row norm gates |
 | `observability.csv` | CPQR/SVD/rank/nullity/rigid quotient and margin summary |
 | `spectra.csv` | every singular value, including explicit zero tail to `3N` |
-| `nullspace.csv` | residual and rigid/non-rigid component of every accepted CPQR kernel vector |
-| `metamorphic.csv` | similarity, ordering, and ID-renaming equivalence controls |
+| `nullspace.csv` | residual, partition, and acceptance result for every CPQR kernel-vector candidate |
+| `nullspace_vectors.csv` | every binary64 component of every CPQR kernel-vector candidate |
+| `metamorphic.csv` | operator, spectrum, finite bond-length, ordering, and ID-renaming equivalence controls |
 | `id_bijections.csv` | complete old/new/inverse label mappings |
-| `topology_path.csv` | every one-edge deletion state and transition markers |
+| `topology_path.csv` | every one-edge deletion state, rank-reference certification, and fixed transition markers |
 | `lookup.csv` | brute-force versus lookup-grid edge enumeration |
 | `checkpoints.csv` | byte hashes for original, round-tripped, and post-diagnostic state |
 | `checkpoints/*.bin` | canonical `MLSMOBS1` v1 state with packets, bonds, and zero volumes |
@@ -32,6 +33,35 @@ fields.
 
 Candidate-B matrices/results and Candidate-D volume relations/results are not
 valid files or columns in this schema.
+
+`nullspace_vectors.csv` is ordered by ascending configuration ID, mode index,
+canonical packet ID, and axis order `x,y,z`. `component_index` is exactly
+`3*packet_index+axis_index`, and `value` is the canonical hexadecimal binary64
+component. Each `(configuration_id,mode_index)` has exactly `3N` rows. The
+corresponding `nullspace.csv.vector_sha256` is SHA-256 over those components'
+raw binary64 bit patterns serialized in component-index order as little-endian
+unsigned 64-bit words. This makes every claimed kernel residual, rigid
+projection, orthogonality result, and vector hash independently recomputable.
+
+`source_configuration_id` is semantic lineage. An inherited identity row
+points to itself; an inherited translation/rotation/scale row points to its
+accepted identity base. Every derived perturbation, deformation, deletion, or
+ID-bijection row likewise points to the inherited configuration from which its
+physical state was constructed.
+
+`metamorphic.csv.finite_length_scale` is the registered expected multiplicative
+change in every central-distance observable. Its residual compares actual and
+expected finite bond lengths after semantic edge canonicalization. It is one
+for objectivity and label/order controls, one-half/two for the registered
+similarity scale controls, and participates in `pass` at the same recorded
+roundoff tolerance as the corresponding operator/spectrum comparison.
+
+`topology_path.csv.rank_reference_kind` is exactly one of
+`exact_fraction_rref`,
+`modular_lower_bound_matches_structural_upper_bound`, or
+`modular_lower_bound`. `rank_certified=true` is permitted only for the first
+two kinds. The full registered transition labels are fixed at deletion steps
+52, 53, 54, 55, and 158; smoke transition labels are all `none`.
 
 ## Numeric encoding
 
@@ -91,3 +121,26 @@ The summary must also state `no_promotion=true`,
 `candidate_b_decision_input_count=0`, and
 `candidate_d_instantiated=false`.
 
+The outer seal snapshots the complete tracked Git tree at `source_sha` using
+canonical committed blob contents. Its provenance contains the full
+path-to-Git-blob mapping, and verification requires exact source-file inventory
+and blob equality. Seal creation also requires clean repository status, the
+registered branch, exact `HEAD`, and a successful CI record with the same
+`headSha`, `headBranch`, and run ID. The raw source commit object is sealed; its
+object ID and declared tree are verified against a tree reconstructed from the
+complete path/mode/blob inventory. Path-aware working-tree Git hashes must
+equal the committed blobs even when an index flag could hide a modification
+from ordinary status output.
+
+The two full-run inputs must be distinct non-aliasing directories and validate
+byte-for-byte equal. Local receipts have a closed filename inventory and are
+parsed for successful configure/build/CTest, distinct producer paths, twin
+comparison, independent validation and mutations, Lean compilation/axioms,
+formal trust, and exact source/tool versions. `ci-run.json` has a closed field
+inventory and must exactly equal a fresh GitHub Actions API response containing
+successful GCC, Clang, MSVC, Python-oracle, and pinned-Lean jobs. The canonical
+public repository, branch, and evidence tag must resolve to `source_sha` during
+both creation and verification. `provenance.json`, bundle summaries, and the
+outer manifest reject extra contradictory fields. Final verification accepts
+an externally recorded expected pre-hash and rejects any internally consistent
+replacement seal with a different value.

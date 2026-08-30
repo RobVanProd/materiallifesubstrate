@@ -205,6 +205,14 @@ nullity, rigid/non-rigid partition, threshold separations, and `mu`. Exact
 rank determines the transition-adjacent states used by the high-precision
 audit; C++ rank never selects its own review subset.
 
+Here `last_rigid` is the last state at exact rank `3N-6` and
+`first_nonrigid` is the immediately following state below that rank. Their
+immediate outer neighbors are marked `transition_adjacent` when they exist.
+Only this first loss of generic rigidity defines the transition; later rank
+drops inside an already floppy graph are reported but are not additional
+selection events. The high-precision subset includes the two bracketing and
+two outer rows in addition to its fixed deletion steps.
+
 ## 7. Stable-ID bijections
 
 Every inherited configuration receives three deterministic nontrivial full
@@ -241,9 +249,79 @@ subset, fixed before C++ final data:
   transition-adjacent step.
 
 The verifier recomputes row norms, ranks, rigid partitions, selected spectra,
-all hashes/schema facts, checkpoints, metamorphic mappings, decision ordering,
-and twin equality. A pseudoinverse or Gram spectrum may be used only as an
-additional diagnostic and never as a decision premise.
+all hashes/schema facts, checkpoints, derived geometry, metamorphic mappings,
+decision ordering, and twin equality. Its mandatory binary64 spectrum path is
+an independently implemented direct rectangular one-sided-Jacobi SVD. It may
+not form `R^T R` or `R R^T`. A pseudoinverse or Gram spectrum may be used only
+as an additional diagnostic and never as a decision premise.
+
+### Pre-final-data evidence hardening amendment (2026-08-29)
+
+Every CPQR null-vector candidate is exported component-by-component in canonical
+configuration/mode/packet/axis order. The component table is bound by the same
+summary and manifest hashes as every other payload. Its raw little-endian
+binary64 component bytes must reproduce the per-vector SHA-256 already recorded
+in `nullspace.csv`. Independent verification reconstructs each vector and
+recomputes `Rz`, rigid projection, rigid/non-rigid orthogonality, and nullspace
+span completeness. This amendment exposes previously hashed numerical witness
+state; it does not change Candidate C, a tolerance, a configuration, or the
+frozen decision order.
+
+The same pre-final-data adversarial review found that the producer had selected
+topology-transition labels from its own uncertified modular lower bound. An
+independent exact-Fraction audit of the registered deletion ordering found the
+first rank loss at step 54: step 53 attains the structural upper bound 75, and
+exact Fraction RREF gives rank 74 at step 54. The registered markers are now
+fixed independently of final C++ output: step 52 `transition_adjacent`, step 53
+`last_rigid`, step 54 `first_nonrigid`, step 55 `transition_adjacent`, and step
+158 `complete_deletion`. Smoke rows carry no transition markers. Every topology
+rank now states whether it is an exact-Fraction result, a modular lower bound
+that meets the structural upper bound, or an uncertified modular lower bound.
+The high-precision deletion subset is expanded to include steps 52--55.
+
+Finite bond-length objectivity is also made an explicit metamorphic gate before
+final data. Translation, proper rotation, and rotation-plus-translation must
+preserve every physical edge length; registered half/double similarity probes
+must scale every length by exactly their declared factor to roundoff. Packet,
+relation, and ID permutations must preserve the semantic graph and lengths
+after semantic canonicalization. Relation-order testing begins from a reversed
+order with reversed endpoint presentation before canonicalization, rather than
+silently retesting the already canonical input.
+
+Finally, the validator reconstructs the complete derived inventory from the
+accepted fixture tables, registered SplitMix64 perturbations, homogeneous
+deformation matrices, deletion ordering, and full ID bijections. Exported
+nullspace components are checked independently for hashes, `Rz`, rigid
+projection, orthogonality, and span completeness. Full evidence is rejected
+unless the configured source branch is exactly
+`relational-observability-confirmation`, the source tree was clean at configure
+time, and the source SHA is exact. These amendments harden independence and
+provenance; they do not change Candidate C or the frozen decision order.
+
+The outer seal additionally requires the repository's current `HEAD`, branch,
+and clean status to match the full bundle and successful CI run. It enumerates
+the complete committed Git tree, copies every canonical commit blob (not a
+hand-selected source subset), records every Git blob ID in sealed provenance,
+and rejects a missing, extra, or changed source-snapshot file. It reconstructs
+the Git tree object from that inventory and verifies the captured raw commit
+object names exactly that tree. Creation also hashes every working-tree input
+with Git's path-aware clean filter and compares it to the committed blob, so
+`assume-unchanged` or `skip-worktree` cannot conceal a changed build input.
+This prevents a post-configure edit or omitted transitive header from being
+sealed under an older configure-time SHA.
+
+The seal requires two distinct, non-aliasing full-run directories; byte-for-byte
+twin equality; closed JSON field inventories; parsed zero-failure build, test,
+producer, validator, formal, and version receipts; and all registered semantic
+mutation regressions. CI metadata is fetched independently from the GitHub API
+and must show the exact public branch/SHA and successful GCC, Clang, MSVC,
+Python-oracle, and pinned-Lean jobs. The public branch and immutable evidence
+tag must both resolve to the source SHA, and the repository must be public.
+Standalone verification repeats those remote, source, log, CI, bundle, and
+decision checks. The reported outer pre-hash is supplied again as an external
+verification input so replacing an internally self-consistent seal is
+detectable. Provisional smoke may record detached `HEAD` in CI; the full
+producer, validator, and seal remain strict to the registered branch.
 
 ## 9. Frozen decision order
 
