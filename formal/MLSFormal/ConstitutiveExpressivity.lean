@@ -81,7 +81,7 @@ theorem relationalStiffness_quadratic_identity
   rw [relationalStiffness, ← Matrix.mulVec_mulVec,
     ← Matrix.mulVec_mulVec, Matrix.dotProduct_transpose_mulVec]
   simpa [relationExtension] using
-    (Matrix.dotProduct_comm
+    (dotProduct_comm
       (constitutiveOperator *ᵥ relationOperator *ᵥ displacement)
       (relationOperator *ᵥ displacement))
 
