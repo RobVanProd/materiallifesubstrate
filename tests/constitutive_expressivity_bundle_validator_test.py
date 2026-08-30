@@ -23,6 +23,7 @@ def run(
     bundle: pathlib.Path,
     expect_success: bool,
     compare: pathlib.Path | None = None,
+    required_rejection: str | None = None,
 ) -> None:
     command = [
         sys.executable,
@@ -44,6 +45,15 @@ def run(
     if not expect_success and MARKER not in completed.stderr:
         raise RuntimeError(
             f"validator rejection lacked stable marker:\n{completed.stdout}\n{completed.stderr}"
+        )
+    if (
+        not expect_success
+        and required_rejection is not None
+        and required_rejection not in completed.stderr
+    ):
+        raise RuntimeError(
+            "validator rejection did not prove required ordering: "
+            f"{required_rejection!r}\n{completed.stdout}\n{completed.stderr}"
         )
 
 
@@ -106,14 +116,15 @@ def main() -> int:
         run(args.validator, args.bundle, True, args.compare)
 
     mutation_names = (
-        "energy", "locality", "target", "id_label", "kernel", "source",
-        "oracle", "packet", "relation", "checkpoint", "spectrum", "role",
-        "decision", "promotion", "inventory",
+        "energy", "residual", "basis", "locality", "target", "id_label",
+        "kernel", "source", "oracle", "selected_subset", "packet",
+        "relation", "checkpoint", "spectrum", "role", "decision",
+        "promotion", "inventory",
     )
     with tempfile.TemporaryDirectory(prefix="mls-constitutive-validator-") as temporary:
         root = pathlib.Path(temporary)
         targets: dict[str, pathlib.Path] = {}
-        for name in (*mutation_names, "twin"):
+        for name in (*mutation_names, "twin", "twin_order"):
             target = root / name
             shutil.copytree(args.bundle, target)
             targets[name] = target
@@ -121,6 +132,16 @@ def main() -> int:
         mutate_csv(
             targets["energy"] / "strain_energy.csv",
             lambda rows: rows[0].__setitem__("actual_energy", "0x1.0000000000000p+20"),
+        )
+        mutate_csv(
+            targets["residual"] / "graph_energy.csv",
+            lambda rows: rows[0].__setitem__(
+                "rigid_energy_residual", "0x1.0000000000000p-4"
+            ),
+        )
+        mutate_csv(
+            targets["basis"] / "basis_vectors.csv",
+            lambda rows: rows[0].__setitem__("x", "0x1.0000000000000p+4"),
         )
         mutate_csv(
             targets["locality"] / "graph_energy.csv",
@@ -149,6 +170,12 @@ def main() -> int:
         mutate_json(
             targets["oracle"] / "provenance.json",
             lambda value: value.__setitem__("exact_oracle_pre_hash", "0" * 64),
+        )
+        mutate_json(
+            targets["selected_subset"] / "provenance.json",
+            lambda value: value["selected_subset_sha256"].__setitem__(
+                "packets.csv", "0" * 64
+            ),
         )
         mutate_csv(
             targets["packet"] / "packets.csv",
@@ -196,11 +223,33 @@ def main() -> int:
         )
         reseal(targets["twin"])
         run(args.validator, targets["twin"], True)
-        run(args.validator, args.bundle, False, targets["twin"])
+        run(
+            args.validator,
+            args.bundle,
+            False,
+            targets["twin"],
+            required_rejection="twin bundles are not byte-for-byte identical",
+        )
+
+        # Prove twin bytes are checked before either expensive semantic path:
+        # this primary copy is itself invalid, but the required rejection must
+        # still be the earlier closed-tree mismatch.
+        mutate_json(
+            targets["twin_order"] / "summary.json",
+            lambda value: value.__setitem__("decision", "invalid_before_twin_check"),
+        )
+        run(
+            args.validator,
+            targets["twin_order"],
+            False,
+            targets["twin"],
+            required_rejection="twin bundles are not byte-for-byte identical",
+        )
 
     print(
         "constitutive expressivity bundle validator regression: PASS "
-        f"(2 deterministic positives, {len(mutation_names)} semantic mutations, 1 twin mutation)"
+        f"(2 deterministic positives, {len(mutation_names)} semantic mutations, "
+        "1 twin mutation, fail-fast twin ordering)"
     )
     return 0
 

@@ -3,6 +3,11 @@
 **Frozen before implementation and final numerical data:** 2026-08-30 on
 branch `constitutive-expressivity-lab`.
 
+The parent-subset commitments, exported-basis checks, current-only
+objectivity probes, and explicit failure classifications below were added as
+adversarial hardening before the canonical final sweep. They strengthen the
+registered gate without relaxing any original tolerance or success condition.
+
 **Accepted parent:** `101296f936f8473effb316b1f9ae4040b5768349`.
 
 **Seed:** `260828`.
@@ -230,14 +235,17 @@ The direct rectangular SVD rank threshold remains
 `tau=512 d eps max(sigma_max,smallest_normal)`, matching the accepted
 representation lab. A value in an ambiguity band stops the run. Independent
 high-precision checks use at least 80 decimal digits. Twin final output must
-be byte-identical.
+be byte-identical. The independent validator compares the closed twin trees
+before numerical work and then validates their one integrity-checked canonical
+content tree once; byte-identical content is not numerically recomputed twice.
 
 ## 8. Independent verification and evidence
 
 A Python implementation independently reconstructs the seven-direction
 moments, pair Cauchy ratio, collective energies/tangents, finite length
-energies, graph locality, selected exact rational Hessian ranks, high-
-not accept C++ summary fields as premises. Every selected large graph is
+energies, graph locality, selected exact rational Hessian ranks,
+high-precision spectra, and the exported basis residuals. It does not accept
+C++ summary fields as premises. Every selected large graph is
 checked through a direct high-precision LR spectrum/rank path at both
 collective-coefficient extremes. Mutation tests must demonstrate rejection of
 altered energy, locality, target ratio, ID mapping, basis/residual data,

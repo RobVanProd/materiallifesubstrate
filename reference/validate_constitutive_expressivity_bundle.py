@@ -36,6 +36,9 @@ SUMMARY_SCHEMA = "mls.constitutive-expressivity.summary.v1"
 MANIFEST_SCHEMA = "mls.constitutive-expressivity.manifest.v1"
 DECISION = "retain_local_collective_relational_energy_for_research"
 STOP_DECISION = "stop_inconclusive_or_implementation_failure"
+LOCAL_COLLECTIVE_FAILURE = (
+    "local_collective_constitutive_parameterization_or_locality_failure"
+)
 SOURCE_SHA_RE = re.compile(r"[0-9a-f]{40}")
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 INHERITED_BLOBS = {
@@ -53,6 +56,12 @@ FIXTURE_HASHES = {
     "configurations.csv": "cbae18e3b2c356e2898d1410f37fb90692d889f28438cfb5524753c87f1db2b7",
     "packets.csv": "dfd22994678333125b90f658d5b228c09f45e4564f52e02d6f38a3b2f3c924f7",
     "relations.csv": "14afdb0ac5822294a5d5437b3e622dffdc9f886dda395d0bfef5ae9b13c73093",
+}
+SELECTED_SUBSET_HASHES = {
+    "mode": "accepted_parent_subset",
+    "configurations.csv": "45d162381ec723dd9ce744f2cc23c4d21435a52b7c7e60a182073ee19a08d60e",
+    "packets.csv": "843c9cb22c0b55e07c207135125a8334b0dd170a0f708aa1fb50f34d4c5d7363",
+    "relations.csv": "0b2e21dcbf26454af316bec9323627aa1488ebc7aa1f14c006bfb41a231e0e6f",
 }
 SMOKE_IDS = {
     "exact.tetrahedron_k4",
@@ -72,6 +81,7 @@ BASE_FILES = {
     "configurations.csv",
     "packets.csv",
     "relations.csv",
+    "basis_vectors.csv",
     "bulk_expressivity.csv",
     "tangent.csv",
     "strain_energy.csv",
@@ -94,6 +104,10 @@ HEADERS = {
     "relations.csv": (
         "configuration_id", "relation_index", "first_id", "second_id",
         "reference_length_m",
+    ),
+    "basis_vectors.csv": (
+        "configuration_id", "basis_kind", "basis_index", "packet_id",
+        "x", "y", "z",
     ),
     "bulk_expressivity.csv": (
         "control_id", "cubature", "family", "target_k_over_g", "a_j_per_m2",
@@ -300,10 +314,12 @@ def dmatmul(first: Sequence[Sequence[Decimal]], second: Sequence[Sequence[Decima
     columns = list(zip(*second, strict=True))
     if len(first[0]) != len(second):
         reject("matrix product dimensions")
-    return [
-        [dsum(a * b for a, b in zip(row, column, strict=True)) for column in columns]
-        for row in first
-    ]
+    with localcontext() as context:
+        context.prec = DECIMAL_DIGITS
+        return [
+            [dsum(a * b for a, b in zip(row, column, strict=True)) for column in columns]
+            for row in first
+        ]
 
 
 def dtranspose(matrix: Sequence[Sequence[Decimal]]) -> DMatrix:
@@ -527,6 +543,208 @@ def high_precision_singular_values(
         )
         values.extend(Decimal(0) for _ in range(trailing))
         return tuple(+value for value in values)
+
+
+def decimal_dot(first: Sequence[Decimal], second: Sequence[Decimal]) -> Decimal:
+    with localcontext() as context:
+        context.prec = DECIMAL_DIGITS
+        return dsum(a * b for a, b in zip(first, second, strict=True))
+
+
+def decimal_orthonormalize(vectors: Sequence[Sequence[Decimal]]) -> DMatrix:
+    """Modified Gram-Schmidt in local 90-digit arithmetic; columns out."""
+
+    basis: DMatrix = []
+    with localcontext() as context:
+        context.prec = DECIMAL_DIGITS
+        for candidate in vectors:
+            residual = list(candidate)
+            # A second pass makes the diagnostic robust to an initially
+            # ill-scaled translation/rotation generator inventory.
+            for _pass in range(2):
+                for column in basis:
+                    coefficient = decimal_dot(column, residual)
+                    residual = [
+                        value - coefficient * direction
+                        for value, direction in zip(residual, column, strict=True)
+                    ]
+            norm_squared = decimal_dot(residual, residual)
+            if norm_squared <= Decimal("1e-70"):
+                continue
+            norm = norm_squared.sqrt()
+            basis.append([value / norm for value in residual])
+    return basis
+
+
+def decimal_rigid_basis(configuration: Configuration) -> DMatrix:
+    axes: tuple[Vec3D, ...] = (
+        (Decimal(1), Decimal(0), Decimal(0)),
+        (Decimal(0), Decimal(1), Decimal(0)),
+        (Decimal(0), Decimal(0), Decimal(1)),
+    )
+    candidates: DMatrix = []
+    with localcontext() as context:
+        context.prec = DECIMAL_DIGITS
+        for axis in axes:
+            candidates.append([
+                axis[component]
+                for _packet in configuration.packet_ids
+                for component in range(3)
+            ])
+        for omega in axes:
+            candidate: list[Decimal] = []
+            for packet in configuration.packet_ids:
+                x, y, z = configuration.positions[packet]
+                wx, wy, wz = omega
+                candidate.extend(
+                    (wy * z - wz * y, wz * x - wx * z, wx * y - wy * x)
+                )
+            candidates.append(candidate)
+    return decimal_orthonormalize(candidates)
+
+
+def decimal_matvec(
+    matrix: Sequence[Sequence[Decimal]], vector: Sequence[Decimal]
+) -> list[Decimal]:
+    return [decimal_dot(row, vector) for row in matrix]
+
+
+def decimal_norm(vector: Sequence[Decimal]) -> Decimal:
+    with localcontext() as context:
+        context.prec = DECIMAL_DIGITS
+        return decimal_dot(vector, vector).sqrt()
+
+
+def relation_basis_energy(
+    rigidity: Sequence[Sequence[Decimal]],
+    constitutive: Sequence[Sequence[Decimal]],
+    basis: Sequence[Sequence[Decimal]],
+) -> Decimal:
+    with localcontext() as context:
+        context.prec = DECIMAL_DIGITS
+        return max(
+            (
+                decimal_dot(extension, decimal_matvec(constitutive, extension))
+                / 2
+                for vector in basis
+                for extension in (decimal_matvec(rigidity, vector),)
+            ),
+            default=Decimal(0),
+        )
+
+
+def parse_basis_vectors(
+    rows: Sequence[Mapping[str, str]],
+    configurations: Mapping[str, Configuration],
+    rigidities: Mapping[str, DMatrix],
+    audit: Audit,
+) -> dict[str, dict[str, DMatrix]]:
+    kinds = {"rigid_orthonormal", "r_nullspace_accepted_cpqr"}
+    grouped: dict[tuple[str, str, int], dict[int, list[Decimal]]] = defaultdict(dict)
+    for row in rows:
+        identifier = row["configuration_id"]
+        audit.require(identifier in configurations, "basis configuration inventory")
+        kind = row["basis_kind"]
+        audit.require(kind in kinds, f"{identifier}: basis kind")
+        index = unsigned(row["basis_index"], f"{identifier} basis index")
+        packet_id = unsigned(row["packet_id"], f"{identifier} basis packet ID")
+        key = (identifier, kind, index)
+        audit.require(packet_id not in grouped[key], f"{identifier}: duplicate basis packet")
+        grouped[key][packet_id] = [
+            Decimal.from_float(
+                binary64(
+                    row[field], f"{identifier} basis {field}", signed_zero=True
+                )
+            )
+            for field in ("x", "y", "z")
+        ]
+
+    result: dict[str, dict[str, DMatrix]] = {}
+    for identifier, configuration in configurations.items():
+        dimension = 3 * len(configuration.packet_ids)
+        rigid_rank = exact_rigid_rank(configuration)
+        nullity = dimension - exact_rigidity_rank(configuration)
+        expected_counts = {
+            "rigid_orthonormal": rigid_rank,
+            "r_nullspace_accepted_cpqr": nullity,
+        }
+        by_kind: dict[str, DMatrix] = {}
+        for kind, expected_count in expected_counts.items():
+            observed_indices = sorted(
+                index
+                for config_id, observed_kind, index in grouped
+                if config_id == identifier and observed_kind == kind
+            )
+            audit.require(
+                observed_indices == list(range(expected_count)),
+                f"{identifier}: complete {kind} basis indices",
+            )
+            columns: DMatrix = []
+            for index in observed_indices:
+                packets = grouped[(identifier, kind, index)]
+                audit.require(
+                    set(packets) == set(configuration.packet_ids),
+                    f"{identifier}: complete {kind} packet bijection",
+                )
+                columns.append([
+                    component
+                    for packet in configuration.packet_ids
+                    for component in packets[packet]
+                ])
+            by_kind[kind] = columns
+
+            dimension_scale = Decimal(max(6, dimension, len(configuration.edges)))
+            basis_gate = (
+                Decimal(32768)
+                * dimension_scale
+                * Decimal.from_float(EPSILON64)
+            )
+            for first, left in enumerate(columns):
+                for second, right in enumerate(columns):
+                    expected = Decimal(1) if first == second else Decimal(0)
+                    audit.require(
+                        abs(decimal_dot(left, right) - expected) <= basis_gate,
+                        f"{identifier}: {kind} orthonormality",
+                    )
+                residual = decimal_norm(decimal_matvec(rigidities[identifier], left))
+                audit.require(
+                    residual <= basis_gate,
+                    f"{identifier}: {kind} R-kernel semantics",
+                )
+
+        independent_rigid = decimal_rigid_basis(configuration)
+        audit.require(
+            len(independent_rigid) == rigid_rank,
+            f"{identifier}: independent rigid basis rank",
+        )
+        for vector in by_kind["rigid_orthonormal"]:
+            residual = list(vector)
+            for direction in independent_rigid:
+                coefficient = decimal_dot(direction, residual)
+                residual = [
+                    value - coefficient * component
+                    for value, component in zip(residual, direction, strict=True)
+                ]
+            audit.require(
+                decimal_norm(residual)
+                <= Decimal(32768)
+                * Decimal(max(6, dimension, len(configuration.edges)))
+                * Decimal.from_float(EPSILON64),
+                f"{identifier}: rigid basis physical-span semantics",
+            )
+        result[identifier] = by_kind
+
+    audit.require(
+        len(grouped)
+        == sum(
+            exact_rigid_rank(configuration)
+            + 3 * len(configuration.packet_ids)
+            - exact_rigidity_rank(configuration)
+            for configuration in configurations.values()
+        ),
+        "basis vector inventory",
+    )
+    return result
 
 
 def parse_configurations(
@@ -810,7 +1028,7 @@ def validate_bulk_controls(
     tangent_rows: Sequence[Mapping[str, str]],
     strain_rows: Sequence[Mapping[str, str]],
     audit: Audit,
-) -> int:
+) -> tuple[int, int, int]:
     cubature_map = {value.identifier: value for value in cubatures()}
     expected_controls: dict[str, tuple[Cubature, str, float]] = {}
     ratios = (1.0 / 3.0, 1.0, 2.0, 10.0)
@@ -836,6 +1054,8 @@ def validate_bulk_controls(
     audit.require(set(tangent_by) == set(expected_controls), "tangent control inventory")
     audit.require(set(strain_by) == set(expected_controls), "strain control inventory")
     failures = 0
+    pair_failures = 0
+    collective_failures = 0
     for row in bulk_rows:
         identifier = row["control_id"]
         cubature, family, ratio_float = expected_controls[identifier]
@@ -914,6 +1134,10 @@ def validate_bulk_controls(
         audit.require(boolean(row["pass"], f"{identifier} pass") == row_pass,
                       f"{identifier}: pass flag")
         failures += int(not row_pass)
+        if family == "pair_separable":
+            pair_failures += int(not row_pass)
+        else:
+            collective_failures += int(not row_pass)
 
         indexed_tangent = {
             (
@@ -1023,7 +1247,7 @@ def validate_bulk_controls(
                 == rotated_pass,
                 f"{identifier}: {rotated_id} pass flag",
             )
-    return failures
+    return failures, pair_failures, collective_failures
 
 
 def euclidean_distance(
@@ -1037,6 +1261,7 @@ def euclidean_distance(
 
 def validate_graph_controls(
     configurations: Mapping[str, Configuration],
+    basis_rows: Sequence[Mapping[str, str]],
     graph_rows: Sequence[Mapping[str, str]],
     spectrum_rows: Sequence[Mapping[str, str]],
     audit: Audit,
@@ -1074,6 +1299,7 @@ def validate_graph_controls(
         )
         exact_ranks[identifier] = (rank, rigid_rank)
         rigidities[identifier] = unit_rigidity(configuration)
+    bases = parse_basis_vectors(basis_rows, configurations, rigidities, audit)
 
     failures = 0
     high_precision_receipts = 0
@@ -1244,13 +1470,10 @@ def validate_graph_controls(
         reported_minimum = binary64(row["min_resolved_lr_sigma"], f"{identifier} minimum sigma")
         audit.require(reported_minimum == minimum_nonzero, f"{identifier}: minimum sigma")
 
-        high_precision_selected = (
-            packet_count <= 6
-            or (
-                identifier == "base.jitter27.r180.original"
-                and family == "local_incident_collective"
-                and ratio == 2.0
-            )
+        high_precision_selected = packet_count <= 6 or (
+            packet_count > 6
+            and family == "local_incident_collective"
+            and ratio in (1.0 / 3.0, 10.0)
         )
         if high_precision_selected:
             factor = cholesky_factor_transpose(h_matrix)
@@ -1275,6 +1498,32 @@ def validate_graph_controls(
         energy_gate = 65536.0 * dimension * EPSILON64 * max(1.0, upper)
         rigid_energy = binary64(row["rigid_energy_residual"], f"{identifier} rigid energy")
         null_energy = binary64(row["null_energy_residual"], f"{identifier} null energy")
+        independent_rigid_energy = relation_basis_energy(
+            rigidity, h_matrix, bases[identifier]["rigid_orthonormal"]
+        )
+        independent_null_energy = relation_basis_energy(
+            rigidity, h_matrix, bases[identifier]["r_nullspace_accepted_cpqr"]
+        )
+        residual_recompute_gate = (
+            Decimal(65536)
+            * Decimal(dimension)
+            * Decimal.from_float(EPSILON64) ** 2
+            * Decimal.from_float(max(1.0, upper))
+        )
+        close_decimal(
+            audit,
+            Decimal.from_float(rigid_energy),
+            independent_rigid_energy,
+            residual_recompute_gate,
+            f"{identifier}: independently recomputed rigid energy residual",
+        )
+        close_decimal(
+            audit,
+            Decimal.from_float(null_energy),
+            independent_null_energy,
+            residual_recompute_gate,
+            f"{identifier}: independently recomputed null energy residual",
+        )
         kernel_equal = rank_lr == rank_r and nullity_lr == nullity_r
         independent_pass = (
             not ambiguous
@@ -1292,7 +1541,14 @@ def validate_graph_controls(
         audit.require(boolean(row["pass"], f"{identifier} pass") == independent_pass,
                       f"{identifier}: graph pass")
         failures += int(not independent_pass)
-    audit.require(high_precision_receipts >= 10, "selected high-precision spectrum coverage")
+    expected_high_precision = sum(
+        5 if len(configuration.packet_ids) <= 6 else 2
+        for configuration in configurations.values()
+    )
+    audit.require(
+        high_precision_receipts == expected_high_precision,
+        "selected high-precision spectrum coverage",
+    )
     return failures, high_precision_receipts
 
 
@@ -1366,7 +1622,11 @@ def validate_metamorphic(
 ) -> int:
     families = ("pair_separable", "local_incident_collective")
     probes = {
-        "translation", "rotation", "rotation_translation",
+        "reference_current_translation_covariance",
+        "reference_current_rotation_covariance",
+        "reference_current_rotation_translation_covariance",
+        "current_only_translation_objectivity",
+        "current_only_rotation_objectivity",
         "scale_0x1.0000000000000p-1", "scale_0x1.0000000000000p+1",
         "packet_reverse", "packet_splitmix", "relation_reverse",
         "relation_splitmix", "relation_endpoint_reverse",
@@ -1397,19 +1657,33 @@ def validate_metamorphic(
         for family in families:
             baseline = finite_graph_energy(family, reference, current, configuration.edges)
             probe_energy: dict[str, float] = {}
-            probe_energy["translation"] = finite_graph_energy(
+            probe_energy["reference_current_translation_covariance"] = finite_graph_energy(
                 family,
                 transform_float(reference, identity, translation),
                 transform_float(current, identity, translation),
                 configuration.edges,
             )
-            probe_energy["rotation"] = finite_graph_energy(
+            probe_energy["reference_current_rotation_covariance"] = finite_graph_energy(
                 family, transform_float(reference, rotation),
                 transform_float(current, rotation), configuration.edges,
             )
-            probe_energy["rotation_translation"] = finite_graph_energy(
+            probe_energy[
+                "reference_current_rotation_translation_covariance"
+            ] = finite_graph_energy(
                 family, transform_float(reference, rotation, translation),
                 transform_float(current, rotation, translation), configuration.edges,
+            )
+            probe_energy["current_only_translation_objectivity"] = finite_graph_energy(
+                family,
+                reference,
+                transform_float(current, identity, translation),
+                configuration.edges,
+            )
+            probe_energy["current_only_rotation_objectivity"] = finite_graph_energy(
+                family,
+                reference,
+                transform_float(current, rotation),
+                configuration.edges,
             )
             for scale in (0.5, 2.0):
                 scale_matrix = (
@@ -1561,13 +1835,14 @@ def validate_provenance(
             "parent_sha", "exact_oracle_pre_hash", "source_sha", "source_branch",
             "expected_branch", "source_dirty", "compiler_id", "compiler_version",
             "smoke", "inherited_blobs", "fixture_sha256",
+            "selected_subset_sha256",
         },
         "provenance",
     )
     audit.require(value["parent_sha"] == PARENT_SHA, "provenance parent SHA")
     audit.require(
         value["exact_oracle_pre_hash"]
-        == "463fd3f58c5ab5693207ed1a127300434bd76f6d03074f7217fd50e5511ad3d2",
+        == "010d1452010d534445e63b2acfb83374a92b1958e6a62afbf240a8f3121e36bf",
         "provenance exact-oracle binding",
     )
     audit.require(
@@ -1595,6 +1870,19 @@ def validate_provenance(
     )
     audit.require(value["fixture_sha256"] == expected_fixture,
                   "provenance fixture hashes")
+    expected_subset = (
+        {
+            "mode": "builtin_smoke",
+            "configurations.csv": "builtin_smoke",
+            "packets.csv": "builtin_smoke",
+            "relations.csv": "builtin_smoke",
+        }
+        if smoke else SELECTED_SUBSET_HASHES
+    )
+    audit.require(
+        value["selected_subset_sha256"] == expected_subset,
+        "provenance selected parent-subset commitments",
+    )
 
 
 def validate_summary(
@@ -1610,8 +1898,11 @@ def validate_summary(
             "schema", "seed", "smoke", "decision", "no_promotion",
             "candidate_b_decision_inputs", "candidate_d_decision_inputs",
             "dense_global_rows", "bulk_rows", "bulk_failures", "graph_rows",
-            "graph_failures", "metamorphic_rows", "metamorphic_failures",
-            "checkpoint_rows", "checkpoint_failures", "prohibited_features",
+            "pair_control_rows", "pair_control_failures",
+            "collective_bulk_rows", "collective_bulk_failures",
+            "graph_failures", "basis_vector_rows", "metamorphic_rows",
+            "metamorphic_failures", "checkpoint_rows", "checkpoint_failures",
+            "prohibited_features",
         },
         "summary",
     )
@@ -1643,9 +1934,27 @@ def validate_summary(
                       f"summary {family} row count")
         audit.require(value[f"{family}_failures"] == failure_counts[family],
                       f"summary {family} failure count")
-    independent_decision = (
-        DECISION if sum(failure_counts.values()) == 0 else STOP_DECISION
+    audit.require(value["pair_control_rows"] == row_counts["pair"],
+                  "summary pair-control row count")
+    audit.require(value["pair_control_failures"] == failure_counts["pair"],
+                  "summary pair-control failure count")
+    audit.require(value["collective_bulk_rows"] == row_counts["collective"],
+                  "summary collective-bulk row count")
+    audit.require(
+        value["collective_bulk_failures"] == failure_counts["collective"],
+        "summary collective-bulk failure count",
     )
+    audit.require(value["basis_vector_rows"] == row_counts["basis"],
+                  "summary basis-vector row count")
+    implementation_failures = sum(
+        failure_counts[name] for name in ("graph", "metamorphic", "checkpoint")
+    )
+    if failure_counts["pair"] or implementation_failures:
+        independent_decision = STOP_DECISION
+    elif failure_counts["collective"]:
+        independent_decision = LOCAL_COLLECTIVE_FAILURE
+    else:
+        independent_decision = DECISION
     audit.require(value["decision"] == independent_decision,
                   "independently re-derived decision order")
 
@@ -1677,12 +1986,20 @@ def validate_bundle(
     validate_provenance(
         provenance, smoke, allow_dirty, expected_source_branch, audit
     )
-    bulk_failures = validate_bulk_controls(
+    if not smoke:
+        for name in ("configurations.csv", "packets.csv", "relations.csv"):
+            audit.require(
+                hashlib.sha256((root / name).read_bytes()).hexdigest()
+                == SELECTED_SUBSET_HASHES[name],
+                f"accepted-parent selected subset commitment {name}",
+            )
+    bulk_failures, pair_failures, collective_failures = validate_bulk_controls(
         tables["bulk_expressivity.csv"], tables["tangent.csv"],
         tables["strain_energy.csv"], audit,
     )
     graph_failures, high_precision_receipts = validate_graph_controls(
-        configurations, tables["graph_energy.csv"], tables["spectra.csv"], audit
+        configurations, tables["basis_vectors.csv"], tables["graph_energy.csv"],
+        tables["spectra.csv"], audit
     )
     metamorphic_failures = validate_metamorphic(
         configurations, tables["metamorphic.csv"], audit
@@ -1692,12 +2009,23 @@ def validate_bundle(
     )
     row_counts = {
         "bulk": len(tables["bulk_expressivity.csv"]),
+        "pair": sum(
+            row["family"] == "pair_separable"
+            for row in tables["bulk_expressivity.csv"]
+        ),
+        "collective": sum(
+            row["family"] == "local_incident_collective"
+            for row in tables["bulk_expressivity.csv"]
+        ),
         "graph": len(tables["graph_energy.csv"]),
+        "basis": len(tables["basis_vectors.csv"]),
         "metamorphic": len(tables["metamorphic.csv"]),
         "checkpoint": len(tables["checkpoints.csv"]),
     }
     failure_counts = {
         "bulk": bulk_failures,
+        "pair": pair_failures,
+        "collective": collective_failures,
         "graph": graph_failures,
         "metamorphic": metamorphic_failures,
         "checkpoint": checkpoint_failures,
@@ -1714,23 +2042,17 @@ def main() -> int:
     parser.add_argument("--expected-source-branch", default=BRANCH)
     args = parser.parse_args()
     try:
+        if args.compare is not None:
+            if args.bundle.resolve() == args.compare.resolve():
+                reject("twin bundle paths must be distinct")
+            if canonical_tree(args.bundle) != canonical_tree(args.compare):
+                reject("twin bundles are not byte-for-byte identical")
         checks, summary, spectra = validate_bundle(
             args.bundle,
             allow_dirty=args.allow_dirty,
             expected_source_branch=args.expected_source_branch,
         )
         if args.compare is not None:
-            other_checks, other_summary, other_spectra = validate_bundle(
-                args.compare,
-                allow_dirty=args.allow_dirty,
-                expected_source_branch=args.expected_source_branch,
-            )
-            checks += other_checks
-            spectra += other_spectra
-            if canonical_tree(args.bundle) != canonical_tree(args.compare):
-                reject("twin bundles are not byte-for-byte identical")
-            if summary != other_summary:
-                reject("twin summaries differ")
             print("byte comparison: PASS")
         print(
             "CONSTITUTIVE EXPRESSIVITY BUNDLE VALID: "

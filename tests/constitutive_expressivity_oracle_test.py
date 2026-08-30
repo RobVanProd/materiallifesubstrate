@@ -175,6 +175,27 @@ def main() -> int:
             True,
         ),
         (
+            "rehashed-finite-pair-half-factor",
+            lambda value: value["finite_length_objectivity_and_dimension"].__setitem__(
+                "base_pair_energy", "33/100"
+            ),
+            True,
+        ),
+        (
+            "rehashed-current-only-translation",
+            lambda value: value["finite_length_objectivity_and_dimension"].__setitem__(
+                "current_only_translation_invariant_exact", False
+            ),
+            True,
+        ),
+        (
+            "rehashed-current-only-rotation",
+            lambda value: value["finite_length_objectivity_and_dimension"].__setitem__(
+                "current_only_proper_rotation_invariant_exact", False
+            ),
+            True,
+        ),
+        (
             "rehashed-dimension-law",
             lambda value: value["finite_length_objectivity_and_dimension"][
                 "scale_controls"

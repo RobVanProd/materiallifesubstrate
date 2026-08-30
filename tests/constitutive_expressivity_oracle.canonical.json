@@ -4,7 +4,9 @@
   "finite_length_objectivity_and_dimension": {
     "arithmetic": "Fraction exact finite reference/current lengths",
     "base_collective_energy_K_over_G_2": "557/6000",
-    "base_pair_energy": "33/100",
+    "base_pair_energy": "33/200",
+    "current_only_proper_rotation_invariant_exact": true,
+    "current_only_translation_invariant_exact": true,
     "packet_id_bijections_invariant_exact": true,
     "packet_permutation_invariant_exact": true,
     "proper_rotation_determinant": "1/1",
@@ -13,12 +15,12 @@
       "1/2": {
         "collective_energy": "557/24000",
         "energy_ratio": "1/4",
-        "pair_energy": "33/400"
+        "pair_energy": "33/800"
       },
       "2/1": {
         "collective_energy": "557/1500",
         "energy_ratio": "4/1",
-        "pair_energy": "33/25"
+        "pair_energy": "33/50"
       }
     },
     "similarity_dimension_law": "E(sX,sx)=s^2 E(X,x)",
@@ -859,7 +861,7 @@
   },
   "persistent_kinematic_state_added": false,
   "result_boundary": "NO PROMOTION to mechanics or dynamics",
-  "result_sha256_before_hash_field": "463fd3f58c5ab5693207ed1a127300434bd76f6d03074f7217fd50e5511ad3d2",
+  "result_sha256_before_hash_field": "010d1452010d534445e63b2acfb83374a92b1958e6a62afbf240a8f3121e36bf",
   "schema": "mls.constitutive-expressivity.exact-oracle.v1",
   "scope": "energy-only exact oracle; no force, stress, or dynamics",
   "seed": 260828,

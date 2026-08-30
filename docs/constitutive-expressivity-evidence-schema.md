@@ -79,7 +79,12 @@ entries count, so pair-separable relations report their bond length rather
 than zero. Relation-space adjacency is reported separately by the `H`
 sparsity and graph-hop fields.
 
-Twin full bundles must be byte-identical. Mutation regression must reject at
+Twin full bundles are closed-tree-compared before numerical validation. Once
+byte identity is established, the independent numerical audit runs once over
+the single integrity-checked canonical content tree; repeating identical
+high-precision work cannot add content coverage. Mutation regression proves a
+twin mismatch is rejected before an otherwise-invalid primary bundle reaches
+semantic validation. Mutation regression must also reject at
 least altered energy/tangent, locality, target ratio, ID mapping, kernel/rank,
 basis/residual data, selected-parent commitment, checkpoint bytes, source
 provenance, twin payload, manifest, and final decision.

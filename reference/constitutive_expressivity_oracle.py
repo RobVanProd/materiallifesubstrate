@@ -459,7 +459,9 @@ def finite_pair_energy(
     reference: dict[int, QVec3], current: dict[int, QVec3], edges: Sequence[Edge]
 ) -> Q:
     states = finite_extensions(reference, current, edges)
-    return qsum(extension_value**2 for _length, extension_value in states.values())
+    return qsum(
+        extension_value**2 for _length, extension_value in states.values()
+    ) / 2
 
 
 def finite_collective_energy(
@@ -541,6 +543,8 @@ def finite_objectivity_control() -> dict:
         raise AssertionError("finite control rotation is not proper")
     base_pair = finite_pair_energy(reference, current, edges)
     base_collective = finite_collective_energy(reference, current, edges, Q(2))
+    if base_pair != Q(33, 200):
+        raise AssertionError("finite pair-energy half factor control failed")
     rotated_reference = transform_points(reference, rotation, translation)
     rotated_current = transform_points(current, rotation, translation)
     if finite_pair_energy(rotated_reference, rotated_current, edges) != base_pair:
@@ -548,14 +552,35 @@ def finite_objectivity_control() -> dict:
     if finite_collective_energy(rotated_reference, rotated_current, edges, Q(2)) != base_collective:
         raise AssertionError("collective finite objectivity failed")
 
+    identity = [
+        [Q(1) if row == column else Q(0) for column in range(3)]
+        for row in range(3)
+    ]
+    current_only_translated = transform_points(current, identity, translation)
+    if finite_pair_energy(reference, current_only_translated, edges) != base_pair:
+        raise AssertionError("pair current-only translation objectivity failed")
+    if finite_collective_energy(
+        reference, current_only_translated, edges, Q(2)
+    ) != base_collective:
+        raise AssertionError("collective current-only translation objectivity failed")
+    current_only_rotated = transform_points(
+        current, rotation, (Q(0), Q(0), Q(0))
+    )
+    if finite_pair_energy(reference, current_only_rotated, edges) != base_pair:
+        raise AssertionError("pair current-only rotation objectivity failed")
+    if finite_collective_energy(
+        reference, current_only_rotated, edges, Q(2)
+    ) != base_collective:
+        raise AssertionError("collective current-only rotation objectivity failed")
+
     translated_reference = transform_points(
         reference,
-        [[Q(1) if row == column else Q(0) for column in range(3)] for row in range(3)],
+        identity,
         translation,
     )
     translated_current = transform_points(
         current,
-        [[Q(1) if row == column else Q(0) for column in range(3)] for row in range(3)],
+        identity,
         translation,
     )
     if finite_pair_energy(translated_reference, translated_current, edges) != base_pair:
@@ -620,6 +645,8 @@ def finite_objectivity_control() -> dict:
         "base_pair_energy": qtext(base_pair),
         "base_collective_energy_K_over_G_2": qtext(base_collective),
         "translation_proper_rotation_invariant_exact": True,
+        "current_only_translation_invariant_exact": True,
+        "current_only_proper_rotation_invariant_exact": True,
         "packet_permutation_invariant_exact": True,
         "relation_permutations_and_orientations_invariant_exact": True,
         "packet_id_bijections_invariant_exact": True,
