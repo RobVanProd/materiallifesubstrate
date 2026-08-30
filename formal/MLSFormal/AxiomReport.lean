@@ -13,6 +13,7 @@ import MLSFormal.MechanicalObservability
 import MLSFormal.KelvinCovariance
 import MLSFormal.RelationalObservability
 import MLSFormal.ConstitutiveExpressivity
+import MLSFormal.ConservativeForceConsistency
 
 /-!
 Complete kernel axiom report for every theorem exported by the MLSFormal
@@ -135,3 +136,17 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.observableRelationalStiffness_has_only_rigid_kernel
 #print axioms MLSFormal.relationalQuadraticEnergy_objective_of_extension_eq
 #print axioms MLSFormal.relationalQuadraticEnergy_extension_scale
+#print axioms MLSFormal.relationConjugate_eq_constitutive_mul_extension
+#print axioms MLSFormal.linearizedRelationalForce_eq_negative_transpose_constitutive_extension
+#print axioms MLSFormal.linearizedRelationalForce_of_displacement_eq_negative_stiffness
+#print axioms MLSFormal.linearizedRelationalForce_zero_extension
+#print axioms MLSFormal.packetForceFromRelationConjugate_power_identity
+#print axioms MLSFormal.linearizedRelationalForce_power_identity
+#print axioms MLSFormal.rigidVirtualMotion_zero_internal_work
+#print axioms MLSFormal.linearizedForceMaterialTangent_symmetric
+#print axioms MLSFormal.linearizedForceQuadratic_positive_on_observable_extension
+#print axioms MLSFormal.linearizedForceMaterialTangent_kernel_eq_relationKernel
+#print axioms MLSFormal.centralRelationTailForce_parallel_offset
+#print axioms MLSFormal.centralRelationForces_equal_opposite
+#print axioms MLSFormal.finiteCentralRelationForces_total_force_zero
+#print axioms MLSFormal.finiteCentralRelationForces_total_torque_zero

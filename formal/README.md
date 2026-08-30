@@ -100,6 +100,13 @@ Lean kernel build is authoritative for theorem acceptance.
   not assume that target equality, add packet state, apply forces, or evolve
   time. Exact extension-coordinate objectivity and quadratic scaling contracts
   are stated separately.
+- `ConservativeForceConsistency.lean`: the finite linearized conjugate-force
+  algebra `g = H e`, `f = -Rᵀ g`, its exact virtual-power identity, inherited
+  symmetry/positivity and kernel contracts, and an explicit finite collection
+  of equal-and-opposite central relation forces. It proves zero resultant force
+  and zero torque about every origin directly from the relation offsets. It
+  performs no square-root differentiation, force installation, or time
+  integration.
 - `AxiomReport.lean`: committed `#print axioms` coverage for every theorem
   exported by all project modules; CI checks declarations against this list.
 
