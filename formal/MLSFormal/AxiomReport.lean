@@ -11,6 +11,7 @@ import MLSFormal.ConsistentProjection
 import MLSFormal.ProjectionNullspace
 import MLSFormal.MechanicalObservability
 import MLSFormal.KelvinCovariance
+import MLSFormal.RelationalObservability
 
 /-!
 Complete kernel axiom report for every theorem exported by the MLSFormal
@@ -103,3 +104,24 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.kelvinRowsNormalizedBeforeMixing_unit_rows
 #print axioms MLSFormal.kelvinRowsNormalizedAfterMixing_unit_rows
 #print axioms MLSFormal.scalarRowNormalization_destroys_raw_spectrum_covariance
+#print axioms MLSFormal.relabelVertexField_apply_rename
+#print axioms MLSFormal.relationOffset_vertex_relabel
+#print axioms MLSFormal.relationMotion_vertex_relabel
+#print axioms MLSFormal.relationSquaredLength_vertex_relabel
+#print axioms MLSFormal.centralRigidityRate_vertex_relabel
+#print axioms MLSFormal.centralRigidityOperator_vertex_relabel
+#print axioms MLSFormal.centralRigidityMatrix_vertex_relabel
+#print axioms MLSFormal.centralRigidity_kernel_vertex_relabel_iff
+#print axioms MLSFormal.relabelVertexField_mem_rigidMotionSubspace_iff
+#print axioms MLSFormal.mechanicallyObservable_vertex_relabel_iff
+#print axioms MLSFormal.centralOrthogonal3_preserves_dot3
+#print axioms MLSFormal.relationOffset_similarity
+#print axioms MLSFormal.relationMotion_rotation
+#print axioms MLSFormal.relationSquaredLength_similarity
+#print axioms MLSFormal.centralRigidityRate_similarity
+#print axioms MLSFormal.centralRigidityOperator_similarity
+#print axioms MLSFormal.centralRigidity_kernel_similarity_iff
+#print axioms MLSFormal.relationSquaredLength_rigid_objective
+#print axioms MLSFormal.centralRigidityOperator_rigid_objective
+#print axioms MLSFormal.relabeledRationalTetraK4_mechanicallyObservable
+#print axioms MLSFormal.relabeledRationalTetraMissingRelation_not_mechanicallyObservable
