@@ -131,8 +131,8 @@ attributed to the papers. With positive coefficients the two terms are an
 orthogonal decomposition of incident extension coordinates; strict global
 positivity and kernel preservation remain formal/numerical MLS obligations.
 
-For the preregistered isotropic seven-direction quadrature, the exact moments
-give
+For the first preregistered isotropic seven-direction quadrature, the exact
+moments give
 
 ```
 m=60,
@@ -144,6 +144,12 @@ Thus `A=3K/20`, `B=G/4` gives
 `E=(K/2)(tr epsilon)^2+G epsilon_dev:epsilon_dev`. This is a finite algebraic
 control, not a claim that arbitrary free-surface or deleted graphs reproduce
 continuum isotropy.
+
+The second preregistered axis/face-diagonal quadrature has independently
+different exact moments `m=15`, `q=5 tr(epsilon)`, and
+`sum w(e^d)^2=2 epsilon_dev:epsilon_dev`; its registered map is
+`A=3K/5`, `B=G`. Agreement of both cubatures is a finite-control gate, not a
+continuum-convergence claim.
 
 ## Explicit limitations
 

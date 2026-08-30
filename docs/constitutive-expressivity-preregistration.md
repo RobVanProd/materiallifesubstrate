@@ -35,9 +35,9 @@ Candidate D is absent.
 
 `E_pair=(1/2) sum_a h_a e_a^2`, with positive diagonal weights only.
 
-The Cauchy control uses seven unoriented unit directions: the three coordinate
-axes with weight `8`, and four body-diagonal lines with weight `9`. Their
-second moment is `20 I` and fourth moment is
+The first Cauchy control uses seven unoriented unit directions: the three
+coordinate axes with weight `8`, and four body-diagonal lines with weight `9`.
+Their second moment is `20 I` and fourth moment is
 
 ```
 sum_a w_a n_ai n_aj n_ak n_al
@@ -49,6 +49,15 @@ For homogeneous symmetric strain, the diagonal pair energy therefore has
 moment identities and ratio are verified independently before interpreting
 the negative control. If this control escapes `K/G=5/3`, the run stops as an
 implementation/control failure.
+
+A second algebraically distinct symmetric bulk quadrature control uses the
+three coordinate-axis lines with weight `1` and the six face-diagonal lines
+`(1,+/-1,0)/sqrt(2)`, `(1,0,+/-1)/sqrt(2)`, and
+`(0,1,+/-1)/sqrt(2)` with weight `2`. Its second moment is `5 I`, its fourth
+moment has isotropic coefficient `1`, and its total weighted moment is `15`.
+It must independently produce the same pair Cauchy ratio. A common proper
+rotation is also applied to both controls as an objectivity/covariance probe;
+the rotation is not counted as a third independent cubature.
 
 ### Local collective candidate
 
@@ -76,6 +85,19 @@ B=G/4.
 It yields `E=(K/2)(tr epsilon)^2+G epsilon_dev:epsilon_dev`.
 The four exact rational targets are `K/G in {1/3,1,2,10}`. No coefficient is
 fit after results are inspected.
+
+On the nine-direction axis/face-diagonal control,
+
+```
+m=15,
+q=5 tr(epsilon),
+sum w(e^d)^2=2 epsilon_dev:epsilon_dev,
+A=3K/5,
+B=G.
+```
+
+It must realize the same four target ratios independently. A failure on
+either symmetric bulk control fails the local collective expressivity gate.
 
 A global dense positive `H` may be evaluated as an upper-bound diagnostic,
 but it is never selectable and cannot satisfy the final decision by itself.
