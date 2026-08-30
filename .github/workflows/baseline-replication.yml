@@ -12,6 +12,7 @@ on:
       - projection-exactness-nullspace-lab
       - mechanical-observability-lab
       - kelvin-covariance-audit
+      - relational-observability-confirmation
   pull_request:
   workflow_dispatch:
 
