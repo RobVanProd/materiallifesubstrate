@@ -78,8 +78,8 @@ theorem relationalStiffness_quadratic_identity
         relationalStiffness relationOperator constitutiveOperator *ᵥ displacement =
       relationExtension relationOperator displacement ⬝ᵥ
         constitutiveOperator *ᵥ relationExtension relationOperator displacement := by
-  rw [relationalStiffness, Matrix.mulVec_mulVec, Matrix.mulVec_mulVec,
-    Matrix.dotProduct_transpose_mulVec]
+  rw [relationalStiffness, Matrix.mul_assoc, Matrix.mulVec_mulVec,
+    Matrix.mulVec_mulVec, Matrix.dotProduct_transpose_mulVec]
   rfl
 
 /-- The packet-coordinate and relation-coordinate energy formulas agree. -/
@@ -102,9 +102,9 @@ theorem relationalStiffness_symmetric
     (symmetric : SymmetricConstitutiveOperator constitutiveOperator) :
     (relationalStiffness relationOperator constitutiveOperator).transpose =
       relationalStiffness relationOperator constitutiveOperator := by
+  unfold SymmetricConstitutiveOperator at symmetric
   simp only [relationalStiffness, Matrix.transpose_mul,
-    Matrix.transpose_transpose, symmetric]
-  rw [Matrix.mul_assoc]
+    Matrix.transpose_transpose, symmetric, Matrix.mul_assoc]
 
 /-- Every displacement hidden by `R` is also hidden by `K = Rᵀ H R`. -/
 theorem relationKernel_le_relationalStiffnessKernel
@@ -114,8 +114,8 @@ theorem relationKernel_le_relationalStiffnessKernel
     (displacement : Degree → ℚ)
     (inRelationKernel : relationOperator *ᵥ displacement = 0) :
     relationalStiffness relationOperator constitutiveOperator *ᵥ displacement = 0 := by
-  rw [relationalStiffness, Matrix.mulVec_mulVec, Matrix.mulVec_mulVec,
-    inRelationKernel]
+  rw [relationalStiffness, Matrix.mul_assoc, Matrix.mulVec_mulVec,
+    Matrix.mulVec_mulVec, inRelationKernel]
   simp
 
 /--
@@ -216,7 +216,7 @@ theorem relationalQuadraticEnergy_extension_scale
       scale ^ 2 *
         relationalQuadraticEnergy leftOperator constitutiveOperator leftDisplacement := by
   rw [relationalQuadraticEnergy, scaledExtensions, relationalQuadraticEnergy]
-  rw [Matrix.mulVec_smul, Matrix.smul_dotProduct, Matrix.dotProduct_smul]
+  rw [Matrix.mulVec_smul, smul_dotProduct, dotProduct_smul]
   simp only [smul_eq_mul]
   ring
 
