@@ -189,6 +189,8 @@ jobs:
           python -m py_compile \
             reference/validate_relational_observability_bundle.py \
             tests/relational_observability_bundle_validator_test.py \
+            tools/relational_observability_tool_versions.py \
+            tools/run_relational_evidence_command.py \
             tools/seal_relational_observability_evidence.py \
             2>&1 | tee ci-artifacts/relational-observability-validator-compile.txt
           python tests/relational_observability_seal_test.py \

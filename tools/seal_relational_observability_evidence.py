@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 
 SCHEMA = "mls-relational-observability-outer-seal-v1"
@@ -111,6 +113,21 @@ REQUIRED_LOGS = {
     "validator-regression.log",
     "validator.log",
 }
+COMMAND_RECEIPT_SCHEMA = "mls-relational-observability-command-receipt-v1"
+COMMAND_RECEIPT_FIELDS = {
+    "schema",
+    "label",
+    "source_sha",
+    "branch",
+    "cwd",
+    "command",
+    "started_at_utc",
+    "ended_at_utc",
+    "exit_code",
+    "output_bytes",
+    "output_sha256",
+    "output",
+}
 REQUIRED_SOURCE_FILES = {
     ".github/workflows/baseline-replication.yml",
     "CMakeLists.txt",
@@ -125,6 +142,7 @@ REQUIRED_SOURCE_FILES = {
     "reference/validate_relational_observability_bundle.py",
     "tests/relational_observability_confirmation_tests.cpp",
     "tests/relational_observability_bundle_validator_test.py",
+    "tests/compare_evidence_directories.py",
     "tests/relational_observability_seal_test.py",
     "tests/mechanical_observability_tests.cpp",
     "tests/fixtures/relational_observability_smoke/configurations.csv",
@@ -141,6 +159,8 @@ REQUIRED_SOURCE_FILES = {
     "docs/relational-observability-failed-evidence-2026-08-29.md",
     "docs/relational-observability-source-audit.md",
     "tools/formal_trust_scan.py",
+    "tools/relational_observability_tool_versions.py",
+    "tools/run_relational_evidence_command.py",
     "tools/seal_relational_observability_evidence.py",
 }
 
@@ -217,6 +237,7 @@ def ls_remote(repository_url: str, *patterns: str) -> dict[str, str]:
 def validate_publication(
     repository_url: str, tag: str, source_sha: str,
     repo: pathlib.Path | None = None,
+    *, require_branch: bool = True,
 ) -> None:
     slug = github_slug(repository_url)
     if re.fullmatch(r"[A-Za-z0-9._-]+", tag) is None:
@@ -225,13 +246,11 @@ def validate_publication(
         origin = git_stdout(repo, "remote", "get-url", "origin")
         if normalized_github_url(origin) != normalized_github_url(repository_url):
             raise SealError("repository URL does not match Git origin")
-    refs = ls_remote(
-        repository_url,
-        f"refs/heads/{BRANCH}",
-        f"refs/tags/{tag}",
-        f"refs/tags/{tag}^{{}}",
-    )
-    if refs.get(f"refs/heads/{BRANCH}") != source_sha:
+    patterns = [f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}"]
+    if require_branch:
+        patterns.insert(0, f"refs/heads/{BRANCH}")
+    refs = ls_remote(repository_url, *patterns)
+    if require_branch and refs.get(f"refs/heads/{BRANCH}") != source_sha:
         raise SealError("public branch does not point to source SHA")
     tag_sha = refs.get(f"refs/tags/{tag}^{{}}", refs.get(f"refs/tags/{tag}"))
     if tag_sha != source_sha:
@@ -254,10 +273,10 @@ def validate_publication(
         raise SealError("repository is private or URL metadata differs")
 
 
-def fetch_ci_run(repository_url: str, run_id: str) -> dict:
+def fetch_ci_run(repository_url: str, run_id: str, attempt: int) -> dict:
     completed = subprocess.run(
         [
-            "gh", "run", "view", str(run_id),
+            "gh", "run", "view", str(run_id), "--attempt", str(attempt),
             "--repo", github_slug(repository_url),
             "--json", ",".join(sorted(CI_JSON_FIELDS)),
         ],
@@ -493,8 +512,23 @@ def write_manifest(root: pathlib.Path, provenance: dict) -> dict:
 
 
 def read_json(path: pathlib.Path) -> dict:
+    def unique_object(pairs: list[tuple[str, object]]) -> dict:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise SealError(f"duplicate JSON key in {path}: {key}")
+            result[key] = value
+        return result
+
+    def reject_constant(value: str) -> object:
+        raise SealError(f"non-finite JSON value in {path}: {value}")
+
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=unique_object,
+            parse_constant=reject_constant,
+        )
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise SealError(f"cannot read {path}: {error}") from error
     if not isinstance(value, dict):
@@ -539,34 +573,165 @@ def run_validator(
         )
 
 
+def portable_basename(value: str) -> str:
+    return value.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+
+
+def portable_absolute(value: str) -> bool:
+    normalized = value.replace("\\", "/")
+    return (
+        normalized.startswith("/")
+        or normalized.startswith("//")
+        or re.match(r"^[A-Za-z]:/", normalized) is not None
+    )
+
+
+def command_basename(command: list[str]) -> str:
+    return portable_basename(command[0]).lower()
+
+
+def require_argument(command: list[str], argument: str) -> None:
+    if argument not in command[1:]:
+        raise SealError(f"evidence command is missing required argument: {argument}")
+
+
+def require_script(command: list[str], script_name: str) -> None:
+    if command_basename(command) not in {"python", "python.exe", "python3", "python3.exe"}:
+        raise SealError(f"{script_name} receipt did not use Python")
+    if len(command) < 2 or portable_basename(command[1]) != script_name:
+        raise SealError(f"evidence receipt did not run {script_name}")
+
+
+def read_command_receipt(
+    path: pathlib.Path, label: str, source_sha: str
+) -> tuple[list[str], str]:
+    receipt = read_json(path)
+    if set(receipt) != COMMAND_RECEIPT_FIELDS:
+        raise SealError(f"command receipt field inventory mismatch: {path.name}")
+    if (
+        receipt.get("schema") != COMMAND_RECEIPT_SCHEMA
+        or receipt.get("label") != label
+        or receipt.get("source_sha") != source_sha
+        or receipt.get("branch") != BRANCH
+        or type(receipt.get("exit_code")) is not int
+        or receipt.get("exit_code") != 0
+        or type(receipt.get("output_bytes")) is not int
+    ):
+        raise SealError(f"command receipt identity/exit failure: {path.name}")
+    command = receipt.get("command")
+    output = receipt.get("output")
+    cwd = receipt.get("cwd")
+    if (
+        not isinstance(command, list)
+        or not command
+        or any(not isinstance(value, str) or not value for value in command)
+        or not isinstance(output, str)
+        or "\0" in output
+        or not isinstance(cwd, str)
+        or not portable_absolute(cwd)
+    ):
+        raise SealError(f"malformed command receipt payload: {path.name}")
+    if receipt.get("output_sha256") != hashlib.sha256(
+        output.encode("utf-8")
+    ).hexdigest() or receipt.get("output_bytes") != len(output.encode("utf-8")):
+        raise SealError(f"command output hash mismatch: {path.name}")
+    started_raw = receipt.get("started_at_utc")
+    ended_raw = receipt.get("ended_at_utc")
+    timestamp_pattern = r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z"
+    if (
+        not isinstance(started_raw, str)
+        or not isinstance(ended_raw, str)
+        or re.fullmatch(timestamp_pattern, started_raw) is None
+        or re.fullmatch(timestamp_pattern, ended_raw) is None
+    ):
+        raise SealError(f"receipt timestamps are not RFC 3339 UTC: {path.name}")
+    try:
+        started = datetime.fromisoformat(
+            started_raw.replace("Z", "+00:00")
+        )
+        ended = datetime.fromisoformat(
+            ended_raw.replace("Z", "+00:00")
+        )
+    except ValueError as error:
+        raise SealError(f"invalid receipt timestamp: {path.name}") from error
+    if started.tzinfo is None or ended.tzinfo is None or ended < started:
+        raise SealError(f"invalid receipt time interval: {path.name}")
+    return command, output
+
+
+def require_full_ctest_command(command: list[str]) -> None:
+    if command_basename(command) not in {"ctest", "ctest.exe"}:
+        raise SealError("CTest receipt did not run CTest")
+    arguments = command[1:]
+    seen: set[str] = set()
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--output-on-failure":
+            if argument in seen:
+                raise SealError("CTest receipt repeats --output-on-failure")
+            seen.add(argument)
+            index += 1
+            continue
+        if argument in {"--test-dir", "--parallel"}:
+            if argument in seen or index + 1 >= len(arguments):
+                raise SealError(f"CTest receipt has malformed {argument}")
+            value = arguments[index + 1]
+            if not value or value.startswith("-"):
+                raise SealError(f"CTest receipt has invalid {argument} value")
+            if argument == "--parallel" and (
+                re.fullmatch(r"[1-9][0-9]*", value) is None
+            ):
+                raise SealError("CTest parallelism is not a positive integer")
+            seen.add(argument)
+            index += 2
+            continue
+        raise SealError(f"CTest receipt contains a selection/unknown option: {argument}")
+    if seen != {"--test-dir", "--output-on-failure"} and seen != {
+        "--test-dir", "--output-on-failure", "--parallel"
+    }:
+        raise SealError("CTest receipt command is incomplete")
+
+
 def require_log_evidence(
     logs: pathlib.Path, source_sha: str, verdict: str
 ) -> None:
     observed = {path.name for path in logs.iterdir() if path.is_file()}
     if observed != REQUIRED_LOGS:
         raise SealError(f"log inventory mismatch: {sorted(observed ^ REQUIRED_LOGS)}")
-    texts = {
-        filename: (logs / filename).read_text(encoding="utf-8", errors="strict")
-        for filename in REQUIRED_LOGS
-        if filename != "ci-run.json"
-    }
-    if any(not value or "\0" in value for value in texts.values()):
-        raise SealError("execution log is empty or contains NUL")
+    receipts: dict[str, tuple[list[str], str]] = {}
+    for filename in sorted(REQUIRED_LOGS - {"ci-run.json"}):
+        label = pathlib.Path(filename).stem
+        receipts[filename] = read_command_receipt(
+            logs / filename, label, source_sha
+        )
 
-    configure = texts["configure.log"]
+    configure_command, configure = receipts["configure.log"]
+    if command_basename(configure_command) not in {"cmake", "cmake.exe"}:
+        raise SealError("configure receipt did not run CMake")
+    for argument in (
+        "-S", "-B", "-DMLS_WARNINGS_AS_ERRORS=ON",
+        "-DMLS_RUN_EXTENDED_EXACT_TESTS=ON",
+    ):
+        require_argument(configure_command, argument)
     if not all(
         marker in configure
         for marker in ("Configuring done", "Generating done", "Build files have been written")
     ) or "CMake Error" in configure:
         raise SealError("configure log does not show a clean completion")
 
-    build = texts["build.log"]
+    build_command, build = receipts["build.log"]
+    if command_basename(build_command) not in {"cmake", "cmake.exe"}:
+        raise SealError("build receipt did not run CMake")
+    require_argument(build_command, "--build")
+    require_argument(build_command, "--parallel")
     if "mls_relational_observability_diagnostic" not in build or re.search(
         r"(?im)^(?:FAILED:|ninja: (?:error|build stopped)|.*\berror:)", build
     ):
         raise SealError("build log does not show a clean diagnostic build")
 
-    ctest = texts["ctest.log"]
+    ctest_command, ctest = receipts["ctest.log"]
+    require_full_ctest_command(ctest_command)
     if re.search(
         r"100% tests passed, 0 tests failed out of [1-9][0-9]*", ctest
     ) is None or any(
@@ -575,9 +740,30 @@ def require_log_evidence(
     ):
         raise SealError("CTest log does not show a complete zero-failure run")
 
-    producer_a = texts["producer-a.log"]
-    producer_b = texts["producer-b.log"]
-    for label, producer in (("full-a", producer_a), ("full-b", producer_b)):
+    producer_a_command, producer_a = receipts["producer-a.log"]
+    producer_b_command, producer_b = receipts["producer-b.log"]
+    if producer_a_command[0] != producer_b_command[0]:
+        raise SealError("twin producers did not use the same diagnostic executable")
+    normalized_producers: list[list[str]] = []
+    for label, command, producer in (
+        ("full-a", producer_a_command, producer_a),
+        ("full-b", producer_b_command, producer_b),
+    ):
+        if command_basename(command) not in {
+            "mls_relational_observability_diagnostic",
+            "mls_relational_observability_diagnostic.exe",
+        }:
+            raise SealError(f"producer receipt did not run the Candidate-C diagnostic: {label}")
+        require_argument(command, "--fixture-bundle")
+        require_argument(command, "--output")
+        if "--smoke" in command:
+            raise SealError("full producer receipt used smoke mode")
+        output_index = command.index("--output") + 1
+        if output_index >= len(command) or portable_basename(command[output_index]) != label:
+            raise SealError(f"producer receipt output path is not {label}")
+        normalized = list(command)
+        normalized[output_index] = "<twin-output>"
+        normalized_producers.append(normalized)
         if not all(
             marker in producer
             for marker in (
@@ -590,12 +776,24 @@ def require_log_evidence(
             raise SealError(f"producer log is not a successful distinct {label} run")
     if producer_a == producer_b:
         raise SealError("twin producer logs are identical")
+    if normalized_producers[0] != normalized_producers[1]:
+        raise SealError("twin producer commands differ beyond output destination")
 
-    twin = texts["twin-compare.log"]
+    twin_command, twin = receipts["twin-compare.log"]
+    require_script(twin_command, "compare_evidence_directories.py")
+    for argument in ("--first", "--second"):
+        require_argument(twin_command, argument)
+    if not any(portable_basename(arg) == "full-a" for arg in twin_command):
+        raise SealError("twin comparison omitted full-a")
+    if not any(portable_basename(arg) == "full-b" for arg in twin_command):
+        raise SealError("twin comparison omitted full-b")
     if "byte comparison: PASS" not in twin or "FAIL" in twin:
-        raise SealError("twin comparison did not pass")
+        raise SealError("byte-identical twin comparison did not pass")
 
-    validator = texts["validator.log"]
+    validator_command, validator = receipts["validator.log"]
+    require_script(validator_command, "validate_relational_observability_bundle.py")
+    require_argument(validator_command, "--bundle")
+    require_argument(validator_command, "--compare")
     if not all(
         marker in validator
         for marker in (
@@ -606,19 +804,28 @@ def require_log_evidence(
     ) or "INVALID" in validator:
         raise SealError("independent validator log is not a valid twin result")
 
-    regression = texts["validator-regression.log"]
+    regression_command, regression = receipts["validator-regression.log"]
+    require_script(
+        regression_command, "relational_observability_bundle_validator_test.py"
+    )
+    require_argument(regression_command, "--validator")
+    require_argument(regression_command, "--bundle")
     if (
         "PASS (18 mutations; direct raw-matrix SVD regression)" not in regression
         or "FAIL" in regression
     ):
         raise SealError("validator mutation regression is incomplete")
 
-    lean_build = texts["lean-build.log"]
+    lean_build_command, lean_build = receipts["lean-build.log"]
+    if command_basename(lean_build_command) not in {"lake", "lake.exe"} or lean_build_command[1:] != ["--wfail", "build"]:
+        raise SealError("Lean build receipt command mismatch")
     if "Build completed successfully" not in lean_build or re.search(
         r"(?im)^(?:error:|.*declaration uses 'sorry')", lean_build
     ):
         raise SealError("Lean build log does not show kernel success")
-    lean_axioms = texts["lean-axioms.log"]
+    lean_axioms_command, lean_axioms = receipts["lean-axioms.log"]
+    if command_basename(lean_axioms_command) not in {"lake", "lake.exe"} or lean_axioms_command[1:] != ["env", "lean", "MLSFormal/AxiomReport.lean"]:
+        raise SealError("Lean axiom receipt command mismatch")
     if not all(
         theorem in lean_axioms
         for theorem in (
@@ -628,7 +835,9 @@ def require_log_evidence(
         )
     ) or "sorryAx" in lean_axioms:
         raise SealError("Lean theorem/axiom report is incomplete or untrusted")
-    formal_trust = texts["formal-trust.log"]
+    formal_trust_command, formal_trust = receipts["formal-trust.log"]
+    require_script(formal_trust_command, "formal_trust_scan.py")
+    require_argument(formal_trust_command, "--formal-root")
     if (
         "PASS: no sorry, admit, sorryAx, project-defined axiom declaration, or unreported theorem"
         not in formal_trust
@@ -636,15 +845,26 @@ def require_log_evidence(
     ):
         raise SealError("formal source trust scan did not pass")
 
-    versions = texts["compiler-versions.txt"]
+    versions_command, versions = receipts["compiler-versions.txt"]
+    require_script(versions_command, "relational_observability_tool_versions.py")
+    for argument in ("--repo", "--cxx", "--lake"):
+        require_argument(versions_command, argument)
     if not all(
         marker in versions
         for marker in (
             f"source_sha={source_sha}",
             f"source_branch={BRANCH}",
+            "cxx_command=",
+            "cxx_version_begin",
+            "cxx_version_end",
+            "cmake_version_begin",
             "cmake version",
+            "python_version_begin",
             "Python ",
+            "lean_version_begin",
             "Lean ",
+            "lake_version_begin",
+            "Lake version",
         )
     ) or re.search(
         r"(?m)^source_status_begin\r?\nsource_status_end$", versions
@@ -717,6 +937,27 @@ def validate_ci(
 ) -> None:
     if set(ci) != CI_JSON_FIELDS:
         raise SealError("CI metadata field inventory mismatch")
+    scalar_types = {
+        "attempt": int,
+        "conclusion": str,
+        "createdAt": str,
+        "databaseId": int,
+        "displayTitle": str,
+        "event": str,
+        "headBranch": str,
+        "headSha": str,
+        "name": str,
+        "number": int,
+        "startedAt": str,
+        "status": str,
+        "updatedAt": str,
+        "url": str,
+        "workflowDatabaseId": int,
+        "workflowName": str,
+    }
+    for field, expected_type in scalar_types.items():
+        if type(ci.get(field)) is not expected_type:
+            raise SealError(f"CI metadata field has the wrong JSON type: {field}")
     if (
         ci.get("headSha") != source_sha
         or ci.get("headBranch") != BRANCH
@@ -725,7 +966,6 @@ def validate_ci(
         or ci.get("workflowName") != WORKFLOW_NAME
         or ci.get("event") not in {"push", "workflow_dispatch"}
         or str(ci.get("databaseId")) != str(run_id)
-        or not isinstance(ci.get("attempt"), int)
         or ci["attempt"] < 1
     ):
         raise SealError("CI evidence does not certify the registered branch and SHA")
@@ -745,8 +985,10 @@ def validate_ci(
     if not REQUIRED_CI_JOBS.issubset(job_names):
         raise SealError("required compiler/Python/Lean CI matrix is incomplete")
     if repository_url is not None:
-        remote = fetch_ci_run(repository_url, run_id)
-        if ci != remote:
+        remote = fetch_ci_run(repository_url, run_id, ci["attempt"])
+        if json.dumps(ci, sort_keys=True, separators=(",", ":")) != json.dumps(
+            remote, sort_keys=True, separators=(",", ":")
+        ):
             raise SealError("stored CI metadata differs from GitHub Actions API")
 
 
@@ -760,15 +1002,46 @@ def validate_twin_paths(first: pathlib.Path, second: pathlib.Path) -> None:
         raise SealError("cannot establish twin evidence path independence") from error
 
 
+def paths_overlap(first: pathlib.Path, second: pathlib.Path) -> bool:
+    if first == second or first.is_relative_to(second) or second.is_relative_to(first):
+        return True
+    try:
+        return first.exists() and second.exists() and os.path.samefile(first, second)
+    except OSError as error:
+        raise SealError("cannot establish evidence path isolation") from error
+
+
 def create(args: argparse.Namespace) -> dict:
-    seal_dir = args.seal_dir.resolve()
-    if seal_dir.exists() and (not seal_dir.is_dir() or any(seal_dir.iterdir())):
-        raise SealError("seal directory must be absent or empty")
-    seal_dir.mkdir(parents=True, exist_ok=True)
+    target_seal_dir = args.seal_dir.resolve()
+    if target_seal_dir.exists():
+        raise SealError("seal directory must be absent")
+    if not target_seal_dir.parent.is_dir():
+        raise SealError("seal parent directory must already exist")
     repo = args.repo.resolve()
     bundle_a = args.bundle_a.resolve()
     bundle_b = args.bundle_b.resolve()
+    logs = args.logs.resolve()
     validate_twin_paths(bundle_a, bundle_b)
+    roots = {
+        "repo": repo,
+        "bundle-a": bundle_a,
+        "bundle-b": bundle_b,
+        "logs": logs,
+        "seal": target_seal_dir,
+    }
+    root_items = list(roots.items())
+    for index, (first_name, first) in enumerate(root_items):
+        for second_name, second in root_items[index + 1:]:
+            if paths_overlap(first, second):
+                raise SealError(
+                    f"evidence roots overlap: {first_name} and {second_name}"
+                )
+    seal_dir = pathlib.Path(
+        tempfile.mkdtemp(
+            prefix=f".{target_seal_dir.name}.staging-",
+            dir=target_seal_dir.parent,
+        )
+    )
     source_git_tree = validate_repo_source(repo, args.source_sha)
     validate_publication(
         args.repository_url, args.tag, args.source_sha, repo=repo
@@ -787,15 +1060,15 @@ def create(args: argparse.Namespace) -> dict:
         raise SealError("twin summaries differ")
     verdict = validate_summary(first_summary, args.source_sha)
 
-    ci = read_json(args.logs / "ci-run.json")
+    ci = read_json(logs / "ci-run.json")
     validate_ci(
         ci, args.source_sha, str(args.ci_run_id), args.repository_url
     )
-    require_log_evidence(args.logs, args.source_sha, verdict)
+    require_log_evidence(logs, args.source_sha, verdict)
 
     copy_tree_exact(bundle_a, seal_dir / "bundles" / "full-a")
     copy_tree_exact(bundle_b, seal_dir / "bundles" / "full-b")
-    copy_tree_exact(args.logs.resolve(), seal_dir / "logs")
+    copy_tree_exact(logs, seal_dir / "logs")
     copy_source_snapshot(repo, seal_dir / "source", source_git_tree)
     (seal_dir / "source-commit.bin").write_bytes(source_commit)
     provenance = {
@@ -812,13 +1085,43 @@ def create(args: argparse.Namespace) -> dict:
     (seal_dir / "provenance.json").write_text(
         json.dumps(provenance, sort_keys=True, indent=2) + "\n", encoding="utf-8"
     )
-    return write_manifest(seal_dir, provenance)
+    # Revalidate the copied payload rather than trusting pre-copy inputs. This
+    # closes the evidence-copy race before the immutable manifest is written.
+    verify_source_snapshot(seal_dir / "source", source_git_tree)
+    sealed_commit = (seal_dir / "source-commit.bin").read_bytes()
+    if (
+        git_object_id("commit", sealed_commit) != args.source_sha
+        or commit_tree_id(sealed_commit) != source_tree_sha
+    ):
+        raise SealError("copied source commit/tree binding mismatch")
+    require_log_evidence(seal_dir / "logs", args.source_sha, verdict)
+    copied_ci = read_json(seal_dir / "logs" / "ci-run.json")
+    validate_ci(copied_ci, args.source_sha, str(args.ci_run_id), args.repository_url)
+    run_validator(
+        seal_dir / "source" / "reference" / "validate_relational_observability_bundle.py",
+        seal_dir / "bundles" / "full-a",
+        seal_dir / "bundles" / "full-b",
+    )
+    for bundle in ("full-a", "full-b"):
+        copied_summary = read_json(
+            seal_dir / "bundles" / bundle / "summary.json"
+        )
+        if validate_summary(copied_summary, args.source_sha) != verdict:
+            raise SealError("copied bundle verdict mismatch")
+    manifest = write_manifest(seal_dir, provenance)
+    verify(seal_dir, str(manifest["pre_hash_sha256"]))
+    seal_dir.rename(target_seal_dir)
+    return manifest
 
 
 def verify(
     seal_dir: pathlib.Path, expected_pre_hash: str | None = None
 ) -> dict:
     root = seal_dir.resolve()
+    if expected_pre_hash is not None and re.fullmatch(
+        r"[0-9a-f]{64}", expected_pre_hash
+    ) is None:
+        raise SealError("expected outer pre-hash is not lowercase SHA-256")
     manifest = verify_manifest_only(root)
     if (
         expected_pre_hash is not None
@@ -853,6 +1156,7 @@ def verify(
         str(provenance.get("repository_url")),
         str(provenance.get("tag")),
         str(provenance.get("source_sha")),
+        require_branch=False,
     )
     require_log_evidence(
         root / "logs",
