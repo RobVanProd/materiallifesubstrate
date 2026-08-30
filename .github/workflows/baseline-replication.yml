@@ -186,6 +186,13 @@ jobs:
             reference/validate_kelvin_covariance_bundle.py \
             tests/kelvin_covariance_bundle_validator_test.py \
             2>&1 | tee ci-artifacts/kelvin-covariance-validator-compile.txt
+          python -m py_compile \
+            reference/validate_relational_observability_bundle.py \
+            tests/relational_observability_bundle_validator_test.py \
+            tools/seal_relational_observability_evidence.py \
+            2>&1 | tee ci-artifacts/relational-observability-validator-compile.txt
+          python tests/relational_observability_seal_test.py \
+            2>&1 | tee ci-artifacts/relational-observability-seal.txt
 
       - name: Preserve exact-oracle evidence
         if: always()
