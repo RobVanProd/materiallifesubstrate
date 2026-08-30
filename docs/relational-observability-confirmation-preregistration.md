@@ -310,18 +310,28 @@ with Git's path-aware clean filter and compares it to the committed blob, so
 This prevents a post-configure edit or omitted transitive header from being
 sealed under an older configure-time SHA.
 
-The seal requires two distinct, non-aliasing full-run directories; byte-for-byte
-twin equality; closed JSON field inventories; parsed zero-failure build, test,
-producer, validator, formal, and version receipts; and all registered semantic
-mutation regressions. CI metadata is fetched independently from the GitHub API
+The seal requires pairwise non-overlapping source, twin-bundle, log, and seal
+roots; byte-for-byte twin equality; closed JSON field inventories; structured
+command receipts binding argv, working directory, source identity, timestamps,
+UTF-8 output bytes/hash, and an integer-zero exit code; and all registered
+semantic mutation regressions. Command-specific gates then parse the
+configure, build, full unfiltered CTest, distinct producers, twin comparator,
+independent validator/mutations, Lean kernel/axiom, formal-trust, and complete
+tool/compiler receipts. CI metadata is fetched independently from the GitHub API
 and must show the exact public branch/SHA and successful GCC, Clang, MSVC,
 Python-oracle, and pinned-Lean jobs. The public branch and immutable evidence
-tag must both resolve to the source SHA, and the repository must be public.
-Standalone verification repeats those remote, source, log, CI, bundle, and
-decision checks. The reported outer pre-hash is supplied again as an external
-verification input so replacing an internally self-consistent seal is
-detectable. Provisional smoke may record detached `HEAD` in CI; the full
-producer, validator, and seal remain strict to the registered branch.
+tag must both resolve to the source SHA at creation, and the repository must be
+public. Later verification binds the immutable tag rather than requiring the
+development branch never to advance. Creation uses a sibling staging directory,
+revalidates the copied payload, runs full standalone verification, and only then
+atomically publishes the canonical seal path. Standalone verification repeats
+the remote tag, source, log, CI, bundle, and decision checks. The reported outer
+pre-hash is supplied again as an external verification input so replacing an
+internally self-consistent seal is detectable. Local receipts are captured
+claims bound by the seal, not cryptographic execution attestation; the live
+GitHub CI response supplies the independent replication record. Provisional
+smoke may record detached `HEAD` in CI; the full producer, validator, and seal
+remain strict to the registered branch.
 
 ## 9. Frozen decision order
 

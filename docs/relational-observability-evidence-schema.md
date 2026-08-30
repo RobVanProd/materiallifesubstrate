@@ -132,15 +132,24 @@ complete path/mode/blob inventory. Path-aware working-tree Git hashes must
 equal the committed blobs even when an index flag could hide a modification
 from ordinary status output.
 
-The two full-run inputs must be distinct non-aliasing directories and validate
-byte-for-byte equal. Local receipts have a closed filename inventory and are
-parsed for successful configure/build/CTest, distinct producer paths, twin
-comparison, independent validation and mutations, Lean compilation/axioms,
-formal trust, and exact source/tool versions. `ci-run.json` has a closed field
+The source, two full-run inputs, logs, and destination must be pairwise
+non-overlapping roots, and the twin inputs must validate byte-for-byte equal.
+Each local receipt is closed-schema JSON containing an exact command array,
+absolute working directory, source SHA/branch, UTC interval, integer exit code,
+UTF-8 output byte count/hash, and captured output. Command-specific validation
+requires successful configure/build/full unfiltered CTest, distinct full
+producer destinations, independent byte comparison, validation and mutations,
+Lean compilation/axioms, formal trust, and exact C++/CMake/Python/Lean versions.
+These local receipts are sealed execution claims rather than authentication;
+independent CI and semantic replay remain mandatory. `ci-run.json` has a closed field
 inventory and must exactly equal a fresh GitHub Actions API response containing
 successful GCC, Clang, MSVC, Python-oracle, and pinned-Lean jobs. The canonical
 public repository, branch, and evidence tag must resolve to `source_sha` during
-both creation and verification. `provenance.json`, bundle summaries, and the
+creation; later verification requires the immutable tag and exact CI attempt,
+so advancing the development branch does not invalidate the artifact.
+`provenance.json`, bundle summaries, and the
 outer manifest reject extra contradictory fields. Final verification accepts
 an externally recorded expected pre-hash and rejects any internally consistent
-replacement seal with a different value.
+replacement seal with a different value. Seal creation stages outside the
+canonical path, revalidates the copied payload, runs full verification, and
+atomically renames only after success.

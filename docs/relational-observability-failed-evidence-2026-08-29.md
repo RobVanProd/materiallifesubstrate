@@ -98,11 +98,26 @@ schemas also tolerated contradictory extra fields, and verification had no
 external pin for the outer pre-hash.
 
 No evidence was sealed with that draft. Before the full run, the boundary was
-hardened to parse complete receipts, reject aliased twins, capture every commit
-blob plus the raw commit object, reconstruct the Git tree ID, compare every
-working input's path-aware Git hash, fetch exact CI metadata from GitHub, verify
-the public branch/tag/repository, enforce closed schemas, and accept an
-externally supplied pre-hash. The regression now preserves explicit failures
-for forged CTest and formal logs, a wrong CI branch, twin aliasing, a hidden
-dirty input, payload and inventory changes, and pre-hash replacement. These
-remain provenance failures rather than Candidate-C observations.
+hardened to require structured command/exit/output receipts, reject aliased or
+overlapping roots, capture every commit blob plus the raw commit object,
+reconstruct the Git tree ID, compare every working input's path-aware Git hash,
+fetch the exact CI attempt from GitHub, verify the public branch/tag/repository,
+enforce closed schemas, and accept an externally supplied pre-hash. Creation
+now uses a staging directory, revalidates copied bytes, invokes full verify, and
+publishes the canonical path only after success. The regression preserves 13
+explicit failures including forged CTest/formal claims, a nonzero command exit,
+selected CTest subsets, boolean CI attempt, wrong CI branch, twin aliasing,
+hidden dirty input, payload
+and inventory changes, extra provenance, and pre-hash replacement. These remain
+provenance failures rather than Candidate-C observations.
+
+## Descendant-branch Kelvin smoke failure
+
+The first all-history CTest attempt on this branch preserved two failures in
+the accepted Kelvin audit's smoke verifier. That validator correctly defaulted
+to the sealed `kelvin-covariance-audit` branch while its smoke producer recorded
+the current descendant branch. The validator and mutation test now accept an
+explicit exact `--expected-source-branch` supplied by CMake for smoke only; the
+default remains the original sealed branch. This removes the contradictory
+test harness assumption without changing the Kelvin evidence or weakening its
+default validation contract.
