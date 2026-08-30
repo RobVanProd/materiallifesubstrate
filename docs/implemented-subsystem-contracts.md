@@ -24,8 +24,9 @@ validity, convergence, chemistry expressivity, or an MLS gate by itself.
 | Checkpoint | Canonical versioned little-endian authoritative restart image with exact replay. | Version migration, cryptographic authenticity, debug-history persistence. |
 | Transfer laboratory | Isolated deterministic binary64 PIC/APIC/FLIP diagnostic candidates and separate residuals. | Authoritative world integration, constitutive mechanics, physical validation, candidate promotion. |
 | Mechanical-observability laboratory | Read-only corrected local-gradient, explicit distance-relation, and conditional objective-volume operators with complete numerical kernel diagnostics. | Constitutive law, force, stiffness, stress, time integration, contact, fracture, grid-derived mechanics state, candidate promotion. |
+| Constitutive-expressivity laboratory | Read-only pair-separable and local incident-relation collective energy evaluators, explicit `H=L^T L`, and direct `L R` kernel diagnostics. | Force application, motion integration, stress, contact, fracture, authoritative material state, candidate promotion. |
 
-This file contains nine numbered implementation records. Additional bounded records are the
+This file contains ten numbered implementation records. Additional bounded records are the
 [physical interaction support contract](physical-support-contract.md), kept
 separate because it constrains every future pair law. Orbital angular momentum
 is a cross-cutting packet/ledger/world contract documented in

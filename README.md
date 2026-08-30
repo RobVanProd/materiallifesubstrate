@@ -52,6 +52,7 @@ or `reward`. Those may exist only as observer interpretations.
 - [Constitutive Expressivity Lab contract](docs/constitutive-expressivity-lab-contract.md)
 - [Constitutive Expressivity Lab preregistration](docs/constitutive-expressivity-preregistration.md)
 - [Constitutive Expressivity primary-source audit](docs/constitutive-expressivity-source-audit.md)
+- [Constitutive Expressivity Lab result](docs/constitutive-expressivity-result.md)
 - [Forbidden-semantics contract](docs/forbidden-semantics.md)
 - [Accounting invariants](docs/accounting-invariants.md)
 - [Research roadmap and gates](docs/roadmap.md)
