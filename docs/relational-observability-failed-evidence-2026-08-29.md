@@ -121,3 +121,22 @@ explicit exact `--expected-source-branch` supplied by CMake for smoke only; the
 default remains the original sealed branch. This removes the contradictory
 test harness assumption without changing the Kelvin evidence or weakening its
 default validation contract.
+
+## First full Lean kernel failure
+
+The first exact-source candidate for final execution,
+`4a35e8a6294e4f309a58624f5fada040944c6b3c`, passed the complete 64-test C++/
+Python suite and produced byte-identical full numerical twins. It is not
+sealable: a fresh C-drive `lake --wfail build` failed in
+`RelationalObservability.lean`. The preserved receipt records unresolved
+relabel reductions, missing matrix-notation scope that caused two parse errors,
+and downstream synthesized `sorry` warnings. The axiom-report command then
+failed because the module had no compiled `.olean`. Static source trust had
+passed, demonstrating why it cannot substitute for the Lean kernel.
+
+The correction opens the existing Matrix notation scope and changes three proof
+scripts so both sides reduce under the already stated relabel lemmas. No theorem
+statement, premise, conclusion, trust boundary, or decision gate changed. A
+fresh full build, numerical twin run, CI run, and outer seal are required at the
+new source SHA; none of the `4a35e8a` output can be promoted or relabeled as
+final evidence.
