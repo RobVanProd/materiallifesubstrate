@@ -13,6 +13,7 @@ on:
       - mechanical-observability-lab
       - kelvin-covariance-audit
       - relational-observability-confirmation
+      - constitutive-expressivity-lab
   pull_request:
   workflow_dispatch:
 
@@ -195,6 +196,11 @@ jobs:
             2>&1 | tee ci-artifacts/relational-observability-validator-compile.txt
           python tests/relational_observability_seal_test.py \
             2>&1 | tee ci-artifacts/relational-observability-seal.txt
+          python reference/constitutive_expressivity_oracle.py \
+            --verify tests/constitutive_expressivity_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/constitutive-expressivity-oracle.txt
+          python tests/constitutive_expressivity_oracle_test.py \
+            2>&1 | tee ci-artifacts/constitutive-expressivity-oracle-regression.txt
 
       - name: Preserve exact-oracle evidence
         if: always()
