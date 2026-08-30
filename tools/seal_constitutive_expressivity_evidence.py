@@ -3,8 +3,10 @@
 
 The numerical bundle has its own closed manifest and independent validator.
 This outer seal binds two byte-identical full bundles to the complete committed
-source tree, authenticated command receipts, one successful public CI attempt,
-and an immutable public tag.  It never promotes mechanics or dynamics.
+source tree, integrity-bound command receipts, one successful public CI
+attempt, and an immutable public tag.  A receipt preserves argv, output, and
+their relationships; it does not authenticate operating-system execution.
+The seal never promotes mechanics or dynamics.
 """
 from __future__ import annotations
 
@@ -12,8 +14,10 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+import ntpath
 import os
 import pathlib
+import posixpath
 import re
 import shutil
 import subprocess
@@ -24,11 +28,19 @@ from typing import Any, Iterable
 
 SCHEMA = "mls-constitutive-expressivity-outer-seal-v1"
 RECEIPT_SCHEMA = "mls-constitutive-expressivity-command-receipt-v1"
+RECEIPT_BINDINGS_SCHEMA = \
+    "mls-constitutive-expressivity-receipt-path-bindings-v1"
 BRANCH = "constitutive-expressivity-lab"
 PARENT_SHA = "101296f936f8473effb316b1f9ae4040b5768349"
 TAG = "constitutive-expressivity-lab-evidence-v1"
 DECISION = "retain_local_collective_relational_energy_for_research"
-ORACLE_PRE_HASH = "463fd3f58c5ab5693207ed1a127300434bd76f6d03074f7217fd50e5511ad3d2"
+ORACLE_PRE_HASH = "010d1452010d534445e63b2acfb83374a92b1958e6a62afbf240a8f3121e36bf"
+SELECTED_SUBSET_SHA256 = {
+    "mode": "accepted_parent_subset",
+    "configurations.csv": "45d162381ec723dd9ce744f2cc23c4d21435a52b7c7e60a182073ee19a08d60e",
+    "packets.csv": "843c9cb22c0b55e07c207135125a8334b0dd170a0f708aa1fb50f34d4c5d7363",
+    "relations.csv": "0b2e21dcbf26454af316bec9323627aa1488ebc7aa1f14c006bfb41a231e0e6f",
+}
 WORKFLOW_NAME = "MLS-0 baseline replication"
 SHA1_RE = re.compile(r"[0-9a-f]{40}")
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
@@ -66,6 +78,7 @@ REQUIRED_SOURCE_FILES = {
     "docs/constitutive-expressivity-evidence-schema.md",
     "docs/constitutive-expressivity-source-audit.md",
     "tools/formal_trust_scan.py",
+    "tools/derive_constitutive_parent_subset.py",
     "tools/seal_constitutive_expressivity_evidence.py",
 }
 REQUIRED_CI_JOBS = {
@@ -90,6 +103,7 @@ REQUIRED_RECEIPTS = {
     "lean-axioms.json",
     "formal-trust.json",
     "compiler-versions.json",
+    "parent-subset.json",
 }
 RECEIPT_FIELDS = {
     "schema", "label", "source_sha", "branch", "cwd", "command",
@@ -100,6 +114,7 @@ PROVENANCE_FIELDS = {
     "repository_url", "branch", "source_sha", "source_tree_sha",
     "accepted_parent_sha", "inherited_blobs", "ci_run_id", "ci_attempt",
     "tag", "decision", "promotion_permitted", "bundle_tree_sha256",
+    "receipt_path_bindings",
 }
 
 
@@ -250,6 +265,11 @@ def validate_bundle_claims(bundle: pathlib.Path, source_sha: str) -> dict[str, A
             "bundle exact-oracle mismatch")
     require(provenance.get("inherited_blobs") == INHERITED_BLOBS,
             "bundle inherited blob identities mismatch")
+    require(provenance.get("selected_subset_sha256") == SELECTED_SUBSET_SHA256,
+            "bundle selected accepted-parent subset mismatch")
+    for name in ("configurations.csv", "packets.csv", "relations.csv"):
+        require(sha256(bundle / name) == SELECTED_SUBSET_SHA256[name],
+                f"bundle selected subset payload mismatch: {name}")
     return summary
 
 
@@ -417,13 +437,164 @@ def validate_receipt(receipt: dict[str, Any], source_sha: str,
     payload = receipt["output"].encode("utf-8")
     require(receipt["output_bytes"] == len(payload) and
             receipt["output_sha256"] == sha256_bytes(payload),
-            f"receipt output authentication failed: {filename}")
+            f"receipt output integrity mismatch: {filename}")
     require(isinstance(receipt["cwd"], str) and receipt["cwd"],
             f"receipt cwd missing: {filename}")
     require(isinstance(receipt["started_at_utc"], str) and
             isinstance(receipt["ended_at_utc"], str),
             f"receipt timestamps missing: {filename}")
     return receipt["output"]
+
+
+def portable_basename(value: str) -> str:
+    """Return an argv token's basename without trusting host path semantics."""
+    return value.replace("\\", "/").rsplit("/", 1)[-1].lower()
+
+
+def executable_is(command: list[str], expected: str) -> bool:
+    observed = portable_basename(command[0])
+    wanted = expected.lower()
+    return observed == wanted or observed == wanted + ".exe"
+
+
+def require_script(command: list[str], expected: str, filename: str) -> None:
+    require(any(portable_basename(token) == expected.lower() for token in command),
+            f"receipt script mismatch: {filename}")
+
+
+def exact_option(command: list[str], flag: str, filename: str) -> str:
+    """Read one exact two-token option; joined strings never satisfy a flag."""
+    positions = [index for index, token in enumerate(command) if token == flag]
+    require(len(positions) == 1, f"receipt must contain one {flag}: {filename}")
+    index = positions[0]
+    require(index + 1 < len(command) and command[index + 1] and
+            not command[index + 1].startswith("-"),
+            f"receipt {flag} value missing: {filename}")
+    return command[index + 1]
+
+
+def require_exact_flag(command: list[str], flag: str, filename: str) -> None:
+    require(sum(token == flag for token in command) == 1,
+            f"receipt must contain one exact {flag}: {filename}")
+
+
+def canonical_recorded_path(value: str, cwd: str) -> str:
+    """Lexically resolve a receipt path on Windows or POSIX, even offline.
+
+    This deliberately does not touch the filesystem.  The create path compares
+    the result with resolved live inputs; offline verification only checks the
+    path relationships preserved in the receipts and provenance.
+    """
+    windows = bool(re.match(r"^(?:[A-Za-z]:[\\/]|\\\\)", value)) or \
+        bool(re.match(r"^(?:[A-Za-z]:[\\/]|\\\\)", cwd))
+    if windows:
+        candidate = value if ntpath.isabs(value) else ntpath.join(cwd, value)
+        return "windows:" + ntpath.normcase(ntpath.normpath(candidate))
+    candidate = value if posixpath.isabs(value) else posixpath.join(cwd, value)
+    return "posix:" + posixpath.normpath(candidate)
+
+
+def command_path(receipt: dict[str, Any], flag: str, filename: str) -> str:
+    raw = exact_option(receipt["command"], flag, filename)
+    return canonical_recorded_path(raw, receipt["cwd"])
+
+
+def receipt_path_bindings(
+    receipts: dict[str, dict[str, Any]],
+    *,
+    expected_repo: pathlib.Path | None = None,
+    expected_bundle_a: pathlib.Path | None = None,
+    expected_bundle_b: pathlib.Path | None = None,
+    expected_parent_bundle: pathlib.Path | None = None,
+) -> dict[str, Any]:
+    """Validate exact argv relationships and return their sealed path binding."""
+    commands = {name: value["command"] for name, value in receipts.items()}
+
+    require(executable_is(commands["configure.json"], "cmake"),
+            "configure receipt executable mismatch")
+    require(executable_is(commands["build.json"], "cmake"),
+            "build receipt executable mismatch")
+    require(executable_is(commands["ctest.json"], "ctest"),
+            "CTest receipt executable mismatch")
+    require(portable_basename(commands["producer-a.json"][0]) in {
+                "mls_constitutive_expressivity_diagnostic",
+                "mls_constitutive_expressivity_diagnostic.exe",
+            }, "producer-a receipt executable mismatch")
+    require(portable_basename(commands["producer-b.json"][0]) in {
+                "mls_constitutive_expressivity_diagnostic",
+                "mls_constitutive_expressivity_diagnostic.exe",
+            }, "producer-b receipt executable mismatch")
+
+    configure_source = command_path(
+        receipts["configure.json"], "-S", "configure.json")
+    configure_build = command_path(
+        receipts["configure.json"], "-B", "configure.json")
+    require(exact_option(commands["build.json"], "--build", "build.json"),
+            "build directory missing")
+    build_dir = command_path(receipts["build.json"], "--build", "build.json")
+    ctest_dir = command_path(receipts["ctest.json"], "--test-dir", "ctest.json")
+    require(configure_build == build_dir == ctest_dir,
+            "configure/build/CTest directories are not the same resolved path")
+
+    producer_a = command_path(
+        receipts["producer-a.json"], "--output", "producer-a.json")
+    producer_b = command_path(
+        receipts["producer-b.json"], "--output", "producer-b.json")
+    require(producer_a != producer_b,
+            "twin producers must use distinct resolved output directories")
+
+    pair = {producer_a, producer_b}
+    twin_bundle = command_path(
+        receipts["twin-compare.json"], "--bundle", "twin-compare.json")
+    twin_compare = command_path(
+        receipts["twin-compare.json"], "--compare", "twin-compare.json")
+    validator_bundle = command_path(
+        receipts["validator.json"], "--bundle", "validator.json")
+    validator_compare = command_path(
+        receipts["validator.json"], "--compare", "validator.json")
+    require({twin_bundle, twin_compare} == pair and twin_bundle != twin_compare,
+            "twin comparator paths do not equal the producer bundle paths")
+    require({validator_bundle, validator_compare} == pair and
+            validator_bundle != validator_compare,
+            "validator paths do not equal the producer bundle paths")
+    parent_bundle = command_path(
+        receipts["parent-subset.json"], "--parent-bundle",
+        "parent-subset.json")
+
+    if expected_repo is not None:
+        expected = canonical_recorded_path(str(expected_repo.resolve()),
+                                           str(expected_repo.resolve()))
+        require(configure_source == expected,
+                "configured source directory does not equal the sealed repository")
+    if expected_bundle_a is not None:
+        expected = canonical_recorded_path(str(expected_bundle_a.resolve()),
+                                           str(expected_bundle_a.resolve().parent))
+        require(producer_a == expected,
+                "producer-a output does not equal --bundle-a")
+    if expected_bundle_b is not None:
+        expected = canonical_recorded_path(str(expected_bundle_b.resolve()),
+                                           str(expected_bundle_b.resolve().parent))
+        require(producer_b == expected,
+                "producer-b output does not equal --bundle-b")
+    if expected_parent_bundle is not None:
+        expected = canonical_recorded_path(
+            str(expected_parent_bundle.resolve()),
+            str(expected_parent_bundle.resolve().parent),
+        )
+        require(parent_bundle == expected,
+                "parent subset input does not equal --parent-bundle")
+
+    return {
+        "schema": RECEIPT_BINDINGS_SCHEMA,
+        "semantics": "integrity-bound-command-receipts-not-execution-authentication",
+        "configure_source_dir": configure_source,
+        "build_dir": configure_build,
+        "bundle_a": producer_a,
+        "bundle_b": producer_b,
+        "twin_compare_order": [twin_bundle, twin_compare],
+        "validator_order": [validator_bundle, validator_compare],
+        "accepted_parent_bundle": parent_bundle,
+    }
 
 
 def record_command(args: argparse.Namespace) -> int:
@@ -479,7 +650,15 @@ def record_command(args: argparse.Namespace) -> int:
     return completed.returncode
 
 
-def require_receipts(logs: pathlib.Path, source_sha: str) -> None:
+def require_receipts(
+    logs: pathlib.Path,
+    source_sha: str,
+    *,
+    expected_repo: pathlib.Path | None = None,
+    expected_bundle_a: pathlib.Path | None = None,
+    expected_bundle_b: pathlib.Path | None = None,
+    expected_parent_bundle: pathlib.Path | None = None,
+) -> dict[str, Any]:
     actual = {path.name for path in logs.iterdir() if path.is_file()}
     require(actual == REQUIRED_RECEIPTS | {"ci-run.json"},
             f"receipt inventory mismatch: {sorted(actual ^ (REQUIRED_RECEIPTS | {'ci-run.json'}))}")
@@ -489,33 +668,58 @@ def require_receipts(logs: pathlib.Path, source_sha: str) -> None:
         for name, receipt in receipts.items()
     }
     commands = {name: receipts[name]["command"] for name in receipts}
+    bindings = receipt_path_bindings(
+        receipts,
+        expected_repo=expected_repo,
+        expected_bundle_a=expected_bundle_a,
+        expected_bundle_b=expected_bundle_b,
+        expected_parent_bundle=expected_parent_bundle,
+    )
 
-    def has(name: str, *tokens: str) -> None:
-        joined = " ".join(commands[name]).lower()
-        require(all(token.lower() in joined for token in tokens),
-                f"receipt command mismatch: {name}")
-
-    has("configure.json", "cmake", "-s", "-b")
-    has("build.json", "cmake", "--build")
-    has("ctest.json", "ctest", "--test-dir")
-    has("producer-a.json", "mls_constitutive_expressivity_diagnostic", "--output")
-    has("producer-b.json", "mls_constitutive_expressivity_diagnostic", "--output")
-    has("twin-compare.json", "--compare")
-    has("validator.json", "validate_constitutive_expressivity_bundle.py",
-        "--bundle", "--compare")
-    has("validator-regression.json",
-        "constitutive_expressivity_bundle_validator_test.py")
-    has("exact-oracle.json", "constitutive_expressivity_oracle.py", "--verify")
-    has("exact-oracle-regression.json", "constitutive_expressivity_oracle_test.py")
-    has("lean-build.json", "lake", "--wfail", "build")
-    has("lean-axioms.json", "lake", "env", "lean", "axiomreport.lean")
-    has("formal-trust.json", "formal_trust_scan.py", "--formal-root")
-    has("compiler-versions.json", "version")
-    require(commands["producer-a.json"] != commands["producer-b.json"],
-            "twin producers did not use distinct output commands")
-    require("MLS_WARNINGS_AS_ERRORS=ON" in " ".join(commands["configure.json"]),
+    require_script(commands["twin-compare.json"],
+                   "validate_constitutive_expressivity_bundle.py",
+                   "twin-compare.json")
+    require_script(commands["validator.json"],
+                   "validate_constitutive_expressivity_bundle.py",
+                   "validator.json")
+    require_script(commands["validator-regression.json"],
+                   "constitutive_expressivity_bundle_validator_test.py",
+                   "validator-regression.json")
+    require_script(commands["exact-oracle.json"],
+                   "constitutive_expressivity_oracle.py", "exact-oracle.json")
+    require(exact_option(commands["exact-oracle.json"], "--verify",
+                         "exact-oracle.json"),
+            "exact oracle verification target missing")
+    require_script(commands["exact-oracle-regression.json"],
+                   "constitutive_expressivity_oracle_test.py",
+                   "exact-oracle-regression.json")
+    require(executable_is(commands["lean-build.json"], "lake") and
+            commands["lean-build.json"][1:] == ["--wfail", "build"],
+            "Lean build receipt argv mismatch")
+    require(executable_is(commands["lean-axioms.json"], "lake") and
+            commands["lean-axioms.json"][1:3] == ["env", "lean"] and
+            portable_basename(commands["lean-axioms.json"][-1]) ==
+            "axiomreport.lean",
+            "Lean axiom receipt argv mismatch")
+    require_script(commands["formal-trust.json"], "formal_trust_scan.py",
+                   "formal-trust.json")
+    exact_option(commands["formal-trust.json"], "--formal-root",
+                 "formal-trust.json")
+    require(any(token in {"--version", "-version", "/?"}
+                for token in commands["compiler-versions.json"]) or
+            any("version" in token.lower()
+                for token in commands["compiler-versions.json"]),
+            "compiler version receipt argv mismatch")
+    require_script(commands["parent-subset.json"],
+                   "derive_constitutive_parent_subset.py",
+                   "parent-subset.json")
+    exact_option(commands["parent-subset.json"], "--parent-bundle",
+                 "parent-subset.json")
+    require_exact_flag(commands["parent-subset.json"], "--verify",
+                       "parent-subset.json")
+    require("-DMLS_WARNINGS_AS_ERRORS=ON" in commands["configure.json"],
             "configure did not enable warnings as errors")
-    require("MLS_RUN_EXTENDED_EXACT_TESTS=ON" in " ".join(commands["configure.json"]),
+    require("-DMLS_RUN_EXTENDED_EXACT_TESTS=ON" in commands["configure.json"],
             "configure omitted extended exact tests")
     ctest_command = commands["ctest.json"]
     require("--output-on-failure" in ctest_command,
@@ -537,9 +741,17 @@ def require_receipts(logs: pathlib.Path, source_sha: str) -> None:
         "lean-axioms.json": "relationalStiffness_kernel_eq_relationKernel",
         "formal-trust.json": "PASS: no sorry, admit, sorryAx",
         "compiler-versions.json": "source_sha=",
+        "parent-subset.json": "constitutive parent subset: PASS",
     }
     for name, marker in markers.items():
         require(marker in outputs[name], f"receipt marker absent: {name}")
+    for digest in (
+        "45d162381ec723dd9ce744f2cc23c4d21435a52b7c7e60a182073ee19a08d60e",
+        "843c9cb22c0b55e07c207135125a8334b0dd170a0f708aa1fb50f34d4c5d7363",
+        "0b2e21dcbf26454af316bec9323627aa1488ebc7aa1f14c006bfb41a231e0e6f",
+    ):
+        require(digest in outputs["parent-subset.json"],
+                "parent subset receipt omits a frozen selected hash")
     all_output = "\n".join(outputs.values()).lower()
     require("0 tests failed" in outputs["ctest.json"].lower(),
             "CTest did not report zero failures")
@@ -549,6 +761,7 @@ def require_receipts(logs: pathlib.Path, source_sha: str) -> None:
     require(not any(token in all_output for token in (
         "sorryax found", "declaration uses 'sorry'", "custom axiom found",
         "tests failed, 0 tests passed")), "receipt output contains a trust failure")
+    return bindings
 
 
 def validate_ci(ci: dict[str, Any], source_sha: str, run_id: str,
@@ -706,7 +919,9 @@ def verify(seal_dir: pathlib.Path, expected_pre_hash: str | None = None,
     validator = root / "source" / "reference" / \
         "validate_constitutive_expressivity_bundle.py"
     run_validator(validator, first, second)
-    require_receipts(root / "logs", provenance["source_sha"])
+    receipt_bindings = require_receipts(root / "logs", provenance["source_sha"])
+    require(receipt_bindings == provenance["receipt_path_bindings"],
+            "sealed receipt path relationships mismatch")
     ci = read_json(root / "logs" / "ci-run.json")
     validate_ci(ci, provenance["source_sha"], provenance["ci_run_id"],
                 provenance["ci_attempt"])
@@ -735,7 +950,13 @@ def create(args: argparse.Namespace) -> dict[str, Any]:
     run_validator(validator, first, second)
     validate_bundle_claims(first, source_sha)
     validate_bundle_claims(second, source_sha)
-    require_receipts(args.logs.resolve(), source_sha)
+    receipt_bindings = require_receipts(
+        args.logs.resolve(), source_sha,
+        expected_repo=repo,
+        expected_bundle_a=first,
+        expected_bundle_b=second,
+        expected_parent_bundle=args.parent_bundle.resolve(),
+    )
     ci = read_json(args.logs.resolve() / "ci-run.json")
     validate_ci(ci, source_sha, args.ci_run_id, args.ci_attempt)
     public_ci = fetch_ci_run(args.repository_url, args.ci_run_id, args.ci_attempt)
@@ -756,6 +977,7 @@ def create(args: argparse.Namespace) -> dict[str, Any]:
         "decision": DECISION,
         "promotion_permitted": False,
         "bundle_tree_sha256": tree_digest(twins),
+        "receipt_path_bindings": receipt_bindings,
     }
     destination = args.seal_dir.resolve()
     require(not destination.exists(), "seal destination already exists")
@@ -788,6 +1010,7 @@ def parser() -> argparse.ArgumentParser:
     create_parser.add_argument("--repo", type=pathlib.Path, required=True)
     create_parser.add_argument("--bundle-a", type=pathlib.Path, required=True)
     create_parser.add_argument("--bundle-b", type=pathlib.Path, required=True)
+    create_parser.add_argument("--parent-bundle", type=pathlib.Path, required=True)
     create_parser.add_argument("--logs", type=pathlib.Path, required=True)
     create_parser.add_argument("--seal-dir", type=pathlib.Path, required=True)
     create_parser.add_argument("--source-sha", required=True)
