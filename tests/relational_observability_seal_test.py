@@ -343,6 +343,16 @@ def main() -> int:
             )
         (logs / "ci-run.json").write_text(json.dumps(valid_ci), encoding="utf-8")
         tool.require_log_evidence(logs, "1" * 40, verdict)
+        versions_path = logs / "compiler-versions.txt"
+        write_receipt(
+            tool,
+            versions_path,
+            "compiler-versions",
+            "1" * 40,
+            commands["compiler-versions.txt"],
+            outputs["compiler-versions.txt"].replace("\n", "\r\n"),
+        )
+        tool.require_log_evidence(logs, "1" * 40, verdict)
         ctest_path = logs / "ctest.log"
         write_receipt(
             tool, ctest_path, "ctest", "1" * 40, commands["ctest.log"],

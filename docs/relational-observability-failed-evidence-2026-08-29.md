@@ -179,3 +179,21 @@ that exact-selected span, removes the unregistered absolute Decimal rank
 cutoff, and adds explicit generic-rotation/collinear and full-affine rank
 regressions. All evidence must be regenerated at a later source SHA, and the
 failed validator receipt remains preserved.
+
+## First canonical-seal portability failure
+
+The fully green local/CI candidate
+`821cc667b31e50c2a701a48a121ada5a9b4a6f26` is not sealable. Its authentic,
+hash-closed Windows tool-version receipt uses CRLF line endings. The outer
+seal's clean-worktree marker recognized LF between the two marker lines but
+required the second line to end directly at the multiline boundary, leaving
+the Windows carriage return unmatched. The receipt was neither edited nor
+normalized after capture, and the failed SHA is preserved publicly as
+`relational-observability-confirmation-failed-821cc66`.
+
+The correction accepts an optional carriage return at the end of the second
+marker line and adds a mutation-boundary regression that first accepts the LF
+receipt and then the equivalent CRLF receipt. It does not change Candidate C,
+the inherited operator, configurations, tolerances, decision rules, numerical
+results, formal claims, or compiler gates. A new exact-source run and public CI
+matrix are nevertheless required before sealing.

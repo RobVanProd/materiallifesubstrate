@@ -867,7 +867,7 @@ def require_log_evidence(
             "Lake version",
         )
     ) or re.search(
-        r"(?m)^source_status_begin\r?\nsource_status_end$", versions
+        r"(?m)^source_status_begin\r?\nsource_status_end\r?$", versions
     ) is None:
         raise SealError("tool/source version receipt is incomplete or dirty")
 
