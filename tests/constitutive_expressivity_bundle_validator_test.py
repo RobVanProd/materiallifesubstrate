@@ -22,6 +22,7 @@ def run(
     validator: pathlib.Path,
     bundle: pathlib.Path,
     expect_success: bool,
+    expected_source_branch: str | None,
     compare: pathlib.Path | None = None,
     required_rejection: str | None = None,
 ) -> None:
@@ -32,6 +33,8 @@ def run(
         str(bundle),
         "--allow-dirty",
     ]
+    if expected_source_branch is not None:
+        command.extend(("--expected-source-branch", expected_source_branch))
     if compare is not None:
         command.extend(("--compare", str(compare)))
     completed = subprocess.run(
@@ -108,12 +111,37 @@ def main() -> int:
     parser.add_argument("--validator", type=pathlib.Path, required=True)
     parser.add_argument("--bundle", type=pathlib.Path, required=True)
     parser.add_argument("--compare", type=pathlib.Path)
+    parser.add_argument("--expected-source-branch", required=True)
     args = parser.parse_args()
 
-    run(args.validator, args.bundle, True)
-    run(args.validator, args.bundle, True)
+    run(args.validator, args.bundle, True, args.expected_source_branch)
+    run(args.validator, args.bundle, True, args.expected_source_branch)
     if args.compare is not None:
-        run(args.validator, args.bundle, True, args.compare)
+        run(
+            args.validator,
+            args.bundle,
+            True,
+            args.expected_source_branch,
+            args.compare,
+        )
+
+    run(
+        args.validator,
+        args.bundle,
+        False,
+        args.expected_source_branch + "-wrong",
+        required_rejection="provenance source branch",
+    )
+    omitted_branch_checked = False
+    if args.expected_source_branch != "constitutive-expressivity-lab":
+        run(
+            args.validator,
+            args.bundle,
+            False,
+            None,
+            required_rejection="provenance source branch",
+        )
+        omitted_branch_checked = True
 
     mutation_names = (
         "energy", "residual", "basis", "locality", "target", "id_label",
@@ -211,7 +239,12 @@ def main() -> int:
             if name != "inventory":
                 reseal(targets[name])
             try:
-                run(args.validator, targets[name], False)
+                run(
+                    args.validator,
+                    targets[name],
+                    False,
+                    args.expected_source_branch,
+                )
             except RuntimeError as error:
                 raise RuntimeError(f"mutation {name}: {error}") from error
 
@@ -222,11 +255,17 @@ def main() -> int:
             lambda value: value.__setitem__("compiler_version", value["compiler_version"] + ".twin"),
         )
         reseal(targets["twin"])
-        run(args.validator, targets["twin"], True)
+        run(
+            args.validator,
+            targets["twin"],
+            True,
+            args.expected_source_branch,
+        )
         run(
             args.validator,
             args.bundle,
             False,
+            args.expected_source_branch,
             targets["twin"],
             required_rejection="twin bundles are not byte-for-byte identical",
         )
@@ -242,6 +281,7 @@ def main() -> int:
             args.validator,
             targets["twin_order"],
             False,
+            args.expected_source_branch,
             targets["twin"],
             required_rejection="twin bundles are not byte-for-byte identical",
         )
@@ -249,6 +289,8 @@ def main() -> int:
     print(
         "constitutive expressivity bundle validator regression: PASS "
         f"(2 deterministic positives, {len(mutation_names)} semantic mutations, "
+        "1 wrong-branch rejection, "
+        f"{int(omitted_branch_checked)} omitted-branch rejection, "
         "1 twin mutation, fail-fast twin ordering)"
     )
     return 0

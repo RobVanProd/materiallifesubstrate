@@ -469,7 +469,9 @@ if(Python3_Interpreter_FOUND)
       "${CMAKE_CURRENT_BINARY_DIR}/constitutive-expressivity-smoke-a"
       --compare
       "${CMAKE_CURRENT_BINARY_DIR}/constitutive-expressivity-smoke-b"
-      --allow-dirty)
+      --allow-dirty
+      --expected-source-branch
+      "${MLS_CONFIGURED_SOURCE_BRANCH}")
   set_tests_properties(
     mls.constitutive_expressivity.smoke.verify
     PROPERTIES
@@ -490,7 +492,9 @@ if(Python3_Interpreter_FOUND)
       --bundle
       "${CMAKE_CURRENT_BINARY_DIR}/constitutive-expressivity-smoke-a"
       --compare
-      "${CMAKE_CURRENT_BINARY_DIR}/constitutive-expressivity-smoke-b")
+      "${CMAKE_CURRENT_BINARY_DIR}/constitutive-expressivity-smoke-b"
+      --expected-source-branch
+      "${MLS_CONFIGURED_SOURCE_BRANCH}")
   set_tests_properties(
     mls.constitutive_expressivity.validator.regression
     PROPERTIES
