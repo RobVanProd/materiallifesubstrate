@@ -138,7 +138,7 @@ def valid_receipts(tool, source_sha: str, root: pathlib.Path) -> dict[str, dict]
     outputs = {
         "configure.json": "Build files have been written\n",
         "build.json": "mls_conservative_force_consistency_diagnostic\n",
-        "ctest.json": "100% tests passed, 0 tests failed\n",
+        "ctest.json": "100% tests passed, 0 tests failed out of 78\n",
         "raw-producer-a.json": (
             "CONSERVATIVE FORCE RAW BUNDLE COMPLETE\n"
             "stage=pending_independent_stage\n" + tool.NO_PROMOTION + "\n"),
@@ -602,28 +602,93 @@ def main() -> int:
         )
         mutations += 1
 
-        contradictory_ctest = list(downloads)
         cpp_index = next(
-            index for index, (metadata, _) in enumerate(contradictory_ctest)
+            index for index, (metadata, _) in enumerate(downloads)
             if metadata["name"].startswith("cpp-Windows MSVC-")
         )
-        metadata, payload = contradictory_ctest[cpp_index]
-        files = tool.safe_zip_files(payload, metadata["name"])
-        files["ctest.txt"] += b"1 test failed out of 78\n"
-        contradictory_ctest[cpp_index] = (
-            metadata,
-            zip_payload({
-                name: value.decode("utf-8") for name, value in files.items()
-            }),
-        )
-        expect_rejection(
-            tool,
-            lambda: tool.write_ci_capture_with_artifacts(
-                root / "contradictory-ctest" / "ci-run.json", ci,
-                source_sha, "77", 1, contradictory_ctest),
-            "contradictory CTest success/failure summary",
-        )
-        mutations += 1
+        for label, replacement in (
+            (
+                "standard CTest failure summary",
+                "99% tests passed, 1 test failed out of 78\n",
+            ),
+            (
+                "wrong CTest total",
+                "100% tests passed out of 999\n",
+            ),
+            (
+                "mixed CTest success/failure summaries",
+                "100% tests passed out of 78\n"
+                "99% tests passed, 1 test failed out of 78\n",
+            ),
+            (
+                "mismatched standalone CTest zero-failure summary",
+                "100% tests passed out of 78\n"
+                "0 tests failed out of 77\n",
+            ),
+            (
+                "prefixed CTest failure decoy",
+                "100% tests passed out of 78\n"
+                "NOTE: 1 test failed out of 78\n",
+            ),
+            (
+                "suffixed CTest failure decoy",
+                "100% tests passed out of 78\n"
+                "1 test failed out of 78 (decoy)\n",
+            ),
+            (
+                "noncanonical leading-zero CTest summary",
+                "0100% tests passed, 00 tests failed out of 078\n",
+            ),
+            (
+                "CTest failed-tests marker",
+                "100% tests passed out of 78\n"
+                "The following tests FAILED:\n",
+            ),
+            (
+                "CTest star-failed marker",
+                "100% tests passed out of 78\n"
+                "***Failed\n",
+            ),
+            (
+                "CTest inline star-failed marker",
+                " 1/78 Test #1: failure .....***Failed 0.01 sec\n"
+                "100% tests passed out of 78\n",
+            ),
+            (
+                "whitespace-obfuscated CTest failure decoy",
+                "100% tests passed out of 78\n"
+                "1 test  failed\t out  of 78\n",
+            ),
+            (
+                "CTest inline timeout marker",
+                " 1/78 Test #1: timeout .....***Timeout 1.00 sec\n"
+                "100% tests passed out of 78\n",
+            ),
+            (
+                "CTest inline skipped marker",
+                " 1/78 Test #1: skipped .....***Skipped 0.01 sec\n"
+                "100% tests passed out of 78\n",
+            ),
+        ):
+            changed = list(downloads)
+            metadata, payload = changed[cpp_index]
+            files = tool.safe_zip_files(payload, metadata["name"])
+            files["ctest.txt"] = replacement.encode("utf-8")
+            changed[cpp_index] = (
+                metadata,
+                zip_payload({
+                    name: value.decode("utf-8") for name, value in files.items()
+                }),
+            )
+            expect_rejection(
+                tool,
+                lambda changed=changed, label=label:
+                    tool.write_ci_capture_with_artifacts(
+                        root / label.replace(" ", "-") / "ci-run.json", ci,
+                        source_sha, "77", 1, changed),
+                label,
+            )
+            mutations += 1
 
         # A locally self-consistent fabricated capture is not sealable unless
         # its stable IDs/names and expanded file hashes match a fresh live set.

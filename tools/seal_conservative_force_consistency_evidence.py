@@ -127,6 +127,7 @@ REQUIRED_CI_JOBS = {
     "Python exact oracle",
     "Pinned Lean build and axiom output",
 }
+REQUIRED_CPP_CTEST_COUNT = 78
 CI_ARTIFACT_REQUIRED_FILES = {
     "cpp-Linux GCC": {
         "tool-versions.txt", "configure.txt", "build.txt", "ctest.txt",
@@ -188,6 +189,33 @@ class SealError(RuntimeError):
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise SealError(message)
+
+
+def require_clean_ctest_output(output: str, context: str) -> None:
+    """Accept exactly one registered CTest success summary and no decoys."""
+    require(isinstance(output, str), f"CTest output is malformed: {context}")
+    summary_like_lines = [
+        line.strip().lower()
+        for line in output.splitlines()
+        if ("% tests passed" in line.lower() or
+            re.search(r"tests?\s+failed\s+out\s+of",
+                      line.lower()) is not None)
+    ]
+    require(len(summary_like_lines) == 1,
+            f"CTest summary is missing or ambiguous: {context}")
+    registered_summaries = {
+        f"100% tests passed out of {REQUIRED_CPP_CTEST_COUNT}",
+        f"100% tests passed, 0 tests failed out of {REQUIRED_CPP_CTEST_COUNT}",
+    }
+    require(summary_like_lines[0] in registered_summaries,
+            f"CTest summary is not the registered clean run: {context}")
+    lowered = output.lower()
+    require("the following tests failed:" not in lowered and
+            "errors while running ctest" not in lowered and
+            re.search(
+                r"\*{3}\s*(?:failed|timeout|exception|not\s+run|skipped|disabled)\b",
+                      lowered) is None,
+            f"CTest output contains a failure marker: {context}")
 
 
 def sha256_bytes(payload: bytes) -> str:
@@ -1202,6 +1230,7 @@ def require_receipts(
     }
     for name, marker in markers.items():
         require(marker in outputs[name], f"receipt marker absent: {name}")
+    require_clean_ctest_output(outputs["ctest.json"], "ctest.json")
     version_output = outputs["compiler-versions.json"]
     exact_output_marker(
         version_output, "source_sha", re.compile(re.escape(source_sha)),
@@ -1254,8 +1283,6 @@ def require_receipts(
         require(f"{name}={digest}" in parent_output,
                 f"parent evidence receipt omits commitment: {name}")
     all_output = "\n".join(outputs.values()).lower()
-    require("0 tests failed" in outputs["ctest.json"].lower(),
-            "CTest did not report zero failures")
     for name in ("materialize-a.json", "materialize-b.json",
                  "twin-compare.json", "validator.json"):
         require(standalone_token(outputs[name], expected_decision),
@@ -1398,23 +1425,10 @@ def validate_ci_artifact_markers(prefix: str, files: dict[str, bytes],
             versions, "source_sha", re.compile(re.escape(source_sha)), prefix)
         require_empty_marker_block(
             versions, "source_status_begin", "source_status_end", prefix)
-        ctest = text_file("ctest.txt").lower()
-        # CTest emits two success-summary grammars in the registered matrix:
-        # Unix builds include `, 0 tests failed`, while the MSVC build omits
-        # that redundant clause.  Bind an exact, positive test count in either
-        # standard form and independently reject every positive failure count.
-        clean_summaries = re.findall(
-            r"(?m)^100% tests passed(?:, 0 tests failed)? out of "
-            r"([1-9][0-9]*)[ \t]*\r?$",
-            ctest,
+        require_clean_ctest_output(
+            text_file("ctest.txt"),
+            f"CI compiler artifact: {prefix}",
         )
-        positive_failures = re.search(
-            r"(?m)^[ \t]*[1-9][0-9]* tests? failed out of [1-9][0-9]*"
-            r"[ \t]*\r?$",
-            ctest,
-        )
-        require(len(clean_summaries) == 1 and positive_failures is None,
-                f"CI compiler artifact does not show a clean CTest run: {prefix}")
         for name in ("configure.txt", "build.txt"):
             require(bool(text_file(name).strip()),
                     f"CI compiler artifact log is empty: {prefix}: {name}")
