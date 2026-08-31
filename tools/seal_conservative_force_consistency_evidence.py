@@ -15,6 +15,7 @@ import csv
 import ctypes
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 import ntpath
 import os
@@ -25,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from typing import Any, Iterable
 
 
@@ -32,6 +34,8 @@ SCHEMA = "mls-conservative-force-consistency-outer-seal-v1"
 RECEIPT_SCHEMA = "mls-conservative-force-consistency-command-receipt-v1"
 RECEIPT_BINDINGS_SCHEMA = \
     "mls-conservative-force-consistency-receipt-path-bindings-v1"
+CI_ARTIFACT_SCHEMA = \
+    "mls-conservative-force-consistency-ci-artifact-capture-v1"
 BRANCH = "conservative-force-consistency-lab"
 PARENT_SHA = "2de8843faf76a75d16b3a3012897e719291c52cf"
 PREREGISTRATION_SHA = "3b84f6cbb685aed9895a8954e9bcd53a41caa790"
@@ -63,6 +67,10 @@ CI_FIELDS = {
 }
 SHA1_RE = re.compile(r"[0-9a-f]{40}")
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
+MAX_CI_ARTIFACT_ARCHIVE_BYTES = 64 * 1024 * 1024
+MAX_CI_ARTIFACT_MEMBER_BYTES = 16 * 1024 * 1024
+MAX_CI_ARTIFACT_EXPANDED_BYTES = 64 * 1024 * 1024
+MAX_CI_ARTIFACT_ENTRIES = 2_000
 
 INHERITED_BLOBS = {
     "include/mls/constitutive_expressivity_lab.hpp":
@@ -105,7 +113,10 @@ REQUIRED_SOURCE_FILES = {
     "docs/conservative-force-consistency-lab-contract.md",
     "docs/conservative-force-consistency-evidence-schema.md",
     "docs/conservative-force-consistency-source-audit.md",
+    "docs/conservative-force-consistency-result.md",
+    "docs/implemented-subsystem-contracts.md",
     "tools/formal_trust_scan.py",
+    "tools/conservative_force_tool_versions.py",
     "tools/verify_force_parent_evidence.py",
     "tools/seal_conservative_force_consistency_evidence.py",
 }
@@ -115,6 +126,27 @@ REQUIRED_CI_JOBS = {
     "C++ / Windows MSVC",
     "Python exact oracle",
     "Pinned Lean build and axiom output",
+}
+CI_ARTIFACT_REQUIRED_FILES = {
+    "cpp-Linux GCC": {
+        "tool-versions.txt", "configure.txt", "build.txt", "ctest.txt",
+    },
+    "cpp-Linux Clang": {
+        "tool-versions.txt", "configure.txt", "build.txt", "ctest.txt",
+    },
+    "cpp-Windows MSVC": {
+        "tool-versions.txt", "configure.txt", "build.txt", "ctest.txt",
+    },
+    "exact-oracle": {
+        "python-version.txt", "conservative-force-oracle.txt",
+        "conservative-force-oracle-regression.txt",
+        "conservative-force-validator-compile.txt",
+        "conservative-force-seal.txt",
+    },
+    "lean": {
+        "lean-tool-versions.txt", "lean-build.txt", "lean-axioms.txt",
+        "lean-source-scan.txt", "mathlib-commit.txt",
+    },
 }
 REQUIRED_RECEIPTS = {
     "configure.json",
@@ -586,6 +618,19 @@ def require_script(command: list[str], expected: str, filename: str) -> None:
             f"receipt script mismatch: {filename}")
 
 
+def script_command_path(receipt: dict[str, Any], expected: str,
+                        filename: str) -> str:
+    """Return the single recorded script path, resolved against receipt cwd."""
+    positions = [
+        index for index, token in enumerate(receipt["command"])
+        if portable_basename(token) == expected.lower()
+    ]
+    require(len(positions) == 1,
+            f"receipt must contain one exact {expected}: {filename}")
+    return canonical_recorded_path(
+        receipt["command"][positions[0]], receipt["cwd"])
+
+
 def require_script_subcommand(command: list[str], expected: str,
                               subcommand: str, filename: str) -> None:
     positions = [
@@ -606,6 +651,14 @@ def exact_option(command: list[str], flag: str, filename: str) -> str:
             not command[index + 1].startswith("-"),
             f"receipt {flag} value missing: {filename}")
     return command[index + 1]
+
+
+def exact_assignment(command: list[str], prefix: str, filename: str) -> str:
+    """Read one exact single-token PREFIX=value assignment."""
+    values = [token[len(prefix):] for token in command if token.startswith(prefix)]
+    require(len(values) == 1 and values[0],
+            f"receipt must contain one exact {prefix}<value>: {filename}")
+    return values[0]
 
 
 def require_exact_flag(command: list[str], flag: str, filename: str) -> None:
@@ -629,9 +682,44 @@ def canonical_recorded_path(value: str, cwd: str) -> str:
     return "posix:" + posixpath.normpath(candidate)
 
 
+def canonical_join(base: str, relative: str) -> str:
+    """Join a child to one already-canonical recorded path."""
+    if base.startswith("windows:"):
+        return "windows:" + ntpath.normcase(ntpath.normpath(
+            ntpath.join(base[len("windows:"):], relative)))
+    require(base.startswith("posix:"), "canonical path prefix is invalid")
+    return "posix:" + posixpath.normpath(
+        posixpath.join(base[len("posix:"):], relative.replace("\\", "/")))
+
+
+def require_bound_path(observed: str, expected: str, label: str) -> None:
+    require(observed == expected, f"receipt path mismatch: {label}")
+
+
 def command_path(receipt: dict[str, Any], flag: str, filename: str) -> str:
     raw = exact_option(receipt["command"], flag, filename)
     return canonical_recorded_path(raw, receipt["cwd"])
+
+
+def exact_output_marker(output: str, key: str, pattern: re.Pattern[str],
+                        filename: str) -> str:
+    prefix = key + "="
+    values = [line[len(prefix):] for line in output.splitlines()
+              if line.startswith(prefix)]
+    require(len(values) == 1 and pattern.fullmatch(values[0]) is not None,
+            f"receipt marker malformed or duplicated: {filename}: {key}")
+    return values[0]
+
+
+def require_empty_marker_block(output: str, begin: str, end: str,
+                               filename: str) -> None:
+    lines = output.splitlines()
+    require(lines.count(begin) == 1 and lines.count(end) == 1,
+            f"receipt marker block missing or duplicated: {filename}")
+    start = lines.index(begin)
+    finish = lines.index(end)
+    require(finish == start + 1,
+            f"receipt marker block is not empty: {filename}")
 
 
 def receipt_path_bindings(
@@ -677,6 +765,93 @@ def receipt_path_bindings(
     require(configure_build == build_dir == ctest_dir,
             "configure/build/CTest directories are not the same resolved path")
 
+    repo_dir = configure_source
+    formal_dir = canonical_join(repo_dir, "formal")
+    expected_scripts = {
+        "materialize-a.json": "reference/validate_conservative_force_bundle.py",
+        "materialize-b.json": "reference/validate_conservative_force_bundle.py",
+        "twin-compare.json": "reference/validate_conservative_force_bundle.py",
+        "validator.json": "reference/validate_conservative_force_bundle.py",
+        "validator-regression.json":
+            "tests/conservative_force_bundle_validator_test.py",
+        "exact-oracle.json": "reference/conservative_force_oracle.py",
+        "exact-oracle-regression.json":
+            "tests/conservative_force_oracle_test.py",
+        "formal-trust.json": "tools/formal_trust_scan.py",
+        "compiler-versions.json": "tools/conservative_force_tool_versions.py",
+        "parent-evidence.json": "tools/verify_force_parent_evidence.py",
+    }
+    script_bindings: dict[str, str] = {}
+    for name, relative in expected_scripts.items():
+        expected_script = canonical_join(repo_dir, relative)
+        observed_script = script_command_path(
+            receipts[name], pathlib.PurePosixPath(relative).name, name)
+        require_bound_path(observed_script, expected_script, name + " script")
+        script_bindings[name] = observed_script
+
+    raw_executables = []
+    for name in ("raw-producer-a.json", "raw-producer-b.json"):
+        observed = canonical_recorded_path(
+            commands[name][0], receipts[name]["cwd"])
+        candidates = {
+            canonical_join(build_dir,
+                           "mls_conservative_force_consistency_diagnostic"),
+            canonical_join(build_dir,
+                           "mls_conservative_force_consistency_diagnostic.exe"),
+        }
+        require(observed in candidates,
+                f"{name} executable is not the configured build product")
+        raw_executables.append(observed)
+    require(raw_executables[0] == raw_executables[1],
+            "twin producers used different executable paths")
+
+    lean_build_cwd = canonical_recorded_path(
+        receipts["lean-build.json"]["cwd"],
+        receipts["lean-build.json"]["cwd"])
+    lean_axioms_cwd = canonical_recorded_path(
+        receipts["lean-axioms.json"]["cwd"],
+        receipts["lean-axioms.json"]["cwd"])
+    require(lean_build_cwd == lean_axioms_cwd == formal_dir,
+            "Lean receipts must execute from the pinned formal project")
+    axiom_report = canonical_recorded_path(
+        commands["lean-axioms.json"][-1], receipts["lean-axioms.json"]["cwd"])
+    require_bound_path(
+        axiom_report, canonical_join(formal_dir, "MLSFormal/AxiomReport.lean"),
+        "Lean axiom report")
+
+    formal_root = command_path(
+        receipts["formal-trust.json"], "--formal-root", "formal-trust.json")
+    require_bound_path(formal_root, formal_dir, "formal trust root")
+
+    oracle_canonical = command_path(
+        receipts["exact-oracle.json"], "--verify", "exact-oracle.json")
+    require_bound_path(
+        oracle_canonical,
+        canonical_join(repo_dir, "tests/conservative_force_oracle.canonical.json"),
+        "exact oracle canonical")
+    oracle_regression_oracle = command_path(
+        receipts["exact-oracle-regression.json"], "--oracle",
+        "exact-oracle-regression.json")
+    oracle_regression_canonical = command_path(
+        receipts["exact-oracle-regression.json"], "--canonical",
+        "exact-oracle-regression.json")
+    require_bound_path(
+        oracle_regression_oracle,
+        canonical_join(repo_dir, "reference/conservative_force_oracle.py"),
+        "oracle regression implementation")
+    require_bound_path(
+        oracle_regression_canonical,
+        canonical_join(repo_dir, "tests/conservative_force_oracle.canonical.json"),
+        "oracle regression canonical")
+
+    regression_validator = command_path(
+        receipts["validator-regression.json"], "--validator",
+        "validator-regression.json")
+    require_bound_path(
+        regression_validator,
+        canonical_join(repo_dir, "reference/validate_conservative_force_bundle.py"),
+        "validator regression implementation")
+
     raw_a = command_path(
         receipts["raw-producer-a.json"], "--output", "raw-producer-a.json")
     raw_b = command_path(
@@ -721,6 +896,46 @@ def receipt_path_bindings(
         "raw-producer-b.json")
     require(fixture_a == fixture_b == parent_bundle,
             "raw producer fixture does not equal verified parent evidence")
+    regression_raw_a = command_path(
+        receipts["validator-regression.json"], "--producer",
+        "validator-regression.json")
+    regression_raw_b = command_path(
+        receipts["validator-regression.json"], "--producer-compare",
+        "validator-regression.json")
+    require(regression_raw_a == raw_a and regression_raw_b == raw_b,
+            "validator regression did not exercise both sealed raw producers")
+
+    version_repo = command_path(
+        receipts["compiler-versions.json"], "--repo", "compiler-versions.json")
+    require_bound_path(version_repo, repo_dir, "tool-version repository")
+    require(exact_option(commands["compiler-versions.json"], "--source-sha",
+                         "compiler-versions.json") ==
+            receipts["compiler-versions.json"]["source_sha"],
+            "tool-version source SHA mismatch")
+    require(exact_option(commands["compiler-versions.json"], "--branch",
+                         "compiler-versions.json") == BRANCH,
+            "tool-version branch mismatch")
+    lake_path = canonical_recorded_path(
+        exact_option(commands["compiler-versions.json"], "--lake",
+                     "compiler-versions.json"),
+        receipts["compiler-versions.json"]["cwd"])
+    cxx_path = canonical_recorded_path(
+        exact_option(commands["compiler-versions.json"], "--cxx",
+                     "compiler-versions.json"),
+        receipts["compiler-versions.json"]["cwd"])
+    configured_cxx = canonical_recorded_path(
+        exact_assignment(
+            commands["configure.json"], "-DCMAKE_CXX_COMPILER=",
+            "configure.json"),
+        receipts["configure.json"]["cwd"])
+    require(configured_cxx == cxx_path,
+            "versioned CXX executable is not the configured CMake compiler")
+    lean_build_executable = canonical_recorded_path(
+        commands["lean-build.json"][0], receipts["lean-build.json"]["cwd"])
+    lean_axioms_executable = canonical_recorded_path(
+        commands["lean-axioms.json"][0], receipts["lean-axioms.json"]["cwd"])
+    require(lean_build_executable == lean_axioms_executable == lake_path,
+            "Lean receipts did not use the versioned Lake executable")
 
     if expected_repo is not None:
         expected = canonical_recorded_path(str(expected_repo),
@@ -750,6 +965,7 @@ def receipt_path_bindings(
         "semantics": "integrity-bound-command-receipts-not-execution-authentication",
         "configure_source_dir": configure_source,
         "build_dir": configure_build,
+        "raw_producer_executable": raw_executables[0],
         "raw_bundle_a": raw_a,
         "raw_bundle_b": raw_b,
         "bundle_a": final_a,
@@ -759,6 +975,20 @@ def receipt_path_bindings(
         "twin_compare_order": [twin_bundle, twin_compare],
         "validator_order": [validator_bundle, validator_compare],
         "accepted_parent_bundle": parent_bundle,
+        "script_paths": script_bindings,
+        "oracle_canonical": oracle_canonical,
+        "oracle_regression_inputs": [
+            oracle_regression_oracle, oracle_regression_canonical,
+        ],
+        "validator_regression_inputs": [
+            regression_validator, regression_raw_a, regression_raw_b,
+        ],
+        "formal_project_dir": formal_dir,
+        "formal_trust_root": formal_root,
+        "axiom_report": axiom_report,
+        "lake_executable": lake_path,
+        "cxx_executable": cxx_path,
+        "configured_cxx_compiler": configured_cxx,
     }
 
 
@@ -850,9 +1080,13 @@ def require_receipts(
     require(isinstance(expected_decision, str) and
             expected_decision in ALLOWED_DECISIONS,
             "receipt decision is outside the preregistered set")
+    required_files = REQUIRED_RECEIPTS | {"ci-run.json", "ci-artifacts.json"}
     actual = {path.name for path in logs.iterdir() if path.is_file()}
-    require(actual == REQUIRED_RECEIPTS | {"ci-run.json"},
-            f"receipt inventory mismatch: {sorted(actual ^ (REQUIRED_RECEIPTS | {'ci-run.json'}))}")
+    actual_directories = {path.name for path in logs.iterdir() if path.is_dir()}
+    require(actual == required_files,
+            f"receipt inventory mismatch: {sorted(actual ^ required_files)}")
+    require(actual_directories == {"ci-artifacts"},
+            "receipt directory inventory mismatch")
     receipts = {name: read_json(logs / name) for name in REQUIRED_RECEIPTS}
     outputs = {
         name: validate_receipt(receipt, source_sha, name)
@@ -866,6 +1100,17 @@ def require_receipts(
         expected_bundle_b=expected_bundle_b,
         expected_parent_bundle=expected_parent_bundle,
     )
+    ci = read_json(logs / "ci-run.json")
+    run_id = str(ci.get("databaseId"))
+    attempt = ci.get("attempt")
+    require(type(attempt) is int, "CI attempt missing from receipt directory")
+    validate_ci(ci, source_sha, run_id, attempt)
+    artifact_capture_sha = validate_ci_artifact_capture(
+        logs, source_sha, run_id, attempt)
+    bindings = dict(bindings)
+    bindings["ci_artifact_capture_sha256"] = artifact_capture_sha
+    bindings["ci_artifact_stable_content_sha256"] = \
+        ci_artifact_stable_sha256(read_json(logs / "ci-artifacts.json"))
 
     for name in ("materialize-a.json", "materialize-b.json"):
         require_script_subcommand(commands[name],
@@ -878,6 +1123,12 @@ def require_receipts(
     require_script(commands["validator-regression.json"],
                    "conservative_force_bundle_validator_test.py",
                    "validator-regression.json")
+    exact_option(commands["validator-regression.json"], "--validator",
+                 "validator-regression.json")
+    exact_option(commands["validator-regression.json"], "--producer",
+                 "validator-regression.json")
+    exact_option(commands["validator-regression.json"], "--producer-compare",
+                 "validator-regression.json")
     require_script(commands["exact-oracle.json"],
                    "conservative_force_oracle.py", "exact-oracle.json")
     require(exact_option(commands["exact-oracle.json"], "--verify",
@@ -886,10 +1137,15 @@ def require_receipts(
     require_script(commands["exact-oracle-regression.json"],
                    "conservative_force_oracle_test.py",
                    "exact-oracle-regression.json")
+    exact_option(commands["exact-oracle-regression.json"], "--oracle",
+                 "exact-oracle-regression.json")
+    exact_option(commands["exact-oracle-regression.json"], "--canonical",
+                 "exact-oracle-regression.json")
     require(executable_is(commands["lean-build.json"], "lake") and
             commands["lean-build.json"][1:] == ["--wfail", "build"],
             "Lean build receipt argv mismatch")
     require(executable_is(commands["lean-axioms.json"], "lake") and
+            len(commands["lean-axioms.json"]) == 4 and
             commands["lean-axioms.json"][1:3] == ["env", "lean"] and
             portable_basename(commands["lean-axioms.json"][-1]) ==
             "axiomreport.lean",
@@ -898,11 +1154,12 @@ def require_receipts(
                    "formal-trust.json")
     exact_option(commands["formal-trust.json"], "--formal-root",
                  "formal-trust.json")
-    require(any(token in {"--version", "-version", "/?"}
-                for token in commands["compiler-versions.json"]) or
-            any("version" in token.lower()
-                for token in commands["compiler-versions.json"]),
-            "compiler version receipt argv mismatch")
+    require_script(commands["compiler-versions.json"],
+                   "conservative_force_tool_versions.py",
+                   "compiler-versions.json")
+    for flag in ("--repo", "--source-sha", "--branch", "--cxx", "--lake"):
+        exact_option(commands["compiler-versions.json"], flag,
+                     "compiler-versions.json")
     require_script(commands["parent-evidence.json"],
                    "verify_force_parent_evidence.py",
                    "parent-evidence.json")
@@ -945,6 +1202,50 @@ def require_receipts(
     }
     for name, marker in markers.items():
         require(marker in outputs[name], f"receipt marker absent: {name}")
+    version_output = outputs["compiler-versions.json"]
+    exact_output_marker(
+        version_output, "source_sha", re.compile(re.escape(source_sha)),
+        "compiler-versions.json")
+    exact_output_marker(
+        version_output, "source_branch", re.compile(re.escape(BRANCH)),
+        "compiler-versions.json")
+    require_empty_marker_block(
+        version_output, "source_status_begin", "source_status_end",
+        "compiler-versions.json")
+    exact_output_marker(
+        version_output, "seed", re.compile("260828"),
+        "compiler-versions.json")
+    exact_output_marker(
+        version_output, "binary64_contract",
+        re.compile("iec559_size8_digits53_explicit_order_fp_contract_off_v1"),
+        "compiler-versions.json")
+    exact_output_marker(
+        version_output, "lean_toolchain", re.compile(r"\S+"),
+        "compiler-versions.json")
+    exact_output_marker(
+        version_output, "lake_manifest_sha256", SHA256_RE,
+        "compiler-versions.json")
+    exact_output_marker(
+        version_output, "mathlib_commit", SHA1_RE,
+        "compiler-versions.json")
+    for tool_name in (
+            "git", "cmake", "ctest", "ninja", "cxx", "python", "elan",
+            "lean", "lake"):
+        command_marker = exact_output_marker(
+            version_output, tool_name + "_command", re.compile(r"\S.*"),
+            "compiler-versions.json")
+        if tool_name in {"cxx", "lake"}:
+            observed_tool = canonical_recorded_path(
+                command_marker, receipts["compiler-versions.json"]["cwd"])
+            require(observed_tool == bindings[tool_name + "_executable"],
+                    f"tool-version output path mismatch: {tool_name}")
+        begin = tool_name + "_version_begin"
+        end = tool_name + "_version_end"
+        lines = version_output.splitlines()
+        require(lines.count(begin) == 1 and lines.count(end) == 1 and
+                lines.index(end) > lines.index(begin) + 1,
+                "compiler version block missing, empty, or duplicated: " +
+                tool_name)
     parent_output = outputs["parent-evidence.json"]
     require(f"source_sha={PARENT_SHA}" in parent_output and
             f"manifest_pre_hash={PARENT_EVIDENCE_PRE_HASH}" in parent_output,
@@ -1002,6 +1303,322 @@ def validate_ci(ci: dict[str, Any], source_sha: str, run_id: str,
             "required CI job failed")
 
 
+def expected_ci_artifact_names(run_id: str, attempt: int) -> dict[str, str]:
+    return {
+        prefix: f"{prefix}-{run_id}-{attempt}"
+        for prefix in CI_ARTIFACT_REQUIRED_FILES
+    }
+
+
+def bounded_zip_expanded_total(current: int, declared_member_size: int,
+                               artifact_name: str, member_name: str) -> int:
+    """Reject oversized ZIP declarations before any member bytes are read."""
+    require(type(declared_member_size) is int and declared_member_size >= 0,
+            f"CI artifact member size is malformed: {artifact_name}: {member_name}")
+    require(declared_member_size <= MAX_CI_ARTIFACT_MEMBER_BYTES,
+            f"CI artifact member exceeds size limit: {artifact_name}: {member_name}")
+    result = current + declared_member_size
+    require(result <= MAX_CI_ARTIFACT_EXPANDED_BYTES,
+            f"CI artifact expands beyond size limit: {artifact_name}")
+    return result
+
+
+def safe_zip_files(payload: bytes, artifact_name: str) -> dict[str, bytes]:
+    """Read a bounded artifact ZIP without accepting path or link tricks."""
+    require(isinstance(payload, bytes),
+            f"CI artifact archive payload is malformed: {artifact_name}")
+    require(len(payload) <= MAX_CI_ARTIFACT_ARCHIVE_BYTES,
+            f"CI artifact archive is unreasonably large: {artifact_name}")
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(payload))
+    except (OSError, zipfile.BadZipFile) as error:
+        raise SealError(f"invalid CI artifact ZIP: {artifact_name}") from error
+    files: dict[str, bytes] = {}
+    total = 0
+    with archive:
+        require(len(archive.infolist()) <= MAX_CI_ARTIFACT_ENTRIES,
+                f"CI artifact has too many entries: {artifact_name}")
+        for info in archive.infolist():
+            raw_name = info.filename.replace("\\", "/")
+            path = pathlib.PurePosixPath(raw_name)
+            require(raw_name and not raw_name.startswith("/") and
+                    not re.match(r"^[A-Za-z]:", raw_name) and
+                    ".." not in path.parts and "." not in path.parts and
+                    not any(":" in part or "\0" in part for part in path.parts),
+                    f"unsafe CI artifact path: {artifact_name}: {raw_name}")
+            if info.is_dir():
+                continue
+            mode = (info.external_attr >> 16) & 0o170000
+            require(mode != 0o120000,
+                    f"CI artifact symlink rejected: {artifact_name}: {raw_name}")
+            require((info.flag_bits & 0x1) == 0,
+                    f"encrypted CI artifact rejected: {artifact_name}: {raw_name}")
+            normalized = path.as_posix()
+            require(normalized not in files,
+                    f"duplicate CI artifact path: {artifact_name}: {normalized}")
+            total = bounded_zip_expanded_total(
+                total, info.file_size, artifact_name, normalized)
+            try:
+                data = archive.read(info)
+            except (OSError, RuntimeError, zipfile.BadZipFile) as error:
+                raise SealError(
+                    f"cannot read CI artifact member: {artifact_name}: "
+                    f"{normalized}") from error
+            require(len(data) == info.file_size,
+                    f"CI artifact size mismatch: {artifact_name}: {normalized}")
+            files[normalized] = data
+    require(files, f"CI artifact is empty: {artifact_name}")
+    return files
+
+
+def artifact_file_metadata(files: dict[str, bytes]) -> dict[str, dict[str, Any]]:
+    return {
+        name: {"bytes": len(payload), "sha256": sha256_bytes(payload)}
+        for name, payload in sorted(files.items())
+    }
+
+
+def validate_ci_artifact_markers(prefix: str, files: dict[str, bytes],
+                                 source_sha: str) -> None:
+    required = CI_ARTIFACT_REQUIRED_FILES[prefix]
+    require(required <= set(files),
+            f"CI artifact missing required files: {prefix}: "
+            f"{sorted(required - set(files))}")
+
+    def text_file(name: str) -> str:
+        try:
+            return files[name].decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise SealError(
+                f"CI artifact text is not UTF-8: {prefix}: {name}") from error
+
+    if prefix.startswith("cpp-"):
+        versions = text_file("tool-versions.txt")
+        exact_output_marker(
+            versions, "source_sha", re.compile(re.escape(source_sha)), prefix)
+        require_empty_marker_block(
+            versions, "source_status_begin", "source_status_end", prefix)
+        ctest = text_file("ctest.txt").lower()
+        require("100% tests passed" in ctest and "0 tests failed" in ctest,
+                f"CI compiler artifact does not show a clean CTest run: {prefix}")
+        for name in ("configure.txt", "build.txt"):
+            require(bool(text_file(name).strip()),
+                    f"CI compiler artifact log is empty: {prefix}: {name}")
+    elif prefix == "exact-oracle":
+        versions = text_file("python-version.txt")
+        exact_output_marker(
+            versions, "source_sha", re.compile(re.escape(source_sha)), prefix)
+        require("high-precision-oracle.v1" in
+                text_file("conservative-force-oracle.txt"),
+                "CI exact-oracle output marker missing")
+        require("PASS" in text_file("conservative-force-oracle-regression.txt"),
+                "CI exact-oracle regression marker missing")
+        require("PASS" in text_file("conservative-force-seal.txt"),
+                "CI sealer regression marker missing")
+    else:
+        versions = text_file("lean-tool-versions.txt")
+        exact_output_marker(
+            versions, "source_sha", re.compile(re.escape(source_sha)), prefix)
+        require("Build completed successfully" in text_file("lean-build.txt"),
+                "CI Lean build marker missing")
+        require("finiteCentralRelationForces_total_torque_zero" in
+                text_file("lean-axioms.txt"),
+                "CI Lean axiom report marker missing")
+        require("PASS: no sorry, admit, sorryAx" in
+                text_file("lean-source-scan.txt"),
+                "CI Lean trust marker missing")
+        require(SHA1_RE.fullmatch(text_file("mathlib-commit.txt").strip()) is not None,
+                "CI Mathlib commit marker malformed")
+
+
+def ci_artifact_capture_payload(
+    source_sha: str,
+    run_id: str,
+    attempt: int,
+    downloads: list[tuple[dict[str, Any], bytes]],
+) -> tuple[dict[str, Any], list[tuple[str, bytes, dict[str, bytes]]]]:
+    expected = expected_ci_artifact_names(run_id, attempt)
+    by_name: dict[str, tuple[dict[str, Any], bytes]] = {}
+    for metadata, payload in downloads:
+        require(isinstance(metadata, dict), "CI artifact metadata malformed")
+        name = metadata.get("name")
+        if name not in set(expected.values()):
+            continue
+        require(name not in by_name, f"duplicate CI artifact: {name}")
+        require(type(metadata.get("id")) is int and metadata["id"] > 0,
+                f"CI artifact ID malformed: {name}")
+        require(metadata.get("expired") is False,
+                f"CI artifact is expired: {name}")
+        workflow = metadata.get("workflow_run")
+        require(isinstance(workflow, dict) and
+                str(workflow.get("id")) == str(run_id) and
+                workflow.get("head_sha") == source_sha,
+                f"CI artifact workflow identity mismatch: {name}")
+        require(isinstance(payload, bytes), f"CI artifact payload malformed: {name}")
+        by_name[name] = (metadata, payload)
+    require(set(by_name) == set(expected.values()),
+            "required CI artifact inventory incomplete")
+
+    records: list[dict[str, Any]] = []
+    expanded: list[tuple[str, bytes, dict[str, bytes]]] = []
+    for index, prefix in enumerate(sorted(expected)):
+        name = expected[prefix]
+        metadata, archive_payload = by_name[name]
+        files = safe_zip_files(archive_payload, name)
+        validate_ci_artifact_markers(prefix, files, source_sha)
+        storage = f"artifact-{index:02d}"
+        records.append({
+            "prefix": prefix,
+            "name": name,
+            "artifact_id": metadata["id"],
+            "storage": storage,
+            "archive_bytes": len(archive_payload),
+            "archive_sha256": sha256_bytes(archive_payload),
+            "files": artifact_file_metadata(files),
+        })
+        expanded.append((storage, archive_payload, files))
+    manifest = {
+        "schema": CI_ARTIFACT_SCHEMA,
+        "source_sha": source_sha,
+        "run_id": str(run_id),
+        "attempt": attempt,
+        "artifacts": records,
+    }
+    return manifest, expanded
+
+
+def validate_ci_artifact_capture(logs: pathlib.Path, source_sha: str,
+                                 run_id: str, attempt: int) -> str:
+    manifest_path = logs / "ci-artifacts.json"
+    manifest = read_json(manifest_path)
+    require(set(manifest) == {
+        "schema", "source_sha", "run_id", "attempt", "artifacts"
+    }, "CI artifact manifest fields mismatch")
+    require(manifest["schema"] == CI_ARTIFACT_SCHEMA and
+            manifest["source_sha"] == source_sha and
+            manifest["run_id"] == str(run_id) and
+            manifest["attempt"] == attempt,
+            "CI artifact manifest identity mismatch")
+    records = manifest["artifacts"]
+    require(isinstance(records, list), "CI artifact records malformed")
+    expected = expected_ci_artifact_names(run_id, attempt)
+    require(len(records) == len(expected), "CI artifact record count mismatch")
+    observed_prefixes: set[str] = set()
+    storage_root = logs / "ci-artifacts"
+    require(storage_root.is_dir(), "CI artifact storage missing")
+    expected_storage: set[str] = set()
+    for record in records:
+        require(isinstance(record, dict) and set(record) == {
+            "prefix", "name", "artifact_id", "storage", "archive_bytes",
+            "archive_sha256", "files",
+        }, "CI artifact record fields mismatch")
+        prefix = record["prefix"]
+        require(prefix in expected and prefix not in observed_prefixes and
+                record["name"] == expected[prefix],
+                "CI artifact record name/prefix mismatch")
+        observed_prefixes.add(prefix)
+        storage = record["storage"]
+        require(isinstance(storage, str) and
+                re.fullmatch(r"artifact-[0-9]{2}", storage) is not None,
+                "CI artifact storage name malformed")
+        expected_storage.add(storage)
+        root = storage_root / storage
+        archive = root / "archive.zip"
+        contents = root / "contents"
+        require(archive.is_file() and contents.is_dir(),
+                f"CI artifact storage incomplete: {storage}")
+        require(record["archive_bytes"] == archive.stat().st_size and
+                record["archive_sha256"] == sha256(archive),
+                f"CI artifact archive hash mismatch: {storage}")
+        archive_files = safe_zip_files(archive.read_bytes(), record["name"])
+        expected_files = record["files"]
+        require(isinstance(expected_files, dict),
+                f"CI artifact file inventory malformed: {storage}")
+        actual_paths = {
+            path.relative_to(contents).as_posix(): path
+            for path in files_under(contents)
+        }
+        require(set(actual_paths) == set(expected_files),
+                f"CI artifact file inventory mismatch: {storage}")
+        payloads: dict[str, bytes] = {}
+        for relative, item in expected_files.items():
+            require(isinstance(item, dict) and set(item) == {"bytes", "sha256"},
+                    f"CI artifact file metadata malformed: {storage}: {relative}")
+            path = actual_paths[relative]
+            require(item["bytes"] == path.stat().st_size and
+                    item["sha256"] == sha256(path),
+                    f"CI artifact file hash mismatch: {storage}: {relative}")
+            payloads[relative] = path.read_bytes()
+            require(archive_files.get(relative) == payloads[relative],
+                    f"CI artifact archive/content mismatch: {storage}: {relative}")
+        require(set(archive_files) == set(payloads),
+                f"CI artifact archive inventory mismatch: {storage}")
+        validate_ci_artifact_markers(prefix, payloads, source_sha)
+    require(observed_prefixes == set(expected), "CI artifact prefixes incomplete")
+    actual_storage = {path.name for path in storage_root.iterdir() if path.is_dir()}
+    actual_files = {path.name for path in storage_root.iterdir() if path.is_file()}
+    require(actual_storage == expected_storage and not actual_files,
+            "CI artifact storage inventory mismatch")
+    return sha256_bytes(json.dumps(
+        manifest, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8"))
+
+
+def ci_artifact_stable_commitment(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Return the live-comparable artifact identity and expanded file hashes.
+
+    GitHub may regenerate a ZIP container without changing artifact contents,
+    so ZIP bytes and local storage paths are deliberately excluded.
+    """
+    records = manifest.get("artifacts")
+    require(isinstance(records, list), "CI artifact records malformed")
+    stable_records = []
+    for record in records:
+        require(isinstance(record, dict), "CI artifact record malformed")
+        stable_records.append({
+            "prefix": record.get("prefix"),
+            "name": record.get("name"),
+            "artifact_id": record.get("artifact_id"),
+            "files": record.get("files"),
+        })
+    stable_records.sort(key=lambda value: str(value["prefix"]))
+    return {
+        "schema": "mls-conservative-force-ci-artifact-stable-commitment-v1",
+        "source_sha": manifest.get("source_sha"),
+        "run_id": manifest.get("run_id"),
+        "attempt": manifest.get("attempt"),
+        "artifacts": stable_records,
+    }
+
+
+def ci_artifact_stable_sha256(manifest: dict[str, Any]) -> str:
+    return sha256_bytes(json.dumps(
+        ci_artifact_stable_commitment(manifest),
+        sort_keys=True, separators=(",", ":")
+    ).encode("utf-8"))
+
+
+def authenticate_ci_artifact_capture(
+    logs: pathlib.Path,
+    source_sha: str,
+    run_id: str,
+    attempt: int,
+    live_downloads: list[tuple[dict[str, Any], bytes]],
+) -> str:
+    """Authenticate sealed artifact commitments against one fresh live fetch."""
+    validate_ci_artifact_capture(logs, source_sha, run_id, attempt)
+    captured = read_json(logs / "ci-artifacts.json")
+    live, _ = ci_artifact_capture_payload(
+        source_sha, str(run_id), attempt, live_downloads)
+    captured_stable = ci_artifact_stable_commitment(captured)
+    live_stable = ci_artifact_stable_commitment(live)
+    require(captured_stable == live_stable,
+            "captured CI artifacts differ from the fresh public artifact set")
+    return sha256_bytes(json.dumps(
+        captured_stable, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8"))
+
+
 def fetch_ci_run(repository_url: str, run_id: str, attempt: int) -> dict[str, Any]:
     slug = github_slug(repository_url)
     command = [
@@ -1021,6 +1638,52 @@ def fetch_ci_run(repository_url: str, run_id: str, attempt: int) -> dict[str, An
     return value
 
 
+def fetch_ci_artifacts(repository_url: str, run_id: str, attempt: int,
+                       source_sha: str) -> list[tuple[dict[str, Any], bytes]]:
+    slug = github_slug(repository_url)
+    endpoint = f"repos/{slug}/actions/runs/{run_id}/artifacts?per_page=100"
+    completed = subprocess.run(
+        ["gh", "api", endpoint], stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, check=False)
+    if completed.returncode != 0:
+        raise SealError(
+            "cannot fetch CI artifact inventory: " +
+            completed.stderr.decode("utf-8", errors="replace").strip())
+    try:
+        response = json.loads(completed.stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise SealError("public CI artifact inventory is invalid JSON") from error
+    require(isinstance(response, dict) and set(response) == {
+        "total_count", "artifacts"
+    }, "public CI artifact inventory fields mismatch")
+    artifacts = response["artifacts"]
+    require(type(response["total_count"]) is int and
+            response["total_count"] == len(artifacts) and
+            response["total_count"] <= 100,
+            "public CI artifact inventory is incomplete or malformed")
+    expected_names = set(expected_ci_artifact_names(run_id, attempt).values())
+    selected: list[tuple[dict[str, Any], bytes]] = []
+    for metadata in artifacts:
+        require(isinstance(metadata, dict), "public CI artifact metadata malformed")
+        if metadata.get("name") not in expected_names:
+            continue
+        artifact_id = metadata.get("id")
+        require(type(artifact_id) is int and artifact_id > 0,
+                "public CI artifact ID malformed")
+        download = subprocess.run(
+            ["gh", "api", f"repos/{slug}/actions/artifacts/{artifact_id}/zip"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        if download.returncode != 0:
+            raise SealError(
+                f"cannot download public CI artifact {metadata.get('name')}: " +
+                download.stderr.decode("utf-8", errors="replace").strip())
+        selected.append((metadata, download.stdout))
+    # This validates run/head identity, expiry, exact names, and archive contents.
+    ci_artifact_capture_payload(
+        source_sha, str(run_id), attempt, selected)
+    return selected
+
+
 def write_ci_capture(destination: pathlib.Path, ci: dict[str, Any],
                      source_sha: str, run_id: str, attempt: int) -> None:
     """Validate and atomically create one integrity-bound public CI record."""
@@ -1035,10 +1698,79 @@ def write_ci_capture(destination: pathlib.Path, ci: dict[str, Any],
     write_new_file_atomic(destination, payload)
 
 
+def write_ci_capture_with_artifacts(
+    destination: pathlib.Path,
+    ci: dict[str, Any],
+    source_sha: str,
+    run_id: str,
+    attempt: int,
+    downloads: list[tuple[dict[str, Any], bytes]],
+) -> None:
+    """Atomically stage and fail-closed publish CI JSON plus artifact bytes."""
+    require(destination.name == "ci-run.json",
+            "CI capture destination must be named ci-run.json")
+    require(SHA1_RE.fullmatch(source_sha) is not None,
+            "invalid CI capture source SHA")
+    validate_ci(ci, source_sha, run_id, attempt)
+    manifest, expanded = ci_artifact_capture_payload(
+        source_sha, str(run_id), attempt, downloads)
+    logs = destination.parent
+    logs.mkdir(parents=True, exist_ok=True)
+    manifest_destination = logs / "ci-artifacts.json"
+    artifacts_destination = logs / "ci-artifacts"
+    require(not destination.exists() and not manifest_destination.exists() and
+            not artifacts_destination.exists(),
+            "CI capture destination already exists")
+    staging = pathlib.Path(tempfile.mkdtemp(
+        prefix=".conservative-force-ci-capture-", dir=logs.parent))
+    published_artifacts = False
+    published_manifest = False
+    try:
+        artifact_root = staging / "ci-artifacts"
+        artifact_root.mkdir()
+        for storage, archive_payload, files in expanded:
+            root = artifact_root / storage
+            contents = root / "contents"
+            contents.mkdir(parents=True)
+            (root / "archive.zip").write_bytes(archive_payload)
+            for relative, payload in files.items():
+                target = contents.joinpath(*pathlib.PurePosixPath(relative).parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(payload)
+        (staging / "ci-artifacts.json").write_text(
+            json.dumps(manifest, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8")
+        (staging / "ci-run.json").write_text(
+            json.dumps(ci, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        validate_ci_artifact_capture(
+            staging, source_sha, str(run_id), attempt)
+
+        publish_directory_no_replace(artifact_root, artifacts_destination)
+        published_artifacts = True
+        write_new_file_atomic(
+            manifest_destination, (staging / "ci-artifacts.json").read_bytes())
+        published_manifest = True
+        write_ci_capture(destination, ci, source_sha, str(run_id), attempt)
+    except BaseException:
+        # These exact paths were absent above and are removed only if this call
+        # successfully created them before publication of the final CI record.
+        if not destination.exists():
+            if published_manifest:
+                manifest_destination.unlink(missing_ok=True)
+            if published_artifacts:
+                shutil.rmtree(artifacts_destination, ignore_errors=True)
+        raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
 def capture_ci(args: argparse.Namespace) -> int:
     ci = fetch_ci_run(args.repository_url, args.run_id, args.attempt)
+    artifacts = fetch_ci_artifacts(
+        args.repository_url, args.run_id, args.attempt, args.source_sha)
     destination = args.destination.resolve()
-    write_ci_capture(destination, ci, args.source_sha, args.run_id, args.attempt)
+    write_ci_capture_with_artifacts(
+        destination, ci, args.source_sha, args.run_id, args.attempt, artifacts)
     print(
         "CONSERVATIVE FORCE CONSISTENCY CI CAPTURED: "
         f"run={args.run_id}; attempt={args.attempt}; "
@@ -1243,6 +1975,14 @@ def create(args: argparse.Namespace) -> dict[str, Any]:
     public_ci = fetch_ci_run(args.repository_url, args.ci_run_id, args.ci_attempt)
     validate_ci(public_ci, source_sha, args.ci_run_id, args.ci_attempt)
     require(public_ci == ci, "local/public CI attempt JSON mismatch")
+    live_artifacts = fetch_ci_artifacts(
+        args.repository_url, args.ci_run_id, args.ci_attempt, source_sha)
+    live_artifact_commitment = authenticate_ci_artifact_capture(
+        args.logs.resolve(), source_sha, str(args.ci_run_id), args.ci_attempt,
+        live_artifacts)
+    require(live_artifact_commitment ==
+            receipt_bindings["ci_artifact_stable_content_sha256"],
+            "live CI artifact commitment does not equal sealed receipt binding")
     validate_publication(args.repository_url, args.tag, source_sha,
                          require_branch=True)
     provenance = {

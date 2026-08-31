@@ -2,20 +2,26 @@
 """Adversarial mutation regression for the conservative-force outer seal."""
 from __future__ import annotations
 
+import argparse
+import contextlib
 import importlib.util
+import io
 import json
 import pathlib
 import tempfile
 from types import SimpleNamespace
 from typing import Callable
+import zipfile
 
 
 TEST_DECISION = "retain_conservative_relational_force_for_research"
 
 
-def load_tool():
-    path = pathlib.Path(__file__).resolve().parents[1] / "tools" / \
-        "seal_conservative_force_consistency_evidence.py"
+def load_tool(path: pathlib.Path | None = None):
+    if path is None:
+        path = pathlib.Path(__file__).resolve().parents[1] / "tools" / \
+            "seal_conservative_force_consistency_evidence.py"
+    path = path.resolve(strict=True)
     spec = importlib.util.spec_from_file_location("conservative_force_sealer", path)
     if spec is None or spec.loader is None:
         raise RuntimeError("cannot load conservative-force evidence sealer")
@@ -62,6 +68,7 @@ def valid_receipts(tool, source_sha: str, root: pathlib.Path) -> dict[str, dict]
     commands = {
         "configure.json": [
             "cmake", "-S", str(repo), "-B", str(build),
+            "-DCMAKE_CXX_COMPILER=" + str(root / "cxx"),
             "-DMLS_WARNINGS_AS_ERRORS=ON",
             "-DMLS_RUN_EXTENDED_EXACT_TESTS=ON",
         ],
@@ -97,6 +104,9 @@ def valid_receipts(tool, source_sha: str, root: pathlib.Path) -> dict[str, dict]
         ],
         "validator-regression.json": [
             "python", "tests/conservative_force_bundle_validator_test.py",
+            "--validator", "reference/validate_conservative_force_bundle.py",
+            "--producer", str(raw_a),
+            "--producer-compare", str(raw_b),
         ],
         "exact-oracle.json": [
             "python", "reference/conservative_force_oracle.py",
@@ -104,13 +114,22 @@ def valid_receipts(tool, source_sha: str, root: pathlib.Path) -> dict[str, dict]
         ],
         "exact-oracle-regression.json": [
             "python", "tests/conservative_force_oracle_test.py",
+            "--oracle", "reference/conservative_force_oracle.py",
+            "--canonical", "tests/conservative_force_oracle.canonical.json",
         ],
-        "lean-build.json": ["lake", "--wfail", "build"],
-        "lean-axioms.json": ["lake", "env", "lean", "MLSFormal/AxiomReport.lean"],
+        "lean-build.json": [str(root / "lake"), "--wfail", "build"],
+        "lean-axioms.json": [
+            str(root / "lake"), "env", "lean", "MLSFormal/AxiomReport.lean"
+        ],
         "formal-trust.json": [
             "python", "tools/formal_trust_scan.py", "--formal-root", "formal",
         ],
-        "compiler-versions.json": ["cmake", "--version"],
+        "compiler-versions.json": [
+            "python", "tools/conservative_force_tool_versions.py",
+            "--repo", str(repo), "--source-sha", source_sha,
+            "--branch", tool.BRANCH, "--cxx", str(root / "cxx"),
+            "--lake", str(root / "lake"),
+        ],
         "parent-evidence.json": [
             "python", "tools/verify_force_parent_evidence.py",
             "--parent-bundle", str(root / "accepted-parent"), "--verify",
@@ -149,27 +168,43 @@ def valid_receipts(tool, source_sha: str, root: pathlib.Path) -> dict[str, dict]
             "linearizedRelationalForce_power_identity\n"
             "finiteCentralRelationForces_total_torque_zero\n"),
         "formal-trust.json": "PASS: no sorry, admit, sorryAx\n",
-        "compiler-versions.json": "source_sha=" + source_sha + " version\n",
+        "compiler-versions.json": (
+            "source_sha=" + source_sha + "\n"
+            "source_branch=" + tool.BRANCH + "\n"
+            "source_status_begin\nsource_status_end\n"
+            "seed=260828\n"
+            "binary64_contract="
+            "iec559_size8_digits53_explicit_order_fp_contract_off_v1\n"
+            "lean_toolchain=leanprover/lean4:v4.33.0-rc1\n"
+            "lake_manifest_sha256=" + "a" * 64 + "\n"
+            "mathlib_commit=" + "b" * 40 + "\n" +
+            "".join(
+                name + "_command=" +
+                (str(root / name) if name in {"cxx", "lake"}
+                 else "/tools/" + name) + "\n" +
+                name + "_cwd=/work\n" +
+                name + "_version_begin\n" + name + " 1.0\n" +
+                name + "_version_end\n"
+                for name in (
+                    "git", "cmake", "ctest", "ninja", "cxx", "python",
+                    "elan", "lean", "lake")
+            )),
         "parent-evidence.json": (
             "force parent evidence: PASS\nsource_sha=" + tool.PARENT_SHA +
             "\nmanifest_pre_hash=" + tool.PARENT_EVIDENCE_PRE_HASH + "\n" +
             "\n".join(name + "=" + digest
                        for name, digest in tool.PARENT_TABLE_SHA256.items()) + "\n"),
     }
-    return {
+    result = {
         name: receipt(
             tool, source_sha, outputs[name], label=pathlib.Path(name).stem,
             command=command, cwd=str(repo),
         )
         for name, command in commands.items()
     }
-
-
-def write_receipt_directory(path: pathlib.Path, receipts: dict[str, dict]) -> None:
-    path.mkdir()
-    for name, value in receipts.items():
-        (path / name).write_text(json.dumps(value), encoding="utf-8")
-    (path / "ci-run.json").write_text("{}", encoding="utf-8")
+    result["lean-build.json"]["cwd"] = str(repo / "formal")
+    result["lean-axioms.json"]["cwd"] = str(repo / "formal")
+    return result
 
 
 def valid_ci(tool, source_sha: str) -> dict:
@@ -190,10 +225,162 @@ def valid_ci(tool, source_sha: str) -> dict:
     }
 
 
+def zip_payload(files: dict[str, str]) -> bytes:
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, value in sorted(files.items()):
+            archive.writestr(name, value)
+    return payload.getvalue()
+
+
+def valid_artifact_downloads(tool, source_sha: str, run_id: str = "77",
+                             attempt: int = 1) -> list[tuple[dict, bytes]]:
+    names = tool.expected_ci_artifact_names(run_id, attempt)
+    contents = {
+        "cpp-Linux GCC": {
+            "tool-versions.txt": (
+                f"source_sha={source_sha}\nsource_status_begin\n"
+                "source_status_end\ng++ 15\n"),
+            "configure.txt": "Build files have been written\n",
+            "build.txt": "build complete\n",
+            "ctest.txt": "100% tests passed, 0 tests failed\n",
+        },
+        "cpp-Linux Clang": {
+            "tool-versions.txt": (
+                f"source_sha={source_sha}\nsource_status_begin\n"
+                "source_status_end\nclang 21\n"),
+            "configure.txt": "Build files have been written\n",
+            "build.txt": "build complete\n",
+            "ctest.txt": "100% tests passed, 0 tests failed\n",
+        },
+        "cpp-Windows MSVC": {
+            "tool-versions.txt": (
+                f"source_sha={source_sha}\nsource_status_begin\n"
+                "source_status_end\nMSVC 19\n"),
+            "configure.txt": "Build files have been written\n",
+            "build.txt": "build complete\n",
+            "ctest.txt": "100% tests passed, 0 tests failed\n",
+        },
+        "exact-oracle": {
+            "python-version.txt": f"source_sha={source_sha}\nPython 3.13\n",
+            "conservative-force-oracle.txt":
+                "mls.conservative-force-consistency.high-precision-oracle.v1\n",
+            "conservative-force-oracle-regression.txt": "PASS\n",
+            "conservative-force-validator-compile.txt": "compile PASS\n",
+            "conservative-force-seal.txt": "PASS\n",
+        },
+        "lean": {
+            "lean-tool-versions.txt": f"source_sha={source_sha}\nLean 4.33\n",
+            "lean-build.txt": "Build completed successfully\n",
+            "lean-axioms.txt":
+                "finiteCentralRelationForces_total_torque_zero\n",
+            "lean-source-scan.txt": "PASS: no sorry, admit, sorryAx\n",
+            "mathlib-commit.txt": "c" * 40 + "\n",
+        },
+    }
+    return [
+        ({
+            "id": index + 100,
+            "name": names[prefix],
+            "expired": False,
+            "workflow_run": {"id": int(run_id), "head_sha": source_sha},
+        }, zip_payload(contents[prefix]))
+        for index, prefix in enumerate(sorted(contents))
+    ]
+
+
+def write_receipt_directory(tool, path: pathlib.Path,
+                            receipts: dict[str, dict], source_sha: str) -> None:
+    path.mkdir()
+    for name, value in receipts.items():
+        (path / name).write_text(json.dumps(value), encoding="utf-8")
+    tool.write_ci_capture_with_artifacts(
+        path / "ci-run.json", valid_ci(tool, source_sha), source_sha, "77", 1,
+        valid_artifact_downloads(tool, source_sha))
+
+
 def main() -> int:
-    tool = load_tool()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--tool", type=pathlib.Path)
+    args = parser.parse_args()
+    tool = load_tool(args.tool)
     source_sha = "1" * 40
     mutations = 0
+
+    # The version producer itself refuses a mismatched SHA/branch and a dirty
+    # tree; the sealer checks the corresponding receipt markers independently.
+    version_path = pathlib.Path(__file__).resolve().parents[1] / "tools" / \
+        "conservative_force_tool_versions.py"
+    version_spec = importlib.util.spec_from_file_location(
+        "conservative_force_tool_versions_test", version_path)
+    if version_spec is None or version_spec.loader is None:
+        raise RuntimeError("cannot load conservative-force version producer")
+    version_tool = importlib.util.module_from_spec(version_spec)
+    version_spec.loader.exec_module(version_tool)
+    with tempfile.TemporaryDirectory(prefix="mls-force-versions-") as temporary:
+        root = pathlib.Path(temporary)
+        repo = root / "repo"
+        formal = repo / "formal"
+        mathlib = formal / ".lake" / "packages" / "mathlib"
+        mathlib.mkdir(parents=True)
+        (formal / "lean-toolchain").write_text(
+            "leanprover/lean4:v4.33.0-rc1\n", encoding="utf-8")
+        (formal / "lake-manifest.json").write_text("{}\n", encoding="utf-8")
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        for name in ("lake", "lean", "elan", "cxx", "tool"):
+            (bin_dir / name).write_text("fixture\n", encoding="utf-8")
+        observed_status = ""
+
+        def fake_version_run(command, cwd):
+            nonlocal observed_status
+            if command[:3] == ["git", "status", "--porcelain=v1"]:
+                return observed_status
+            if command == ["git", "rev-parse", "HEAD"]:
+                return "d" * 40 if cwd == mathlib else source_sha
+            if command == ["git", "branch", "--show-current"]:
+                return tool.BRANCH
+            return "fixture tool version 1.0"
+
+        original_version_run = version_tool.run
+        original_executable = version_tool.executable
+        original_parse_args = version_tool.parse_args
+        try:
+            version_tool.run = fake_version_run
+            version_tool.executable = lambda value: (
+                bin_dir / value if value in {"lake", "cxx"} else bin_dir / "tool")
+            values = SimpleNamespace(
+                repo=repo, source_sha=source_sha, branch=tool.BRANCH,
+                cxx="cxx", lake="lake")
+            version_tool.parse_args = lambda: values
+            with contextlib.redirect_stdout(io.StringIO()) as captured:
+                if version_tool.main() != 0:
+                    raise RuntimeError("valid tool-version fixture failed")
+            if "source_status_begin\nsource_status_end" not in captured.getvalue():
+                raise RuntimeError("tool-version fixture omitted clean-source markers")
+            for label, mutate, restore in (
+                ("tool-version live SHA", lambda: setattr(values, "source_sha", "2" * 40),
+                 lambda: setattr(values, "source_sha", source_sha)),
+                ("tool-version live branch", lambda: setattr(values, "branch", "main"),
+                 lambda: setattr(values, "branch", tool.BRANCH)),
+                ("tool-version dirty source", lambda: None, lambda: None),
+            ):
+                mutate()
+                if label == "tool-version dirty source":
+                    observed_status = " M source.cpp"
+                try:
+                    version_tool.main()
+                except RuntimeError:
+                    mutations += 1
+                else:
+                    raise RuntimeError(f"version producer accepted {label}")
+                finally:
+                    observed_status = ""
+                    restore()
+        finally:
+            version_tool.run = original_version_run
+            version_tool.executable = original_executable
+            version_tool.parse_args = original_parse_args
 
     # Exact source provenance is decision-bearing.
     with tempfile.TemporaryDirectory(prefix="mls-conservative-force-bundle-") as temporary:
@@ -387,6 +574,147 @@ def main() -> int:
         )
         mutations += 1
 
+        complete = root / "complete" / "ci-run.json"
+        downloads = valid_artifact_downloads(tool, source_sha)
+        tool.write_ci_capture_with_artifacts(
+            complete, ci, source_sha, "77", 1, downloads)
+        digest = tool.validate_ci_artifact_capture(
+            complete.parent, source_sha, "77", 1)
+        if len(digest) != 64:
+            raise RuntimeError("CI artifact capture digest is malformed")
+        expect_rejection(
+            tool,
+            lambda: tool.write_ci_capture_with_artifacts(
+                complete, ci, source_sha, "77", 1, downloads),
+            "complete CI capture overwrite",
+        )
+        mutations += 1
+
+        missing = downloads[:-1]
+        expect_rejection(
+            tool,
+            lambda: tool.write_ci_capture_with_artifacts(
+                root / "missing-artifact" / "ci-run.json", ci, source_sha,
+                "77", 1, missing),
+            "CI artifact inventory",
+        )
+        mutations += 1
+
+        # A locally self-consistent fabricated capture is not sealable unless
+        # its stable IDs/names and expanded file hashes match a fresh live set.
+        fabricated_downloads = list(downloads)
+        fabricated_metadata, fabricated_zip = fabricated_downloads[0]
+        fabricated_files = tool.safe_zip_files(
+            fabricated_zip, fabricated_metadata["name"])
+        fabricated_files["configure.txt"] += b"fabricated-but-well-formed\n"
+        fabricated_downloads[0] = (
+            fabricated_metadata,
+            zip_payload({
+                name: value.decode("utf-8")
+                for name, value in fabricated_files.items()
+            }),
+        )
+        fabricated_destination = root / "fabricated" / "ci-run.json"
+        tool.write_ci_capture_with_artifacts(
+            fabricated_destination, ci, source_sha, "77", 1,
+            fabricated_downloads)
+        tool.validate_ci_artifact_capture(
+            fabricated_destination.parent, source_sha, "77", 1)
+        expect_rejection(
+            tool,
+            lambda: tool.authenticate_ci_artifact_capture(
+                fabricated_destination.parent, source_sha, "77", 1,
+                downloads),
+            "fabricated captured CI artifact content",
+        )
+        mutations += 1
+
+        wrong_live_id = list(downloads)
+        metadata, payload = wrong_live_id[0]
+        changed_metadata = dict(metadata)
+        changed_metadata["id"] = metadata["id"] + 10_000
+        wrong_live_id[0] = (changed_metadata, payload)
+        expect_rejection(
+            tool,
+            lambda: tool.authenticate_ci_artifact_capture(
+                complete.parent, source_sha, "77", 1, wrong_live_id),
+            "fresh CI artifact stable ID",
+        )
+        mutations += 1
+
+        # ZIP containers are transport, not stable identity: recompressing the
+        # same expanded files must still authenticate.
+        recompressed = list(downloads)
+        metadata, original_zip = recompressed[0]
+        same_files = tool.safe_zip_files(original_zip, metadata["name"])
+        alternate = io.BytesIO()
+        with zipfile.ZipFile(alternate, "w", compression=zipfile.ZIP_STORED) as archive:
+            for name, value in reversed(sorted(same_files.items())):
+                archive.writestr(name, value)
+        recompressed[0] = (metadata, alternate.getvalue())
+        if alternate.getvalue() == original_zip:
+            raise RuntimeError("recompressed CI fixture did not change ZIP bytes")
+        expected_stable = tool.ci_artifact_stable_sha256(
+            json.loads((complete.parent / "ci-artifacts.json").read_text(
+                encoding="utf-8")))
+        observed_stable = tool.authenticate_ci_artifact_capture(
+            complete.parent, source_sha, "77", 1, recompressed)
+        if observed_stable != expected_stable:
+            raise RuntimeError("stable CI artifact authentication changed")
+
+        expect_rejection(
+            tool,
+            lambda: tool.bounded_zip_expanded_total(
+                0, tool.MAX_CI_ARTIFACT_MEMBER_BYTES + 1,
+                "oversized", "member.log"),
+            "oversized CI artifact member declaration",
+        )
+        mutations += 1
+        expect_rejection(
+            tool,
+            lambda: tool.bounded_zip_expanded_total(
+                tool.MAX_CI_ARTIFACT_EXPANDED_BYTES - 1, 2,
+                "oversized-total", "member.log"),
+            "oversized CI artifact total declaration",
+        )
+        mutations += 1
+
+        archive_path = complete.parent / "ci-artifacts" / \
+            "artifact-00" / "archive.zip"
+        archive_path.write_bytes(archive_path.read_bytes() + b"mutation")
+        expect_rejection(
+            tool,
+            lambda: tool.validate_ci_artifact_capture(
+                complete.parent, source_sha, "77", 1),
+            "CI artifact archive bytes",
+        )
+        mutations += 1
+
+        expect_rejection(
+            tool,
+            lambda: tool.safe_zip_files(
+                zip_payload({"../escape.txt": "forged"}), "traversal"),
+            "CI artifact path traversal",
+        )
+        mutations += 1
+
+        wrong_artifact_source = valid_artifact_downloads(tool, source_sha)
+        metadata, payload = wrong_artifact_source[0]
+        bad_files = tool.safe_zip_files(payload, metadata["name"])
+        bad_files["tool-versions.txt"] = bad_files["tool-versions.txt"].replace(
+            source_sha.encode("ascii"), ("2" * 40).encode("ascii"))
+        wrong_artifact_source[0] = (metadata, zip_payload({
+            name: value.decode("utf-8") for name, value in bad_files.items()
+        }))
+        expect_rejection(
+            tool,
+            lambda: tool.write_ci_capture_with_artifacts(
+                root / "wrong-artifact-source" / "ci-run.json", ci,
+                source_sha, "77", 1, wrong_artifact_source),
+            "CI artifact embedded source",
+        )
+        mutations += 1
+
     # Receipt argv is parsed token-by-token and the exact build/bundle path
     # relationships are integrity-bound.  Markers cannot substitute for those
     # relationships, and the receipts do not authenticate OS execution.
@@ -399,7 +727,7 @@ def main() -> int:
         def evaluate(changed: dict[str, dict]) -> dict:
             logs = root / ("logs-" + str(evaluate.counter))
             evaluate.counter += 1
-            write_receipt_directory(logs, changed)
+            write_receipt_directory(tool, logs, changed, source_sha)
             return tool.require_receipts(
                 logs, source_sha, expected_decision=TEST_DECISION,
                 expected_repo=root / "repo",
@@ -436,7 +764,18 @@ def main() -> int:
         )
         if ResolutionChangingPath.resolve_calls != 0:
             raise RuntimeError("receipt validation re-resolved a live path")
-        if lexical_bindings != bindings:
+        receipt_only_bindings = dict(bindings)
+        artifact_digest = receipt_only_bindings.pop(
+            "ci_artifact_capture_sha256", None)
+        stable_artifact_digest = receipt_only_bindings.pop(
+            "ci_artifact_stable_content_sha256", None)
+        if not isinstance(artifact_digest, str) or len(artifact_digest) != 64:
+            raise RuntimeError("receipt validation omitted CI artifact commitment")
+        if (not isinstance(stable_artifact_digest, str) or
+                len(stable_artifact_digest) != 64):
+            raise RuntimeError(
+                "receipt validation omitted stable CI artifact commitment")
+        if lexical_bindings != receipt_only_bindings:
             raise RuntimeError("lexically identical receipt bindings changed")
         expect_rejection(
             tool,
@@ -484,6 +823,47 @@ def main() -> int:
                 "parent-evidence.json", "--parent-bundle",
                 str(root / "wrong-parent"))),
         ):
+            expect_rejection(tool, lambda changed=changed: evaluate(changed), label)
+            mutations += 1
+
+        exact_path_mutations = []
+        changed = json.loads(json.dumps(source))
+        changed["materialize-a.json"]["command"][1] = str(
+            root / "decoy" / "validate_conservative_force_bundle.py")
+        exact_path_mutations.append(("materializer script path", changed))
+        changed = json.loads(json.dumps(source))
+        changed["raw-producer-a.json"]["command"][0] = str(
+            root / "other-build" /
+            "mls_conservative_force_consistency_diagnostic.exe")
+        exact_path_mutations.append(("raw producer executable path", changed))
+        changed = json.loads(json.dumps(source))
+        changed["lean-build.json"]["cwd"] = str(root / "repo")
+        exact_path_mutations.append(("Lean project cwd", changed))
+        changed = json.loads(json.dumps(source))
+        changed["formal-trust.json"]["command"][-1] = str(root / "other-formal")
+        exact_path_mutations.append(("formal trust root", changed))
+        changed = json.loads(json.dumps(source))
+        command = changed["exact-oracle.json"]["command"]
+        command[command.index("--verify") + 1] = str(
+            root / "decoy" / "conservative_force_oracle.canonical.json")
+        exact_path_mutations.append(("oracle canonical path", changed))
+        changed = json.loads(json.dumps(source))
+        command = changed["validator-regression.json"]["command"]
+        command[command.index("--producer") + 1] = str(root / "decoy-raw")
+        exact_path_mutations.append(("validator regression producer path", changed))
+        changed = json.loads(json.dumps(source))
+        changed["compiler-versions.json"]["command"][1] = str(
+            root / "decoy" / "conservative_force_tool_versions.py")
+        exact_path_mutations.append(("tool-version script path", changed))
+        changed = json.loads(json.dumps(source))
+        command = changed["configure.json"]["command"]
+        compiler_index = next(
+            index for index, token in enumerate(command)
+            if token.startswith("-DCMAKE_CXX_COMPILER="))
+        command[compiler_index] = (
+            "-DCMAKE_CXX_COMPILER=" + str(root / "decoy-cxx"))
+        exact_path_mutations.append(("configured/versioned CXX mismatch", changed))
+        for label, changed in exact_path_mutations:
             expect_rejection(tool, lambda changed=changed: evaluate(changed), label)
             mutations += 1
 
@@ -536,6 +916,32 @@ def main() -> int:
             changed[filename]["output"] = output
             changed[filename]["output_bytes"] = len(payload)
             changed[filename]["output_sha256"] = tool.sha256_bytes(payload)
+
+        version_output = source["compiler-versions.json"]["output"]
+        for label, replacement in (
+            ("dirty tool-version source",
+             version_output.replace(
+                 "source_status_begin\nsource_status_end",
+                 "source_status_begin\n M source.cpp\nsource_status_end")),
+            ("tool-version arithmetic contract",
+             version_output.replace(
+                 "iec559_size8_digits53_explicit_order_fp_contract_off_v1",
+                 "unspecified-floating-point")),
+            ("tool-version source branch",
+             version_output.replace("source_branch=" + tool.BRANCH,
+                                    "source_branch=main")),
+            ("missing compiler version block",
+             version_output.replace("cxx_version_end\n", "")),
+            ("compiler version executable path",
+             version_output.replace(
+                 "cxx_command=" + str(root / "cxx"),
+                 "cxx_command=" + str(root / "other-cxx"))),
+        ):
+            changed = json.loads(json.dumps(source))
+            replace_output(changed, "compiler-versions.json", replacement)
+            expect_rejection(
+                tool, lambda changed=changed: evaluate(changed), label)
+            mutations += 1
 
         changed = json.loads(json.dumps(source))
         other_decision = "reject_force_implementation"
