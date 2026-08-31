@@ -132,6 +132,91 @@ def expect_invalid(
         raise AssertionError(f"{label} left an owned staging directory")
 
 
+def check_rigid_direction_precision(implementation: object) -> None:
+    """Rigid probes must not inherit a caller's Decimal precision."""
+
+    from decimal import Decimal, localcontext
+    from types import SimpleNamespace
+
+    relations = ((1, 2), (1, 3), (1, 4), (2, 3), (2, 4), (3, 4))
+    with localcontext() as context:
+        context.prec = implementation.DIGITS
+        reference = {
+            1: (Decimal(0), Decimal(0), Decimal(0)),
+            2: (Decimal(1), Decimal(0), Decimal(0)),
+            3: (Decimal(0), Decimal(1), Decimal(0)),
+            4: (Decimal(0), Decimal(0), Decimal(1)),
+        }
+        reference_lengths = tuple(
+            implementation.norm(
+                implementation.vsub(reference[second], reference[first])
+            )
+            for first, second in relations
+        )
+        h_matrix = tuple(
+            tuple(
+                Decimal(2) if row == column else Decimal(0)
+                for column in range(len(relations))
+            )
+            for row in range(len(relations))
+        )
+        model = implementation.RelationModel(
+            (1, 2, 3, 4),
+            reference,
+            relations,
+            reference_lengths,
+            h_matrix,
+        )
+        current = {
+            1: (Decimal("0.1"), Decimal("-0.2"), Decimal("0.3")),
+            2: (Decimal("1.2"), Decimal("0.1"), Decimal("-0.1")),
+            3: (Decimal("0.2"), Decimal("1.1"), Decimal("0.05")),
+            4: (Decimal("-0.1"), Decimal("0.25"), Decimal("0.95")),
+        }
+    payload = SimpleNamespace(
+        identifier="rigid-direction-precision-regression",
+        model=model,
+        current=current,
+    )
+    labels = tuple(
+        [f"direction.translation_{axis}" for axis in "xyz"]
+        + [f"direction.rotation_{axis}" for axis in "xyz"]
+    )
+    ambient_precisions = (9, 28, 67)
+    for label in labels:
+        constructed = []
+        for precision in ambient_precisions:
+            with localcontext() as context:
+                context.prec = precision
+                constructed.append(
+                    implementation.independent_rigid_direction(
+                        payload, label, 0
+                    )
+                )
+        if any(direction != constructed[0] for direction in constructed[1:]):
+            raise AssertionError(
+                f"{label} inherited ambient Decimal precision"
+            )
+        with localcontext() as context:
+            context.prec = implementation.DIGITS
+            force = implementation.force_vector(model, current)
+            virtual_work = abs(implementation.dot(force, constructed[0]))
+            rigidity_residual = implementation.max_abs(
+                implementation.matvec(
+                    implementation.rigidity(model, current), constructed[0]
+                )
+            )
+        if virtual_work > Decimal("1e-55"):
+            raise AssertionError(
+                f"{label} violated registered zero virtual work: {virtual_work}"
+            )
+        if rigidity_residual > Decimal("1e-55"):
+            raise AssertionError(
+                f"{label} was not in the rigidity kernel: "
+                f"{rigidity_residual}"
+            )
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--producer", required=True, type=Path)
@@ -194,6 +279,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         sys.path.insert(0, str(validator.parent))
         import validate_conservative_force_bundle as implementation  # type: ignore
         from decimal import Decimal
+        check_rigid_direction_precision(implementation)
         if implementation.registered_raw_convergence(
             [Decimal("0"), Decimal("1e100"), Decimal("1e100"), Decimal("1e100")],
             Decimal("1e-55"),

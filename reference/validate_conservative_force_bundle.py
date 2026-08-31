@@ -2731,31 +2731,51 @@ def independent_rigid_direction(
         axis = {"x": 0, "y": 1, "z": 2}.get(axis_name)
         if axis is None:
             reject(f"{payload.identifier}: unknown translation direction")
-        magnitude = D(len(packet_ids)).sqrt()
-        return [
-            (D(1) / magnitude if component % 3 == axis else D(0))
-            for component in range(3 * len(packet_ids))
-        ]
+        with localcontext() as context:
+            context.prec = DIGITS
+            magnitude = D(len(packet_ids)).sqrt()
+            return [
+                (D(1) / magnitude if component % 3 == axis else D(0))
+                for component in range(3 * len(packet_ids))
+            ]
     if label.startswith("direction.rotation_"):
         axis_name = label.removeprefix("direction.rotation_")
         axis = {"x": 0, "y": 1, "z": 2}.get(axis_name)
         if axis is None:
             reject(f"{payload.identifier}: unknown rotation direction")
-        centroid = tuple(
-            sum((payload.current[packet_id][component] for packet_id in packet_ids), D(0))
-            / D(len(packet_ids))
-            for component in range(3)
-        )
-        omega = tuple(D(1) if component == axis else D(0) for component in range(3))
-        vectors = {
-            packet_id: cross(omega, vsub(payload.current[packet_id], centroid))
-            for packet_id in packet_ids
-        }
-        raw = flatten(vectors, packet_ids)
-        magnitude = norm(raw)
-        if magnitude == 0:
-            reject(f"{payload.identifier}: degenerate rigid rotation direction")
-        return [value / magnitude for value in raw]
+        # This direction participates in a registered Decimal-100 zero-work
+        # claim.  Bind its construction to that precision rather than to a
+        # caller's ambient Decimal context (whose default is only 28 digits).
+        with localcontext() as context:
+            context.prec = DIGITS
+            centroid = tuple(
+                sum(
+                    (
+                        payload.current[packet_id][component]
+                        for packet_id in packet_ids
+                    ),
+                    D(0),
+                )
+                / D(len(packet_ids))
+                for component in range(3)
+            )
+            omega = tuple(
+                D(1) if component == axis else D(0)
+                for component in range(3)
+            )
+            vectors = {
+                packet_id: cross(
+                    omega, vsub(payload.current[packet_id], centroid)
+                )
+                for packet_id in packet_ids
+            }
+            raw = flatten(vectors, packet_ids)
+            magnitude = norm(raw)
+            if magnitude == 0:
+                reject(
+                    f"{payload.identifier}: degenerate rigid rotation direction"
+                )
+            return [value / magnitude for value in raw]
     if label.startswith("direction.random_"):
         random_index = unsigned(
             label.removeprefix("direction.random_"),
