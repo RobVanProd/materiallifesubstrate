@@ -232,6 +232,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         ):
             raise AssertionError("resolved condition distance became a hidden gate")
 
+        producer_findings = implementation.ScientificFindings()
+        if producer_findings.producer(False):
+            raise AssertionError("failed producer row reported success")
+        if (
+            producer_findings.producer_failure_rows != 1
+            or producer_findings.degeneracy_failures != 0
+        ):
+            raise AssertionError(
+                "producer failure row leaked into scientific event count"
+            )
+
         # A mostly rigid vector can still lie in the K4-minus-edge rigidity
         # kernel.  The registered floppy control must be the unit mechanism
         # orthogonal to all six realized rigid modes, not merely contain some

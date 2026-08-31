@@ -284,6 +284,13 @@ class ScientificFindings:
             self.degeneracy_failures += 1
         return condition
 
+    def producer(self, condition: bool) -> bool:
+        """Record a producer-local failed row without inventing a predicate."""
+
+        if not condition:
+            self.producer_failure_rows += 1
+        return condition
+
     def decision(self) -> str:
         if self.inconclusive_failures:
             return "stop_inconclusive_or_implementation_failure"
@@ -3789,9 +3796,11 @@ def validate_compression(
                 if not findings.degeneracy(degeneracy_pass):
                     row_degenerate = True
             producer_pass = (not registered or exported_adjacent)
-            findings.producer_failure_rows += int(not producer_pass)
-            if not producer_pass:
-                findings.degeneracy(False)
+            if not findings.producer(producer_pass):
+                # This is the producer's local report of the same adjacency
+                # predicate already reconstructed in ``degeneracy_pass``.
+                # Keep producer rows separate from independent scientific
+                # failure events; counting it again would duplicate evidence.
                 if registered:
                     row_degenerate = True
             if registered and row_degenerate:
