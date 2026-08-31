@@ -2245,8 +2245,13 @@ void emit_floppy_mechanism(
                 identity_semantics(operator_case.graph->packets));
             double maximum = 0.0;
             for (const auto& packet : evaluated.force.packet_forces) {
+                // Section 4 preregisters the same componentwise infinity norm
+                // used by the ordinary reference-tangent rows.
                 maximum = std::max(
-                    maximum, vector_norm(packet.force_n) / epsilon);
+                    {maximum,
+                     std::abs(packet.force_n.x) / epsilon,
+                     std::abs(packet.force_n.y) / epsilon,
+                     std::abs(packet.force_n.z) / epsilon});
             }
             errors.push_back(maximum /
                 std::max(operator_case.frozen.maximum_parent_h_magnitude_j_per_m2,
