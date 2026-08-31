@@ -124,11 +124,33 @@ Differentiation with respect to `x'=sx` leaves the finite tangent unchanged.
 Torque scales as `s^2`; power also scales as `s^2` when velocity is scaled by
 `s`.  These are the preregistered metamorphic expectations.
 
+## Condition diagnostic implementation audit
+
+A pre-final full-run audit found that the first producer implementation called
+the inherited Kelvin-covariance singular-spectrum routine.  That routine uses
+native `long double` work storage, so the call violated this lab's explicit
+eight-byte, 53-significand-bit binary64 producer contract and was removed
+before canonical evidence was generated.  The failed preflight trees remain
+outside the canonical evidence rather than being relabelled.
+
+The force lab now owns a direct one-sided-Jacobi singular-spectrum diagnostic
+with fixed lexicographic sweeps, binary64 work and accumulators, and the frozen
+condition-resolution thresholds.  It neither forms normal equations nor
+alters the tangent.  The Python validator independently reconstructs the
+ordered-binary64 tangent and diagnostic for raw-field integrity, while a
+separate Decimal-100 symmetric-spectrum path supplies the scientific
+resolved/unresolved classification.  Resolved condition numbers from those
+different arithmetic paths are diagnostics and are not assumed numerically
+identical; a registered classification disagreement is recorded as collapse
+degeneracy rather than disguised as malformed evidence.
+
 ## Coincidence
 
-At `r_a=0`, the unit direction and length gradient do not exist.  The scalar
-length energy remains evaluable as a number, but it has no unique spatial
-gradient there.  Returning an arbitrary force direction would therefore add
-an unregistered constitutive choice.  The force evaluator fails closed before
-physical output at exact coincidence and only reports positive approaches as
-conditioning diagnostics.
+At `r_a=0`, the unit direction and length coordinate are not differentiable.
+The composed scalar energy remains evaluable as a number and can be
+differentiable in exceptional states where the relevant conjugate vanishes,
+but this evaluator has no general unique spatial-gradient contract there.
+Returning an arbitrary force direction would therefore add an unregistered
+constitutive choice.  The force evaluator fails closed before physical output
+at exact coincidence and only reports positive approaches as conditioning
+diagnostics.
