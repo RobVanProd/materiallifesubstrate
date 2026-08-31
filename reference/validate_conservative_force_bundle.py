@@ -1861,8 +1861,12 @@ def centroid_decimal(
     for packet_id in packet_ids:
         for axis in range(3):
             sums[axis] += float(points[packet_id][axis])
+    # Vec3d division in the producer is explicitly reciprocal-then-multiply,
+    # not one componentwise division.  Preserve that binary64 operation order
+    # so nested normalized rotation probes remain auditable at the ulp level.
+    inverse = 1.0 / float(len(packet_ids))
     return tuple(
-        D.from_float(sums[axis] / float(len(packet_ids))) for axis in range(3)
+        D.from_float(inverse * sums[axis]) for axis in range(3)
     )  # type: ignore[return-value]
 
 
