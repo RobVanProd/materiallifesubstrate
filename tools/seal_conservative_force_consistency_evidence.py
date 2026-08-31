@@ -34,7 +34,7 @@ RECEIPT_BINDINGS_SCHEMA = \
     "mls-conservative-force-consistency-receipt-path-bindings-v1"
 BRANCH = "conservative-force-consistency-lab"
 PARENT_SHA = "2de8843faf76a75d16b3a3012897e719291c52cf"
-PREREGISTRATION_SHA = "b05162e7775d6dd02baf8efac01fe5b8ffddea3d"
+PREREGISTRATION_SHA = "3b84f6cbb685aed9895a8954e9bcd53a41caa790"
 PARENT_EVIDENCE_PRE_HASH = (
     "18b1af6837f2c67204094498eedd2a8d8eabaf315ebae1d58c4b2073b778973f"
 )
