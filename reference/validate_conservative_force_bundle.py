@@ -761,6 +761,41 @@ def binary64_reference_tangent_error(
     ) / denominator
 
 
+def high_precision_reference_tangent_error(
+    payload: EvaluationPayload,
+    direction: Sequence[D],
+    epsilon: D,
+) -> D:
+    """Decimal-100 reference-tangent error for the independent gate."""
+
+    with localcontext() as context:
+        context.prec = DIGITS
+        reference_r = rigidity(payload.model, payload.model.reference)
+        reference_k = matmul(
+            transpose(reference_r), matmul(payload.model.h, reference_r)
+        )
+        expected_linear = [
+            -value for value in matvec(reference_k, direction)
+        ]
+        actual = [
+            value / epsilon
+            for value in force_vector(payload.model, payload.current)
+        ]
+        denominator = max(
+            max_abs(expected_linear),
+            max_abs(
+                value
+                for matrix_row in payload.operator.parent_h
+                for value in matrix_row
+            ),
+            TINY64,
+        )
+        return max_abs(
+            lhs - rhs
+            for lhs, rhs in zip(actual, expected_linear, strict=True)
+        ) / denominator
+
+
 def binary64_shifted_axis(
     current: Mapping[int, tuple[D, D, D]],
     packet_ids: Sequence[int],
@@ -2867,16 +2902,9 @@ def validate_reference_tangent(
                 f"{evaluation_id} independently reconstructed reference direction",
             )
             directions.append(direction)
-            reference_r = rigidity(payload.model, payload.model.reference)
-            reference_k = matmul(transpose(reference_r), matmul(payload.model.h, reference_r))
-            expected_linear = [-value for value in matvec(reference_k, direction)]
-            actual = [value / epsilon for value in force_vector(payload.model, payload.current)]
-            denominator = max(
-                max_abs(expected_linear),
-                max_abs(value for matrix_row in payload.operator.parent_h for value in matrix_row),
-                TINY64,
+            error = high_precision_reference_tangent_error(
+                payload, direction, epsilon
             )
-            error = max_abs(a - b for a, b in zip(actual, expected_linear, strict=True)) / denominator
             errors.append(error)
             exported_error_float = binary64(row["error_infinity_scaled"], f"{evaluation_id} tangent error")
             exported_errors.append(exported_error_float)
@@ -3006,11 +3034,13 @@ def validate_reference_tangent(
         decrease_gate = all(errors[index + 1] < errors[index] for index in range(3))
         independent_convergence = converges_until_floor(errors, reference_floor)
         independent_initially_at_floor = errors[0] <= reference_floor
-        orders = [
-            (errors[index] / errors[index + 1]).ln() / D(8).ln()
-            for index in range(3)
-            if errors[index] != 0 and errors[index + 1] != 0
-        ]
+        with localcontext() as context:
+            context.prec = DIGITS
+            orders = [
+                (errors[index] / errors[index + 1]).ln() / D(8).ln()
+                for index in range(3)
+                if errors[index] != 0 and errors[index + 1] != 0
+            ]
         audit.require(len(orders) >= 3, f"{operator_id}/{direction_id} observed orders")
         sorted_orders = sorted(orders)
         median = sorted_orders[len(sorted_orders) // 2]
