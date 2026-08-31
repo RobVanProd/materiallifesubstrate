@@ -1,5 +1,4 @@
 #include "mls/conservative_force_consistency_lab.hpp"
-#include "mls/kelvin_covariance_audit.hpp"
 
 #include <algorithm>
 #include <array>
@@ -10,6 +9,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -2032,19 +2032,136 @@ struct ConditionDiagnostic final {
     double value{0.0};
 };
 
+struct Binary64SpectrumDiagnostic final {
+    bool converged{false};
+    std::vector<double> singular_values{};
+};
+
+[[nodiscard]] Binary64SpectrumDiagnostic binary64_singular_values(
+    const DenseMatrix& matrix) {
+    const auto rows = matrix.row_count();
+    const auto columns = matrix.column_count();
+    const bool transpose_input = rows < columns;
+    const auto working_rows = transpose_input ? columns : rows;
+    const auto dimension = transpose_input ? rows : columns;
+    if (dimension == 0U) {
+        return {true, {}};
+    }
+
+    double maximum_entry = 0.0;
+    for (const auto value : matrix.entries()) {
+        if (!std::isfinite(value)) {
+            throw std::invalid_argument(
+                "binary64 singular-spectrum diagnostic requires finite entries");
+        }
+        maximum_entry = std::max(maximum_entry, std::abs(value));
+    }
+    if (maximum_entry == 0.0) {
+        return {true, std::vector<double>(dimension, 0.0)};
+    }
+
+    // This lab-local direct one-sided Jacobi SVD intentionally uses only the
+    // registered binary64 type.  It does not form A^T A, symmetrize the input,
+    // or call the inherited Kelvin diagnostic, whose native long-double work
+    // representation is outside this lab's frozen arithmetic contract.
+    std::vector<double> work(working_rows * dimension, 0.0);
+    for (std::size_t row = 0; row < working_rows; ++row) {
+        for (std::size_t column = 0; column < dimension; ++column) {
+            work[row * dimension + column] =
+                (transpose_input ? matrix(column, row) : matrix(row, column)) /
+                maximum_entry;
+        }
+    }
+
+    constexpr std::size_t maximum_sweeps = 256U;
+    constexpr double correlation_factor = 32.0;
+    bool converged = dimension < 2U;
+    for (std::size_t sweep = 0; sweep < maximum_sweeps; ++sweep) {
+        bool rotated = false;
+        for (std::size_t first = 0; first < dimension; ++first) {
+            for (std::size_t second = first + 1U; second < dimension;
+                 ++second) {
+                double first_norm_squared = 0.0;
+                double second_norm_squared = 0.0;
+                double correlation = 0.0;
+                for (std::size_t row = 0; row < working_rows; ++row) {
+                    const auto first_value = work[row * dimension + first];
+                    const auto second_value = work[row * dimension + second];
+                    first_norm_squared += first_value * first_value;
+                    second_norm_squared += second_value * second_value;
+                    correlation += first_value * second_value;
+                }
+                if (first_norm_squared == 0.0 ||
+                    second_norm_squared == 0.0) {
+                    continue;
+                }
+                const auto correlation_threshold = correlation_factor *
+                    std::numeric_limits<double>::epsilon() *
+                    std::sqrt(first_norm_squared) *
+                    std::sqrt(second_norm_squared);
+                if (std::abs(correlation) <= correlation_threshold) {
+                    continue;
+                }
+                const auto zeta =
+                    (second_norm_squared - first_norm_squared) /
+                    (2.0 * correlation);
+                const auto tangent = zeta == 0.0
+                    ? 1.0
+                    : std::copysign(1.0, zeta) /
+                          (std::abs(zeta) + std::hypot(1.0, zeta));
+                const auto cosine = 1.0 / std::sqrt(1.0 + tangent * tangent);
+                const auto sine = cosine * tangent;
+                for (std::size_t row = 0; row < working_rows; ++row) {
+                    const auto first_index = row * dimension + first;
+                    const auto second_index = row * dimension + second;
+                    const auto first_value = work[first_index];
+                    const auto second_value = work[second_index];
+                    work[first_index] =
+                        cosine * first_value - sine * second_value;
+                    work[second_index] =
+                        sine * first_value + cosine * second_value;
+                }
+                rotated = true;
+            }
+        }
+        if (!rotated) {
+            converged = true;
+            break;
+        }
+    }
+    if (!converged) {
+        return {};
+    }
+
+    std::vector<double> singular_values;
+    singular_values.reserve(dimension);
+    for (std::size_t column = 0; column < dimension; ++column) {
+        double squared_norm = 0.0;
+        for (std::size_t row = 0; row < working_rows; ++row) {
+            const auto value = work[row * dimension + column];
+            squared_norm += value * value;
+        }
+        singular_values.push_back(
+            maximum_entry * std::sqrt(squared_norm));
+    }
+    std::ranges::sort(singular_values, std::greater<>{});
+    return {true, std::move(singular_values)};
+}
+
 [[nodiscard]] ConditionDiagnostic resolved_nonzero_condition(
     const DenseMatrix& matrix) {
-    const auto spectrum =
-        mls::experimental::kelvin_covariance_audit::singular_values(matrix);
-    if (spectrum.empty() || !(spectrum.front() > 0.0)) {
+    const auto spectrum = binary64_singular_values(matrix);
+    if (!spectrum.converged || spectrum.singular_values.empty() ||
+        !(spectrum.singular_values.front() > 0.0)) {
         return {};
     }
     const auto dimension = std::max(
         {std::size_t{6}, matrix.row_count(), matrix.column_count()});
     const auto threshold = 512.0 * static_cast<double>(dimension) *
-        std::numeric_limits<double>::epsilon() * spectrum.front();
+        std::numeric_limits<double>::epsilon() *
+        spectrum.singular_values.front();
     double smallest_nonzero = 0.0;
-    for (const auto value : spectrum) {
+    for (const auto value : spectrum.singular_values) {
         if (value > 8.0 * threshold) {
             smallest_nonzero = value;
         } else if (value >= threshold / 8.0) {
@@ -2052,8 +2169,64 @@ struct ConditionDiagnostic final {
         }
     }
     return smallest_nonzero > 0.0
-        ? ConditionDiagnostic{true, spectrum.front() / smallest_nonzero}
+        ? ConditionDiagnostic{
+              true, spectrum.singular_values.front() / smallest_nonzero}
         : ConditionDiagnostic{};
+}
+
+void audit_binary64_condition_diagnostic() {
+    DenseMatrix diagonal(6U, 6U);
+    diagonal(0U, 0U) = 1.0;
+    diagonal(1U, 1U) = -0.25;
+    const auto ordinary = resolved_nonzero_condition(diagonal);
+    if (!ordinary.resolved || ordinary.value != 4.0) {
+        throw std::runtime_error(
+            "binary64 condition diagnostic signed-spectrum self-test failed");
+    }
+
+    const auto threshold = 512.0 * 6.0 *
+        std::numeric_limits<double>::epsilon();
+    DenseMatrix ambiguous(6U, 6U);
+    ambiguous(0U, 0U) = 1.0;
+    ambiguous(1U, 1U) = threshold;
+    if (resolved_nonzero_condition(ambiguous).resolved) {
+        throw std::runtime_error(
+            "binary64 condition diagnostic ambiguity-band self-test failed");
+    }
+
+    DenseMatrix below_band(6U, 6U);
+    below_band(0U, 0U) = 1.0;
+    below_band(1U, 1U) = threshold / 16.0;
+    const auto below = resolved_nonzero_condition(below_band);
+    if (!below.resolved || below.value != 1.0) {
+        throw std::runtime_error(
+            "binary64 condition diagnostic null-tail self-test failed");
+    }
+
+    DenseMatrix above_band(6U, 6U);
+    above_band(0U, 0U) = 1.0;
+    above_band(1U, 1U) = 16.0 * threshold;
+    const auto above = resolved_nonzero_condition(above_band);
+    const auto expected_above = 1.0 / (16.0 * threshold);
+    if (!above.resolved || above.value != expected_above) {
+        throw std::runtime_error(
+            "binary64 condition diagnostic resolved-tail self-test failed");
+    }
+
+    DenseMatrix coupled(3U, 3U);
+    coupled(0U, 0U) = 2.0;
+    coupled(0U, 1U) = 0.25;
+    coupled(1U, 0U) = 0.25;
+    coupled(1U, 1U) = 1.0;
+    coupled(2U, 2U) = 0.5;
+    const auto first = resolved_nonzero_condition(coupled);
+    const auto second = resolved_nonzero_condition(coupled);
+    if (!first.resolved || !second.resolved ||
+        std::bit_cast<std::uint64_t>(first.value) !=
+            std::bit_cast<std::uint64_t>(second.value)) {
+        throw std::runtime_error(
+            "binary64 condition diagnostic repeatability self-test failed");
+    }
 }
 
 void emit_compression(
@@ -2448,6 +2621,7 @@ int run(const Arguments& arguments) {
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") {
             throw std::runtime_error("SHA-256 self-test failed");
         }
+        audit_binary64_condition_diagnostic();
         const Tables audit_tables{};
         const std::array expected_headers{
             std::pair{&audit_tables.configurations,
