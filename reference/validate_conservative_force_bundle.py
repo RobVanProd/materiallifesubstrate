@@ -705,6 +705,254 @@ def binary64_rigidity_matrix(
     return result
 
 
+def binary64_tangent_decomposition(
+    model: RelationModel,
+    current_decimal: Mapping[int, tuple[D, D, D]],
+) -> tuple[list[list[float]], list[list[float]], list[list[float]]]:
+    """Reproduce the producer's ordered-binary64 spatial tangent.
+
+    This deliberately mirrors ``evaluate_spatial_tangent`` rather than
+    converting the independent Decimal tangent to binary64.  The distinction
+    matters for the lab-local one-sided-Jacobi condition diagnostic: the raw
+    producer value is structurally bound to its binary64 input, while the
+    Decimal-100 condition remains a separate scientific reference.
+    """
+
+    current = {
+        packet_id: tuple(float(value) for value in current_decimal[packet_id])
+        for packet_id in model.packet_ids
+    }
+    lookup = {packet_id: index for index, packet_id in enumerate(model.packet_ids)}
+    h = [[float(value) for value in row] for row in model.h]
+    reference_lengths = [float(value) for value in model.reference_lengths]
+    relation_count = len(model.relations)
+    coordinate_count = 3 * len(model.packet_ids)
+
+    lengths: list[float] = []
+    extensions: list[float] = []
+    directions: list[tuple[float, float, float]] = []
+    rigidity64 = [
+        [0.0 for _ in range(coordinate_count)]
+        for _ in range(relation_count)
+    ]
+    for relation_index, (first, second) in enumerate(model.relations):
+        offset = tuple(
+            current[second][axis] - current[first][axis] for axis in range(3)
+        )
+        length = stable_norm64(offset)
+        if length == 0.0:
+            raise CoincidentRelationError("binary64 tangent relation coincidence")
+        extension = length - reference_lengths[relation_index]
+        direction = tuple(value / length for value in offset)
+        lengths.append(length)
+        extensions.append(extension)
+        directions.append(direction)  # type: ignore[arg-type]
+        for axis in range(3):
+            rigidity64[relation_index][3 * lookup[first] + axis] = -direction[axis]
+            rigidity64[relation_index][3 * lookup[second] + axis] = direction[axis]
+
+    conjugates = [
+        extended_product_sum(
+            (
+                (h[row][column], extensions[column])
+                for column in range(relation_count)
+            ),
+            53,
+        )
+        for row in range(relation_count)
+    ]
+
+    h_times_r = [
+        [0.0 for _ in range(coordinate_count)]
+        for _ in range(relation_count)
+    ]
+    for row in range(relation_count):
+        for column in range(coordinate_count):
+            value = 0.0
+            for inner in range(relation_count):
+                value += h[row][inner] * rigidity64[inner][column]
+            h_times_r[row][column] = value
+
+    material = [
+        [0.0 for _ in range(coordinate_count)]
+        for _ in range(coordinate_count)
+    ]
+    for row in range(coordinate_count):
+        for column in range(coordinate_count):
+            value = 0.0
+            for relation in range(relation_count):
+                value += rigidity64[relation][row] * h_times_r[relation][column]
+            material[row][column] = value
+
+    geometric = [
+        [0.0 for _ in range(coordinate_count)]
+        for _ in range(coordinate_count)
+    ]
+    for relation_index, (first, second) in enumerate(model.relations):
+        first_index = lookup[first]
+        second_index = lookup[second]
+        direction = directions[relation_index]
+        for row_axis in range(3):
+            for column_axis in range(3):
+                identity = 1.0 if row_axis == column_axis else 0.0
+                projector = (
+                    identity - direction[row_axis] * direction[column_axis]
+                ) / lengths[relation_index]
+                contribution = conjugates[relation_index] * projector
+                first_row = 3 * first_index + row_axis
+                second_row = 3 * second_index + row_axis
+                first_column = 3 * first_index + column_axis
+                second_column = 3 * second_index + column_axis
+                geometric[first_row][first_column] += contribution
+                geometric[second_row][second_column] += contribution
+                geometric[first_row][second_column] -= contribution
+                geometric[second_row][first_column] -= contribution
+
+    total = [
+        [material[row][column] + geometric[row][column]
+         for column in range(coordinate_count)]
+        for row in range(coordinate_count)
+    ]
+    return material, geometric, total
+
+
+def binary64_singular_values(
+    matrix: Sequence[Sequence[float]],
+) -> list[float] | None:
+    """Lab-local direct one-sided-Jacobi SVD in ordered binary64.
+
+    The operation order, sweep order, stopping rule, and thresholds mirror the
+    producer.  ``None`` is the producer's fail-closed nonconvergence result.
+    """
+
+    rows = len(matrix)
+    columns = len(matrix[0]) if rows else 0
+    if any(len(row) != columns for row in matrix):
+        reject("binary64 singular-spectrum matrix is ragged")
+    transpose_input = rows < columns
+    working_rows = columns if transpose_input else rows
+    dimension = rows if transpose_input else columns
+    if dimension == 0:
+        return []
+    maximum_entry = max(
+        (abs(value) for row in matrix for value in row), default=0.0
+    )
+    if not math.isfinite(maximum_entry):
+        reject("binary64 singular-spectrum matrix is nonfinite")
+    if maximum_entry == 0.0:
+        return [0.0] * dimension
+
+    work = [0.0] * (working_rows * dimension)
+    for row in range(working_rows):
+        for column in range(dimension):
+            value = matrix[column][row] if transpose_input else matrix[row][column]
+            if not math.isfinite(value):
+                reject("binary64 singular-spectrum matrix is nonfinite")
+            work[row * dimension + column] = value / maximum_entry
+
+    converged = dimension < 2
+    for _sweep in range(256):
+        rotated = False
+        for first in range(dimension):
+            for second in range(first + 1, dimension):
+                first_norm_squared = 0.0
+                second_norm_squared = 0.0
+                correlation = 0.0
+                for row in range(working_rows):
+                    first_value = work[row * dimension + first]
+                    second_value = work[row * dimension + second]
+                    first_norm_squared += first_value * first_value
+                    second_norm_squared += second_value * second_value
+                    correlation += first_value * second_value
+                if first_norm_squared == 0.0 or second_norm_squared == 0.0:
+                    continue
+                correlation_threshold = (
+                    32.0
+                    * sys.float_info.epsilon
+                    * math.sqrt(first_norm_squared)
+                    * math.sqrt(second_norm_squared)
+                )
+                if abs(correlation) <= correlation_threshold:
+                    continue
+                zeta = (
+                    (second_norm_squared - first_norm_squared)
+                    / (2.0 * correlation)
+                )
+                tangent = (
+                    1.0
+                    if zeta == 0.0
+                    else math.copysign(1.0, zeta)
+                    / (abs(zeta) + math.hypot(1.0, zeta))
+                )
+                cosine = 1.0 / math.sqrt(1.0 + tangent * tangent)
+                sine = cosine * tangent
+                for row in range(working_rows):
+                    first_index = row * dimension + first
+                    second_index = row * dimension + second
+                    first_value = work[first_index]
+                    second_value = work[second_index]
+                    work[first_index] = (
+                        cosine * first_value - sine * second_value
+                    )
+                    work[second_index] = (
+                        sine * first_value + cosine * second_value
+                    )
+                rotated = True
+        if not rotated:
+            converged = True
+            break
+    if not converged:
+        return None
+
+    singular_values: list[float] = []
+    for column in range(dimension):
+        squared_norm = 0.0
+        for row in range(working_rows):
+            value = work[row * dimension + column]
+            squared_norm += value * value
+        singular_values.append(maximum_entry * math.sqrt(squared_norm))
+    singular_values.sort(reverse=True)
+    return singular_values
+
+
+def binary64_condition_estimate(
+    matrix: Sequence[Sequence[float]],
+) -> float | None:
+    """Return the producer's resolved condition or its ``unresolved`` state."""
+
+    spectrum = binary64_singular_values(matrix)
+    if spectrum is None or not spectrum or not (spectrum[0] > 0.0):
+        return None
+    rows = len(matrix)
+    columns = len(matrix[0]) if rows else 0
+    dimension = max(6, rows, columns)
+    threshold = (
+        512.0 * float(dimension) * sys.float_info.epsilon * spectrum[0]
+    )
+    smallest_nonzero = 0.0
+    for value in spectrum:
+        if value > 8.0 * threshold:
+            smallest_nonzero = value
+        elif value >= threshold / 8.0:
+            return None
+    return spectrum[0] / smallest_nonzero if smallest_nonzero > 0.0 else None
+
+
+def condition_reference_agreement(
+    binary64_condition: float | None,
+    decimal_condition: D | None,
+) -> bool:
+    """Registered classifier agreement between raw and Decimal diagnostics.
+
+    The two algorithms intentionally use different arithmetic.  Their
+    resolved numeric values are retained as diagnostics, but only a
+    resolved/unresolved classification disagreement is a registered
+    degeneracy finding.
+    """
+
+    return (binary64_condition is None) == (decimal_condition is None)
+
+
 def binary64_reference_tangent_error(
     model: RelationModel,
     current: Mapping[int, tuple[D, D, D]],
@@ -3446,19 +3694,72 @@ def validate_compression(
                 within(ulp_sensitivity, expected_ulp_sensitivity, binary_diagnostic_tolerance),
                 f"{evaluation_id} independently reproduced one-ulp sensitivity",
             )
-            independent_condition = independent_condition_estimate(total, dimension)
+            # The producer condition is a raw ordered-binary64 diagnostic.
+            # Reconstruct the exact binary64 tangent and independently run the
+            # same lab-local one-sided-Jacobi path before accepting its value
+            # or ``unresolved`` status.  Decimal-100 remains a separate
+            # scientific classifier; it is never used to authenticate the raw
+            # producer field.
+            _binary_material, _binary_geometric, binary_total = (
+                binary64_tangent_decomposition(payload.model, payload.current)
+            )
+            binary_condition = binary64_condition_estimate(binary_total)
             if row["condition_estimate"] == "unresolved":
-                audit.require(independent_condition is None, f"{evaluation_id} condition classification")
-                condition_resolved = False
-            else:
-                condition = decimal64(row["condition_estimate"], f"{evaluation_id} condition")
-                audit.require(independent_condition is not None, f"{evaluation_id} condition classification")
-                relative_condition_error = abs(condition - independent_condition) / max(TINY64, independent_condition)
                 audit.require(
-                    relative_condition_error <= D("1e-8") and condition >= 0,
-                    f"{evaluation_id} condition estimate",
+                    binary_condition is None,
+                    f"{evaluation_id} binary64 condition classification",
                 )
-                condition_resolved = True
+            else:
+                condition = decimal64(
+                    row["condition_estimate"], f"{evaluation_id} condition"
+                )
+                audit.require(
+                    binary_condition is not None,
+                    f"{evaluation_id} binary64 condition classification",
+                )
+                assert binary_condition is not None
+                expected_binary_condition = D.from_float(binary_condition)
+                # The direct Jacobi operation order and classifier are fixed,
+                # but C++ ``std::sqrt``/``std::hypot`` and Python ``math`` may
+                # differ by a small runtime-dependent rounding trace over 256
+                # sweeps.  Reuse the preregistered scaling/covariance relative
+                # arithmetic multiplier solely as a raw-integrity envelope;
+                # this is not a scientific equality gate against Decimal-100.
+                audit.require(
+                    within(
+                        condition,
+                        expected_binary_condition,
+                        arithmetic_tolerance(
+                            dimension,
+                            max(
+                                abs(condition),
+                                abs(expected_binary_condition),
+                                TINY64,
+                            ),
+                            131072,
+                        ),
+                    )
+                    and condition >= 0,
+                    f"{evaluation_id} binary64 condition estimate",
+                )
+
+            independent_condition = independent_condition_estimate(total, dimension)
+            condition_classification_agrees = condition_reference_agreement(
+                binary_condition, independent_condition
+            )
+            # Resolved numeric distance is deliberately diagnostic-only.  The
+            # two paths have different arithmetic contracts; only a registered
+            # classifier disagreement blocks dynamics.
+            if binary_condition is not None and independent_condition is not None:
+                _resolved_condition_relative_distance = (
+                    abs(D.from_float(binary_condition) - independent_condition)
+                    / max(TINY64, abs(independent_condition))
+                )
+            row_degenerate = False
+            if registered and not findings.degeneracy(
+                condition_classification_agrees
+            ):
+                row_degenerate = True
 
             # Independent collapse gradient direction: a deterministic full
             # packet direction, with steps scaled to the current minimum
@@ -3479,18 +3780,22 @@ def validate_compression(
                 f"{evaluation_id} independently reproduced adjacent-length status",
             )
             degeneracy_pass = (
-                condition_resolved
+                independent_condition is not None
                 and hp_raw_converged
                 and hp_error <= hp_allowed
                 and (not registered or expected_adjacent)
             )
             if registered:
                 if not findings.degeneracy(degeneracy_pass):
-                    registered_degeneracies += 1
+                    row_degenerate = True
             producer_pass = (not registered or exported_adjacent)
             findings.producer_failure_rows += int(not producer_pass)
             if not producer_pass:
                 findings.degeneracy(False)
+                if registered:
+                    row_degenerate = True
+            if registered and row_degenerate:
+                registered_degeneracies += 1
             audit.require(
                 boolean(row["pass"], f"{evaluation_id} compression pass") == producer_pass,
                 f"{evaluation_id} compression producer gate mismatch",

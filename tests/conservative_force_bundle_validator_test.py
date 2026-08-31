@@ -200,6 +200,38 @@ def main(argv: Sequence[str] | None = None) -> int:
         ):
             raise AssertionError("validator accepted raw error re-emergence after floor")
 
+        # The raw condition diagnostic is independently reproduced with the
+        # same ordered-binary64 one-sided-Jacobi transition, rather than being
+        # compared directly to the Decimal-100 scientific reference.
+        diagonal = [[0.0 for _ in range(6)] for _ in range(6)]
+        diagonal[0][0] = 1.0
+        diagonal[1][1] = -0.25
+        if implementation.binary64_condition_estimate(diagonal) != 4.0:
+            raise AssertionError("binary64 signed-spectrum condition self-test")
+        threshold = 512.0 * 6.0 * sys.float_info.epsilon
+        ambiguous = [[0.0 for _ in range(6)] for _ in range(6)]
+        ambiguous[0][0] = 1.0
+        ambiguous[1][1] = threshold
+        if implementation.binary64_condition_estimate(ambiguous) is not None:
+            raise AssertionError("binary64 ambiguity-band condition self-test")
+        below_band = [[0.0 for _ in range(6)] for _ in range(6)]
+        below_band[0][0] = 1.0
+        below_band[1][1] = threshold / 16.0
+        if implementation.binary64_condition_estimate(below_band) != 1.0:
+            raise AssertionError("binary64 null-tail condition self-test")
+        above_band = [[0.0 for _ in range(6)] for _ in range(6)]
+        above_band[0][0] = 1.0
+        above_band[1][1] = 16.0 * threshold
+        expected_above = 1.0 / (16.0 * threshold)
+        if implementation.binary64_condition_estimate(above_band) != expected_above:
+            raise AssertionError("binary64 resolved-tail condition self-test")
+        if implementation.condition_reference_agreement(4.0, None):
+            raise AssertionError("condition classifier disagreement was accepted")
+        if not implementation.condition_reference_agreement(
+            4.0, Decimal("4.000001")
+        ):
+            raise AssertionError("resolved condition distance became a hidden gate")
+
         # A mostly rigid vector can still lie in the K4-minus-edge rigidity
         # kernel.  The registered floppy control must be the unit mechanism
         # orthogonal to all six realized rigid modes, not merely contain some
@@ -374,6 +406,44 @@ def main(argv: Sequence[str] | None = None) -> int:
         finally:
             implementation.registered_raw_convergence = original_convergence
 
+        # A structurally authentic raw binary64 condition can disagree with
+        # the independent Decimal classifier.  That is registered degeneracy
+        # evidence, not malformed-bundle rejection.  Patch only the independent
+        # classifier to exercise the ordered decision through materialization.
+        classification_output = root / "final-condition-classification"
+        original_condition = implementation.independent_condition_estimate
+        implementation.independent_condition_estimate = (
+            lambda _matrix, _dimension: None
+        )
+        try:
+            _checks, _pre_hash, classification_decision = (
+                implementation.materialize(
+                    producer, classification_output, allow_dirty=True
+                )
+            )
+            if classification_decision != (
+                "retain_force_but_block_dynamics_on_degeneracy"
+            ):
+                raise AssertionError(
+                    "classifier disagreement did not seal as degeneracy"
+                )
+            classification_summary = json.loads(
+                (classification_output / "summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            if (
+                classification_summary["degeneracy_failure_events"] <= 0
+                or classification_summary[
+                    "all_registered_noncoincident_cases_passed"
+                ]
+            ):
+                raise AssertionError(
+                    "classifier disagreement was not explicit in summary"
+                )
+        finally:
+            implementation.independent_condition_estimate = original_condition
+
         def corrupt_order(bundle: Path) -> None:
             def change(rows: list[dict[str, str]]) -> None:
                 rows[0]["observed_order"] = float(
@@ -446,6 +516,34 @@ def main(argv: Sequence[str] | None = None) -> int:
                     lambda rows: next(
                         row for row in rows if row["status"] == "valid_noncoincident"
                     ).__setitem__("balance_scale_power_w", "0x1.0000000000000p+0"),
+                ),
+            ),
+            (
+                "binary64-condition-value",
+                lambda bundle: mutate_csv(
+                    bundle / "compression.csv",
+                    lambda rows: next(
+                        row for row in rows
+                        if row["condition_estimate"] != "unresolved"
+                    ).__setitem__(
+                        "condition_estimate",
+                        float(
+                            2.0 * float.fromhex(next(
+                                row for row in rows
+                                if row["condition_estimate"] != "unresolved"
+                            )["condition_estimate"])
+                        ).hex(),
+                    ),
+                ),
+            ),
+            (
+                "binary64-condition-classification",
+                lambda bundle: mutate_csv(
+                    bundle / "compression.csv",
+                    lambda rows: next(
+                        row for row in rows
+                        if row["condition_estimate"] != "unresolved"
+                    ).__setitem__("condition_estimate", "unresolved"),
                 ),
             ),
             (
