@@ -76,9 +76,9 @@ INHERITED_BLOBS = {
 }
 PREREGISTERED_BLOBS = {
     "docs/conservative-force-consistency-evidence-schema.md":
-        "42099a4ec9032326cfc31c0b5dbe348ea5032d23",
+        "70090527a25d0b33b38d6dfeb64be9962f47883c",
     "docs/conservative-force-consistency-preregistration.md":
-        "309cbb1835418a87ce6d0697ef95956c42c6fad2",
+        "85ccb40d5cb543c93d5933ddf499db0538f512f1",
 }
 REQUIRED_SOURCE_FILES = {
     ".github/workflows/baseline-replication.yml",
