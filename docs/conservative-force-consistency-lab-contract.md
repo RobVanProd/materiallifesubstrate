@@ -45,16 +45,22 @@ H_force = (H_parent+H_parent^T)/2.
 
 Both source and canonical values and their correction are evidence.  Setup
 fails if the correction exceeds the accepted parent symmetry tolerance.  This
-is not regularisation: `e^T H_parent e = e^T H_force e` in exact real
-arithmetic because an antisymmetric quadratic form is zero.  A force
-evaluation may not rebuild or renormalise any reference data from current
-geometry.  A semantic relation permutation acts through an explicit
-coordinate permutation of `e`, `g`, and `H_force`; it is not permission to
-create a different constitutive operator.
+is not diagonal or eigenvalue regularisation.  `H_force` is the bounded
+binary64 representation of the symmetric quadratic-form operator;
+pair-average rounding is exported and is not misreported as exact real
+arithmetic, nor are the raw eigenvalues of the nonsymmetric stored parent
+claimed unchanged.  A force evaluation may not rebuild or renormalise any
+reference data from current geometry.  A semantic relation permutation acts
+through an explicit coordinate permutation of `e`, `g`, and `H_force`; it is
+not permission to create a different constitutive operator.
 
 The evaluator has no persistent current strain, dilatation, direction,
 gradient, tensor, force, or history state.  All current quantities are derived
 afresh from the supplied positions and frozen reference data.
+Packet mass is carried only by the inherited packet record and is unused by
+this evaluator.  Supplied velocity is a virtual m/s probe used only for the
+continuous power identity.  There is no clock, timestep, update, or state
+transition in this laboratory.
 
 ## Energy and analytic force law
 
@@ -159,11 +165,13 @@ contact treatment requires a separate authorised experiment.
 
 ## Numerical approximation and failure modes
 
-The C++ reference evaluator uses deterministic binary64 arithmetic and a
-canonical accumulation order.  The independent Python implementation rebuilds
+The C++ reference evaluator uses deterministic eight-byte, 53-bit IEC-559
+binary64 arithmetic and a canonical accumulation order, with contraction
+disabled by `-ffp-contract=off` or `/fp:strict`; the new evaluator and producer
+do not use native `long double`.  The independent Python implementation rebuilds
 the energy and gradient from exported reference/current coordinates and the
 complete exported `H`; it never calls the C++ force routine.  Registered
-subsets use at least 90 decimal digits for directional derivatives and tangent
+subsets use exactly 100 decimal digits for directional derivatives and tangent
 checks.
 
 Known failure modes include stale or current-recomputed reference data,
@@ -172,3 +180,23 @@ sign errors, partial output at coincidence, cancellation in force/torque
 sums, dropped geometric tangent terms, hidden ID orientation, and loss of
 resolution near collapse.  A unit test alone does not establish physical
 validity.
+
+## Test map
+
+The seven mapped C++ tests are:
+
+- `conservative force is exactly the frozen relation gradient`;
+- `conservative reference tangent joins the accepted linear Hessian`;
+- `conservative finite tangent includes symmetric geometric response`;
+- `conservative force is objective covariant label free and dimensioned`;
+- `conservative collapse path stays explicit and coincidence fails closed`;
+- `conservative force does not fabricate the missing edge mechanism`; and
+- `conservative force rejects malformed frozen coordinate data`.
+
+Additional gates cover the C++ schema and deterministic raw twins, two-stage
+Python materialisation/validation, validator mutation rejection, the
+Decimal-100 oracle and its mutations, outer-seal mutations, the pinned Lean
+build/axiom report, and the formal trust scan.  CTest smoke is reduced and
+non-claim-bearing; canonical evidence uses all eight registered graphs and all
+three policies.  These tests establish only the encoded force-consistency
+contract, never physical validity or permission to integrate motion.

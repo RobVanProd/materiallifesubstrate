@@ -8,7 +8,7 @@ final bundle preserves the complete closed C++ producer bundle under
 
 | Final path | Required contents |
 |---|---|
-| `summary.json` | bounded decision, row/failure counts, domain and prohibited-feature boundary |
+| `summary.json` | bounded decision, row counts, predicate-failure event counts, inconclusive reasons, domain and prohibited-feature boundary |
 | `provenance.json` | independent-stage identity plus source/parent/evidence identity, inherited blobs, seed, tool and schema versions |
 | `manifest.json` | SHA-256 of every payload and canonical pre-hash |
 | `independent_directional_derivatives.csv` | every registered raw 100-decimal step, extrapolated derivative, independently derived analytic work, exported-C++ directional work, and their separate convergence/agreement gates |
@@ -69,9 +69,63 @@ old/new semantic relation map needed to compare `P H P^T`, `P e`, and `P g`.
 Packet-ID bijections similarly carry canonical semantic IDs.  Missing or
 duplicate semantic coordinates fail closed.
 
+Every metamorphic row also carries the SHA-256 digest of the reconstructed,
+coordinate-transformed `H`; the validator recomputes it.  Torque balance uses
+the larger absolute-term sum about the two registered origins.  Power balance
+uses both elementary endpoint relation-work terms and relation-rate terms, so
+the scale is retained before packet-force cancellation.
+
+The producer provenance freezes an eight-byte, 53-significand-bit IEC-559
+binary64 contract, explicit operation order, and disabled contraction.  The
+new evaluator/producer and independent binary64 emulator do not use native
+`long double`.  Same-toolchain twin trees are byte-identical.  GCC, Clang, and
+MSVC CI results are tolerance-based cross-toolchain replications, not byte
+twins.
+
+`current_packets.csv` velocity columns are virtual velocities in m/s for the
+power identity.  A `direction.*` semantic row also binds the same independently
+reconstructed normalised numeric pattern as dimensionless displacement `d` in
+`x+alpha d`, with `alpha` in metres.
+
+Summary keys `inconclusive_failure_events`,
+`energy_gradient_failure_events`, `force_conservation_failure_events`,
+`finite_consistency_failure_events`, and `degeneracy_failure_events` count
+failed independent predicates rather than rows or cases.
+`producer_failure_rows` is retained separately, and `inconclusive_reasons`
+contains sorted distinct reason tokens.
+
 No force entry is permitted for an evaluation whose status is
 `coincident_relation`; the manifest must instead bind the deterministic domain
 failure record.  The summary must contain the exact token `NO_PROMOTION` and
 must state that no integration, authoritative force installation, damping,
 contact, fracture, damage, gravity, chemistry, organisms, rendering, GPU, or
 thermal conversion was added.
+
+Every four-level high-precision sequence remains in the bundle and must improve
+until its registered floor, then remain below that floor; a later re-emergence
+cannot be hidden by extrapolation.  Compression ratios below `2^-32` are
+diagnostic-only and cannot alter the decision.  Smoke bundles are reduced
+integration fixtures; a canonical claim requires `summary.full=true` and the
+complete eight-graph, 24-operator inventory.
+
+## Outer evidence boundary
+
+The outer evidence directory contains the two byte-identical full bundles, a
+complete committed-source snapshot, and an exact `logs/` inventory.  The logs
+inventory contains one structured receipt for each configure, build, unfiltered
+CTest, raw-producer, materialisation, twin comparison, validator and mutation
+regression, exact oracle and regression, Lean build/axiom report, formal trust
+scan, compiler/tool identity, and accepted-parent verification command.  It
+also contains `ci-run.json`, `ci-artifacts.json`, and `ci-artifacts/` with the
+five required public CI artifact archives and their safely expanded contents.
+
+Command receipts are integrity and path-binding records, not signatures or an
+independent witness of operating-system execution.  The sealer therefore
+requires a successful public run at the exact source SHA and, at creation time,
+downloads the exact run attempt's artifacts again.  Stable artifact IDs/names
+and every expanded file commitment must match the captured copy before the
+outer seal is created.  Archive container bytes need not match because GitHub
+may regenerate ZIP containers around identical files.  Offline verification
+then checks the sealed source, receipts, archives, expanded contents, run
+record, artifact commitments, public tag, and outer manifest without silently
+refetching or rewriting evidence.

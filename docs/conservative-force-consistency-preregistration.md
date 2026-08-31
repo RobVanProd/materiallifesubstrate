@@ -46,12 +46,16 @@ H_force[i,j] = H_force[j,i]
 
 Each unordered pair is evaluated once with one binary64 addition followed by
 multiplication by exactly representable `1/2`, then mirrored byte-for-byte;
-the diagonal is copied unchanged.  Evidence records both parent entries, the
-frozen entry, and maximum correction.  Setup fails if the correction exceeds
+the diagonal is copied unchanged.  This is the binary64 representation of the
+symmetric quadratic-form operator, not a claim that the rounded matrix equals
+the real-arithmetic pair average bit-for-bit.  Evidence records both parent
+entries, the frozen entry, the pair-average representation residual, and the
+maximum correction.  Setup fails if the correction exceeds
 `32768 d eps max(max_abs(H_parent),tiny)`, the accepted parent-class symmetry
-scale.  This preserves the exact quadratic form because the removed component
-is antisymmetric.  It does not shift eigenvalues, add a diagonal, alter
-locality, or use current geometry.  All evaluations use only `H_force`.
+scale.  No diagonal shift, eigenvalue regularisation, locality change, or
+current-geometry input is applied.  The tiny bounded representation delta is
+retained honestly; raw eigenvalues of the nonsymmetric stored parent are not
+claimed to be unchanged.  All evaluations use only `H_force`.
 
 Only the local incident-collective family is selectable.  The three registered
 policies use `G=1`, `B=1/4`, and `A=3(K/G)/20` in the accepted finite-graph
@@ -114,8 +118,11 @@ For each such evaluation use:
 - three normalised infinitesimal rotations about the current centroid;
 - six normalised SplitMix64(`260828` plus semantic case index) directions.
 
-The high-precision symmetric directional difference uses 100 decimal digits
-and dimensionless steps relative to characteristic length
+The high-precision symmetric directional difference uses 100 decimal digits.
+Each reconstructed direction `d` is dimensionless and normalised; the scalar
+perturbation `alpha=h` is in metres, so `x+alpha d` is dimensioned and
+`dU/dalpha=-f dot d` is in newtons.  The dimensionless step ratios relative to
+characteristic length are
 
 ```text
 h/L in {10^-8,10^-12,10^-16,10^-20}.
@@ -128,10 +135,10 @@ pairs with exact high-precision arithmetic and evaluate that degree-three
 polynomial at zero.  This removes the registered `h^2`, `h^4`, and `h^6`
 terms without changing or adding sample levels.  A direction passes when the
 analytic value agrees with that extrapolated estimate to relative `1e-45` or
-absolute `1e-55 J` after the registered dimensional normalisation, and at
+absolute `1e-55 N` after the registered dimensional normalisation, and at
 least the first three nonzero raw truncation errors decrease.  Translation
 and rotation directions also require the analytic derivative to satisfy the
-high-precision zero-work bound `1e-55 J`.
+high-precision zero-work bound `1e-55 N`.
 
 ### Pre-final estimator consistency amendment
 
@@ -146,6 +153,12 @@ tolerance, omit a raw row, add a smaller step, or use final-sweep results.
 
 Ordinary binary64 finite differences are recorded only as diagnostics and
 cannot satisfy the independent-gradient gate.
+
+For every registered four-level raw convergence decision, errors must strictly
+improve until they enter the registered arithmetic floor.  Once at that floor,
+every finer level must remain at or below it.  A later floor value cannot excuse
+an earlier growing transition, and an error that re-emerges above the floor is
+an authenticated numerical ambiguity rather than a pass.
 
 ## 4. Reference tangent limit
 
@@ -228,7 +241,9 @@ the force Jacobian with symmetric directional differences at
 
 The finite-tangent numerical estimate uses the same registered polynomial
 extrapolation in `h^2` over all four raw centred levels.  Every raw level and
-its residual remains in evidence; extrapolation cannot hide nonconvergence.
+its residual remains in evidence; the convergence-until-floor rule above is
+applied to the complete raw sequence, so extrapolation cannot hide
+nonconvergence.
 
 Material and geometric terms remain separate in evidence.  No normal-equation
 or nonsymmetric approximation can replace the scalar-potential Hessian.
@@ -245,6 +260,7 @@ r/l0 in {1,2^-4,2^-8,2^-12,2^-16,2^-20,2^-24,2^-28,2^-32}.
 
 Additional diagnostic-only ratios `{2^-36,2^-40,2^-44,2^-48}` probe the
 binary64 boundary but cannot weaken the registered `2^-32` domain floor.
+They cannot change the bounded decision.
 Each raw producer row records force magnitude,
 material/geometric/total tangent norms, condition estimate, a
 `binary64_gradient_error_n` diagnostic, and one-ulp coordinate sensitivity.
@@ -280,6 +296,22 @@ semantic mappings, manifest hashes, exact coincidence status, and twin bytes
 must match exactly.  A residual inside tolerance is numerical evidence only,
 not by itself a claim of physical validity.
 
+For torque, `S_abs` is the maximum of the origin and shifted-origin absolute
+elementary torque-term sums.  For the power identity it is the sum, over every
+relation, of the two elementary endpoint-work magnitudes
+`|(g n) dot v_i|+|(-g n) dot v_j|` and the relation-rate magnitude
+`|g n dot (v_j-v_i)|`.  This retains the cancellation scale that governs
+packet-force assembly instead of measuring only an already-cancelled packet
+power.
+
+The new evaluator, producer, and independent binary64 emulator require an
+eight-byte, 53-significand-bit IEC-559 `double`, explicit deterministic
+operation order, and disabled contraction (`-ffp-contract=off` for GCC/Clang,
+`/fp:strict` for MSVC).  They do not use native `long double`.  Same-toolchain
+twin producer/materialiser trees must be byte-identical.  GCC, Clang, and MSVC
+CI are tolerance-based cross-toolchain replications; no cross-toolchain byte
+identity is claimed.
+
 ## 10. Evidence and replication gates
 
 The final evidence requires:
@@ -293,6 +325,11 @@ The final evidence requires:
 - warning-as-error GCC, Clang, and MSVC builds with unfiltered CTest;
 - pinned Lean build, source scan, and exported axiom report;
 - public CI at the exact source SHA;
+- a fresh create-time download of every required CI attempt artifact, matched
+  to that run/attempt by artifact ID and name and compared with the captured
+  expanded-file content commitments;
+- integrity-bound command receipts whose exact executable, source/build,
+  bundle, parent-evidence, validator/oracle, and Lean paths are cross-checked;
 - canonical checkpoint/round-trip evidence where a producer checkpoint exists;
 - an immutable public tag, outer seal, deterministic archive, and fresh public
   download verification.
@@ -339,7 +376,14 @@ do not change the registered cases, tolerances, or decision order:
   similarity probe is independently reconstructed from its semantic ID, the
   frozen seed, and registered formula.  Exported maps are checked against that
   reconstruction rather than accepted as premises.  Submitted packet order is
-  retained so packet-order probes remain auditable;
+  retained so packet-order probes remain auditable, and every transformed `H`
+  is bound to the reconstructed relation-coordinate permutation by an exact
+  SHA-256 digest;
+- `current_packets.csv` velocity columns are virtual physical velocities in
+  metres per second for the continuous power tests.  For `direction.*`
+  evaluations the same independently reconstructed normalised numeric pattern
+  is interpreted as the dimensionless displacement direction `d` in
+  `x+alpha d`; the semantic ID, not the column label alone, selects that role;
 - the independent directional table includes the directional work computed
   from exported C++ packet forces as well as the independently derived Decimal
   analytic work and high-precision energy derivative.  The C++ work is checked
@@ -361,12 +405,25 @@ do not change the registered cases, tolerances, or decision order:
   representation-roundoff bound; frozen reference lengths are never silently
   recomputed from current geometry.
 
+CTest smoke uses only two reduced, non-claim-bearing configurations.  It exists
+to exercise schemas, deterministic twins, materialisation, independent
+validation, mutations, and seal logic.  Canonical evidence must have
+`summary.full=true` and exactly the registered eight configurations, three
+policies per graph, and complete registered row inventories.
+
 ## 11. Decision order
 
-1. Any inherited-blob, implementation, provenance, exact-reference,
-   nondeterminism, high-precision, source, or decisive arithmetic ambiguity
-   gives `stop_inconclusive_or_implementation_failure`.
-2. Energy/gradient disagreement gives `reject_force_implementation`.
+Before this order is applied, malformed manifests, fixture/provenance/source
+identity failures, missing rows, or nondeterministic twin bytes fail closed and
+publish no canonical bundle.  They are preserved externally as failed runs.
+
+1. For an otherwise authenticated and structurally valid bundle, an unresolved
+   high-precision/raw-convergence or decisive arithmetic ambiguity gives
+   `stop_inconclusive_or_implementation_failure`.  The summary records
+   `inconclusive_failure_events` and the distinct `inconclusive_reasons`.
+2. A resolved energy/gradient disagreement, including a reference-state
+   `e=0`, `f=0` violation after fixture arithmetic is validated, gives
+   `reject_force_implementation`.
 3. Resolved nonzero total force or torque outside registered arithmetic bounds
    gives `reject_force_conservation`.
 4. Failed reference-tangent limit or nonsymmetric conservative tangent gives
@@ -379,3 +436,7 @@ do not change the registered cases, tolerances, or decision order:
    `retain_conservative_relational_force_for_research`.
 
 Every result is `NO_PROMOTION` to dynamics.  The lab stops after sealing.
+Summary `*_failure_events` fields count failed independently evaluated
+predicates and therefore are not row, case, or lineage counts.
+`producer_failure_rows` remains the exact number of failed producer-local row
+predicates and is reported separately.

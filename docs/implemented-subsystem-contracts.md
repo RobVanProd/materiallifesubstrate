@@ -16,7 +16,7 @@ validity, convergence, chemistry expressivity, or an MLS gate by itself.
 |---|---|---|
 | Quantities | Dimension-tagged signed 64-bit fixed quanta with checked arithmetic. | Unit metadata, conversions, dimensional products/quotients, uncertainty. |
 | Structural chemistry | Conserved element counts, compound graphs, additive properties, configured balanced reaction extents. | Dynamic bond search, kinetics, equilibrium, diffusion, catalysis, molecular geometry. |
-| Packet SoA | Persistent live handles, exact extensive stores, exactly representable dimensioned-time ballistic motion, explicit pair transfers. | Rounded/fractional integration, forces, contact, deformation, damage, fracture, constitutive material history. |
+| Packet SoA | Persistent live handles, exact extensive stores, exactly representable dimensioned-time ballistic motion, explicit pair transfers. | Rounded/fractional integration, authoritative/runtime force storage or application, contact, deformation, damage, fracture, constitutive material history. |
 | Sparse grid | Disposable point-to-voxel index and exact extensive aggregation. | MPM scatter/gather, fields, pressure, interpolation, sparse bricks, sleeping/paging. |
 | Physical support | Exact spherical point-support predicate from packet positions and a dimensioned radius. | Smooth kernels, packet extent/shape, contact, neighbor-search acceleration. |
 | Ledger/boundaries | Baseline-plus-signed-boundary audit for elements, mass, total energy, linear momentum, and orbital angular momentum. | Spin/couples, charge, transaction IDs, per-reservoir identities, numerical tolerances. |
@@ -25,8 +25,9 @@ validity, convergence, chemistry expressivity, or an MLS gate by itself.
 | Transfer laboratory | Isolated deterministic binary64 PIC/APIC/FLIP diagnostic candidates and separate residuals. | Authoritative world integration, constitutive mechanics, physical validation, candidate promotion. |
 | Mechanical-observability laboratory | Read-only corrected local-gradient, explicit distance-relation, and conditional objective-volume operators with complete numerical kernel diagnostics. | Constitutive law, force, stiffness, stress, time integration, contact, fracture, grid-derived mechanics state, candidate promotion. |
 | Constitutive-expressivity laboratory | Read-only pair-separable and local incident-relation collective energy evaluators, explicit `H=L^T L`, and direct `L R` kernel diagnostics. | Force application, motion integration, stress, contact, fracture, authoritative material state, candidate promotion. |
+| Conservative-force-consistency laboratory | Read-only finite relational energy gradient, continuous force/torque/power identities, and material-plus-geometric tangent diagnostics on the explicit noncoincident domain. | Authoritative force installation, time integration, damping, contact/collapse treatment, damage, fracture, gravity, thermal conversion, candidate promotion. |
 
-This file contains ten numbered implementation records. Additional bounded records are the
+This file contains eleven numbered implementation records. Additional bounded records are the
 [physical interaction support contract](physical-support-contract.md), kept
 separate because it constrains every future pair law. Orbital angular momentum
 is a cross-cutting packet/ledger/world contract documented in
@@ -1176,9 +1177,96 @@ and exact-oracle mutation rejection. Passing them establishes only the
 registered algebraic expressivity claim; it cannot promote mechanics or
 dynamics.
 
+## 11. Conservative-force-consistency laboratory
+
+**Implementation:** `include/mls/conservative_force_consistency_lab.hpp`,
+`src/conservative_force_consistency_lab.cpp`, and the isolated diagnostic
+producer.  This is a read-only experiment; no result is installed in `World`.
+
+### State variables and units
+
+Inputs are reference/current centers `X,x` [m], frozen positive reference
+lengths `l0` [m], explicit relation endpoints, and the frozen symmetric
+relation operator `H` [J/m2].  For each relation the evaluator derives current
+length `r` [m], unit direction `n`, extension `e=r-l0` [m], and conjugate
+`g=H e` [N].  It returns scalar energy `U` [J], packet forces `f` [N], current
+rigidity operator `R` [1], energy Hessian `K` [N/m], and force Jacobian
+`J_f=-K` [N/m].
+
+All current relation directions, extensions, conjugates, packet forces, and
+tangents are transient.  Packet mass is unused.  Virtual packet velocity is
+used only as an m/s power probe.  There is no physical clock, timestep,
+persistent force, update law, or state transition.
+
+### Evaluation law and conservation boundary
+
+On the explicit domain `r_a>0`, the evaluator computes
+
+```text
+U=0.5 e^T H e,  g=H e,
+f_i += g_a n_a,  f_j -= g_a n_a.
+```
+
+The collective `g_a` is computed once in canonical relation coordinates and
+may depend on other incident extensions through off-diagonal `H`; it is not an
+independent-spring substitution.  Continuous identities are
+
+```text
+sum_i f_i=0,
+sum_i (x_i-o) cross f_i=0,
+g dot (R v)=-(f dot v).
+```
+
+These are instantaneous force-law/virtual-power identities only.  They make no
+discrete momentum or energy claim because no integrator exists.  Numerical
+residuals are never transferred to heat or another ledger.
+
+At reference, `e=g=f=0` and `K=R0^T H R0`.  Away from reference, the evaluator
+keeps the material term `R^T H R` separate from the geometric relation-
+direction term and checks that their sum is the symmetric scalar-energy
+Hessian and the negative force Jacobian.
+
+### Numerical approximation
+
+The new evaluator/producer uses explicit-order, eight-byte, 53-bit IEC-559
+binary64 with contraction disabled and no native `long double`.  Parent `H`
+triangle roundoff is frozen by one mirrored binary64 pair average; its bounded
+representation delta is exported, not called exact or used as regularisation.
+The independent Python path reconstructs energy, force, and tangent with
+Decimal-100 and implements a separately ordered binary64 emulator.  High-
+precision directional and tangent checks preserve all four registered raw
+levels plus extrapolation; convergence must improve until its arithmetic floor
+and may not re-emerge above it.  Deterministic twins are byte-identical only
+within the same toolchain; cross-toolchain CI is tolerance-based replication.
+
+### Failure modes and tests
+
+The evaluator fails closed before emitting partial physical output when any
+current relation is coincident.  It also rejects malformed/duplicate packet
+coordinates, invalid relation endpoints/order, nonpositive reference lengths,
+nonfinite data, incompatible `H`, and excessive symmetric-freeze correction.
+Audited scientific failures include energy-gradient disagreement, nonzero
+resultant force/torque, failed power, a missing geometric tangent, nonsymmetric
+mixed partials, objectivity/scale/label/order drift, fabricated restoring force
+on the missing-edge mechanism, and numerical loss of resolution on the
+positive collapse approach.
+
+Mapped C++ tests are `conservative force is exactly the frozen relation
+gradient`, `conservative reference tangent joins the accepted linear Hessian`,
+`conservative finite tangent includes symmetric geometric response`,
+`conservative force is objective covariant label free and dimensioned`,
+`conservative collapse path stays explicit and coincidence fails closed`,
+`conservative force does not fabricate the missing edge mechanism`, and
+`conservative force rejects malformed frozen coordinate data`.  Additional
+schema, raw-twin, materialiser, independent-validator, mutation, Decimal-100
+oracle, outer-seal, Lean, and trust-scan gates are mapped in the dedicated
+[force lab contract](conservative-force-consistency-lab-contract.md).  Smoke is
+reduced and non-claim-bearing.  Passing any gate does not establish physical
+validity or promote dynamics.
+
 ## Review rule
 
-All records (the ten numbered records here plus the dedicated physical-support,
+All records (the eleven numbered records here plus the dedicated physical-support,
 time/checkpoint, transfer-lab, and angular contracts) must be updated when their
 public state, operation, formula, or test mapping changes. Changes to point
 interaction, boundary, or ledger semantics must also update the cross-cutting

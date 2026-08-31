@@ -51,16 +51,14 @@ In endpoint form the `i` packet receives `+g_a n_a` and `j` receives
 from a test tolerance.
 
 The parent builder's two stored triangles can differ by binary64 accumulation
-roundoff.  The force lab records those parent entries and freezes
-`H_force=(H_parent+H_parent^T)/2` once.  For any real vector `e`,
-
-```text
-e^T H_parent e = e^T H_force e,
-```
-
-because `H_parent-H_force` is antisymmetric.  This makes the stored matrix
-match the symmetric mathematical operator required by the derivative without
-changing the quadratic form or introducing a current-state correction.
+roundoff.  The force lab records those parent entries and freezes the mirrored
+binary64 pair average `H_force` once.  In exact real arithmetic the symmetric
+part defines the same quadratic form; the stored binary64 average can introduce
+a further bounded representation residual.  That residual and the parent-to-
+frozen correction are exported and gated.  This makes the force evaluator use
+one explicit symmetric representation without a diagonal/eigenvalue
+regularisation or current-state correction; it does not claim the raw
+nonsymmetric parent eigenvalues are unchanged.
 
 ## Internal force, torque, and power
 
