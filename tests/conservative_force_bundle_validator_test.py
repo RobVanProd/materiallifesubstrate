@@ -245,6 +245,52 @@ def main(argv: Sequence[str] | None = None) -> int:
             implementation.unflatten(mechanism, packet_ids),
             floppy_audit,
         )
+        # The preregistered floppy tangent has an exactly-zero linear target
+        # and uses a componentwise infinity norm.  It must not silently drift
+        # back to the producer's former per-packet Euclidean diagnostic.
+        characteristic = max(
+            float(value) for value in floppy_payload.model.reference_lengths
+        )
+        floppy_epsilon = (2.0 ** -8) * characteristic
+        floppy_current = {}
+        for packet_index, packet_id in enumerate(packet_ids):
+            reference = floppy_payload.model.reference[packet_id]
+            floppy_current[packet_id] = tuple(
+                Decimal.from_float(
+                    float(reference[axis])
+                    + floppy_epsilon * float(mechanism[3 * packet_index + axis])
+                )
+                for axis in range(3)
+            )
+        parent_h_scale = max(
+            abs(float(value))
+            for row in floppy_payload.operator.parent_h
+            for value in row
+        )
+        reproduced_floppy = implementation.binary64_floppy_tangent_error(
+            floppy_payload.model,
+            floppy_current,
+            floppy_epsilon,
+            parent_h_scale,
+        )
+        floppy_force = implementation.binary64_evaluate(
+            floppy_payload.model, floppy_current
+        ).forces
+        expected_infinity = max(
+            abs(component) / floppy_epsilon
+            for packet_id in packet_ids
+            for component in floppy_force[packet_id]
+        ) / parent_h_scale
+        former_euclidean = max(
+            sum(component * component for component in floppy_force[packet_id])
+            ** 0.5
+            / floppy_epsilon
+            for packet_id in packet_ids
+        ) / parent_h_scale
+        if reproduced_floppy != expected_infinity:
+            raise AssertionError("floppy tangent is not the registered infinity norm")
+        if reproduced_floppy == former_euclidean:
+            raise AssertionError("floppy tangent regressed to per-packet Euclidean norm")
         rigid_weight = Decimal(15).sqrt() / Decimal(4)
         mostly_rigid = [
             Decimal("0.25") * mechanism_value + rigid_weight * rigid_value

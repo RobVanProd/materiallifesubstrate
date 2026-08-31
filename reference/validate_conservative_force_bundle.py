@@ -761,6 +761,28 @@ def binary64_reference_tangent_error(
     ) / denominator
 
 
+def binary64_floppy_tangent_error(
+    model: RelationModel,
+    current: Mapping[int, tuple[D, D, D]],
+    epsilon: float,
+    parent_h_scale: float,
+) -> float:
+    """Reproduce the producer's intentionally-floppy scalar diagnostic.
+
+    Unlike the ordinary reference-tangent rows, the registered target for this
+    accepted non-rigid mechanism is exactly zero.  Report the infinity norm of
+    force divided by epsilon and the frozen parent-H scale; a binary64
+    ``R^T H R d`` residue is diagnostic noise, not a restoring-force target.
+    """
+
+    evaluated = binary64_evaluate(model, current)
+    maximum = 0.0
+    for packet_id in model.packet_ids:
+        for component in evaluated.forces[packet_id]:
+            maximum = max(maximum, abs(component) / epsilon)
+    return maximum / max(parent_h_scale, sys.float_info.min)
+
+
 def high_precision_reference_tangent_error(
     payload: EvaluationPayload,
     direction: Sequence[D],
@@ -2912,16 +2934,26 @@ def validate_reference_tangent(
             errors.append(error)
             exported_error_float = binary64(row["error_infinity_scaled"], f"{evaluation_id} tangent error")
             exported_errors.append(exported_error_float)
-            reproduced_binary64_error = binary64_reference_tangent_error(
-                payload.model,
-                payload.current,
-                direction,
-                float(epsilon),
-                max(
-                    abs(float(value))
-                    for matrix_row in payload.operator.parent_h
-                    for value in matrix_row
-                ),
+            parent_h_scale = max(
+                abs(float(value))
+                for matrix_row in payload.operator.parent_h
+                for value in matrix_row
+            )
+            reproduced_binary64_error = (
+                binary64_floppy_tangent_error(
+                    payload.model,
+                    payload.current,
+                    float(epsilon),
+                    parent_h_scale,
+                )
+                if direction_kind == "floppy_mechanism"
+                else binary64_reference_tangent_error(
+                    payload.model,
+                    payload.current,
+                    direction,
+                    float(epsilon),
+                    parent_h_scale,
+                )
             )
             audit.require(
                 exported_error_float == reproduced_binary64_error,
