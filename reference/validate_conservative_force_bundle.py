@@ -890,6 +890,47 @@ def binary64_compression_diagnostics(
     return D.from_float(gradient_error), D.from_float(sensitivity), adjacent_resolved
 
 
+def high_precision_compression_gradient(
+    payload: EvaluationPayload,
+    evaluation: Any,
+    first_id: int,
+    second_id: int,
+) -> tuple[D, D, bool]:
+    """Independent Decimal-100 collapse derivative and raw convergence."""
+
+    with localcontext() as context:
+        context.prec = DIGITS
+        reference_offset = vsub(
+            payload.model.reference[second_id],
+            payload.model.reference[first_id],
+        )
+        reference_direction = tuple(
+            value / norm(reference_offset) for value in reference_offset
+        )
+        direction = [D(0)] * (3 * len(payload.model.packet_ids))
+        second_index = payload.model.packet_ids.index(second_id)
+        for axis in range(3):
+            direction[3 * second_index + axis] = reference_direction[axis]
+        analytic = -dot(force_vector(payload.model, payload.current), direction)
+        min_length = min(evaluation.lengths)
+        steps = [min_length * value for value in HP_STEP_RATIOS]
+        raw = [
+            directional_derivative(
+                payload.model, payload.current, direction, step
+            )
+            for step in steps
+        ]
+        raw_residuals = [abs(value - analytic) for value in raw]
+        extrapolated = extrapolate_polynomial_at_zero(
+            [step * step for step in steps], raw
+        )
+        error = abs(extrapolated - analytic)
+        allowed = max(D("1e-55"), D("1e-45") * abs(analytic))
+        return error, allowed, registered_raw_convergence(
+            raw_residuals, allowed
+        )
+
+
 def symmetric_eigenvalues_decimal(matrix: Sequence[Sequence[D]]) -> list[D]:
     """Independent high-precision cyclic Jacobi spectrum of a symmetric matrix."""
 
@@ -3327,24 +3368,16 @@ def validate_compression(
             # Independent collapse gradient direction: a deterministic full
             # packet direction, with steps scaled to the current minimum
             # positive relation length so no sample crosses coincidence.
-            reference_offset = vsub(
-                payload.model.reference[second_id], payload.model.reference[first_id]
+            hp_error, hp_allowed, hp_raw_converged = (
+                high_precision_compression_gradient(
+                    payload, evaluation, first_id, second_id
+                )
             )
-            reference_direction = tuple(
-                value / norm(reference_offset) for value in reference_offset
-            )
-            direction = [D(0)] * (3 * len(payload.model.packet_ids))
-            second_index = payload.model.packet_ids.index(second_id)
-            for axis in range(3):
-                direction[3 * second_index + axis] = reference_direction[axis]
-            analytic = -dot(force_vector(payload.model, payload.current), direction)
-            min_length = min(evaluation.lengths)
-            steps = [min_length * value for value in HP_STEP_RATIOS]
-            raw = [directional_derivative(payload.model, payload.current, direction, step) for step in steps]
-            extrapolated = extrapolate_polynomial_at_zero([step * step for step in steps], raw)
-            hp_error = abs(extrapolated - analytic)
-            hp_allowed = max(D("1e-55"), D("1e-45") * abs(analytic))
             hp_checks += 1
+            findings.inconclusive(
+                hp_raw_converged,
+                "compression_directional_raw_nonconvergence",
+            )
             exported_adjacent = boolean(row["adjacent_length_resolved"], "adjacent length resolved")
             audit.require(
                 exported_adjacent == expected_adjacent,
@@ -3352,6 +3385,7 @@ def validate_compression(
             )
             degeneracy_pass = (
                 condition_resolved
+                and hp_raw_converged
                 and hp_error <= hp_allowed
                 and (not registered or expected_adjacent)
             )
