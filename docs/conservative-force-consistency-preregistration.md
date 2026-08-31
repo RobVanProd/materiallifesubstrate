@@ -320,6 +320,47 @@ Both full pipelines are executed independently and the final trees must be
 byte-identical.  This division is preregistered before the first full sweep;
 it prevents binary64 C++ from claiming an impossible decimal oracle result.
 
+### Pre-final integration-audit clarifications
+
+Before any final sweep, cross-implementation audit found several places where
+the closed evidence representation needed to be made explicit.  These rules
+do not change the registered cases, tolerances, or decision order:
+
+- the producer consumes the accepted Constitutive Expressivity bundle's
+  selected top-level `configurations.csv`, `packets.csv`, and `relations.csv`
+  directly, with their accepted selected-subset hashes; the earlier complete
+  relational fixture hashes remain parent provenance and are not a second
+  producer input;
+- a producer `pass` field records only the binary64 predicate documented for
+  that producer row.  Independent Decimal/high-precision failures are recorded
+  separately and drive the bounded scientific decision; disagreement with the
+  producer's scientific conclusion is not converted into a schema failure;
+- every registered random, affine, permutation, endpoint-reversal, ID, and
+  similarity probe is independently reconstructed from its semantic ID, the
+  frozen seed, and registered formula.  Exported maps are checked against that
+  reconstruction rather than accepted as premises.  Submitted packet order is
+  retained so packet-order probes remain auditable;
+- the independent directional table includes the directional work computed
+  from exported C++ packet forces as well as the independently derived Decimal
+  analytic work and high-precision energy derivative.  The C++ work is checked
+  against both independent values using the frozen dimensionally appropriate
+  arithmetic bound; the Decimal analytic/Richardson pair retains the registered
+  high-precision tolerance;
+- positive-collapse `force_norm_n` is the Euclidean norm of the complete `3N`
+  packet-force vector.  Each tangent norm is the Frobenius norm of the complete
+  matrix.  These rotationally invariant definitions replace no registered
+  threshold and are used identically by producer and validator;
+- comparisons use the dimensioned `S_cmp=max(abs(values),tiny)` rule above;
+  no bare unitless `1` is inserted into joule, newton, watt, or newton-metre
+  scales.  The similarity-ratio tolerance is exactly the dimensionless
+  `131072 d eps`, without multiplication by the ratio magnitude;
+- an irrational reference distance stored in binary64 need not equal the exact
+  Decimal norm of the exported binary64 coordinates.  The producer's exact
+  zero-at-reference arithmetic contract and the independent real-valued
+  reconstruction are both retained and compared with a declared dimensioned
+  representation-roundoff bound; frozen reference lengths are never silently
+  recomputed from current geometry.
+
 ## 11. Decision order
 
 1. Any inherited-blob, implementation, provenance, exact-reference,
