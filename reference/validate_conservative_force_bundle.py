@@ -818,6 +818,26 @@ def high_precision_reference_tangent_error(
         ) / denominator
 
 
+def high_precision_floppy_tangent_error(
+    model: RelationModel,
+    current: Mapping[int, tuple[D, D, D]],
+    parent_h: Sequence[Sequence[D]],
+    epsilon: D,
+) -> D:
+    """Decimal-100 floppy-mechanism error against its exact zero target."""
+
+    with localcontext() as context:
+        context.prec = DIGITS
+        actual = [
+            value / epsilon for value in force_vector(model, current)
+        ]
+        denominator = max(
+            max_abs(value for matrix_row in parent_h for value in matrix_row),
+            TINY64,
+        )
+        return max_abs(actual) / denominator
+
+
 def binary64_shifted_axis(
     current: Mapping[int, tuple[D, D, D]],
     packet_ids: Sequence[int],
@@ -2928,8 +2948,17 @@ def validate_reference_tangent(
                 f"{evaluation_id} independently reconstructed reference direction",
             )
             directions.append(direction)
-            error = high_precision_reference_tangent_error(
-                payload, direction, epsilon
+            error = (
+                high_precision_floppy_tangent_error(
+                    payload.model,
+                    payload.current,
+                    payload.operator.parent_h,
+                    epsilon,
+                )
+                if direction_kind == "floppy_mechanism"
+                else high_precision_reference_tangent_error(
+                    payload, direction, epsilon
+                )
             )
             errors.append(error)
             exported_error_float = binary64(row["error_infinity_scaled"], f"{evaluation_id} tangent error")

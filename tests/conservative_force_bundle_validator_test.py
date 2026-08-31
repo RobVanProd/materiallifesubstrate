@@ -291,6 +291,38 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise AssertionError("floppy tangent is not the registered infinity norm")
         if reproduced_floppy == former_euclidean:
             raise AssertionError("floppy tangent regressed to per-packet Euclidean norm")
+        high_precision_floppy = (
+            implementation.high_precision_floppy_tangent_error(
+                floppy_payload.model,
+                floppy_current,
+                floppy_payload.operator.parent_h,
+                Decimal.from_float(floppy_epsilon),
+            )
+        )
+        with implementation.localcontext() as context:
+            context.prec = implementation.DIGITS
+            high_precision_actual = [
+                value / Decimal.from_float(floppy_epsilon)
+                for value in implementation.force_vector(
+                    floppy_payload.model, floppy_current
+                )
+            ]
+            high_precision_scale = max(
+                implementation.max_abs(
+                    value
+                    for row in floppy_payload.operator.parent_h
+                    for value in row
+                ),
+                implementation.TINY64,
+            )
+            exact_zero_target_error = (
+                implementation.max_abs(high_precision_actual)
+                / high_precision_scale
+            )
+        if high_precision_floppy != exact_zero_target_error:
+            raise AssertionError(
+                "Decimal floppy tangent did not use the registered exact zero target"
+            )
         rigid_weight = Decimal(15).sqrt() / Decimal(4)
         mostly_rigid = [
             Decimal("0.25") * mechanism_value + rigid_weight * rigid_value
