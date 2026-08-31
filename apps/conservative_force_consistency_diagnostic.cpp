@@ -889,6 +889,31 @@ struct Counts final {
         std::max(scale, std::numeric_limits<double>::min());
 }
 
+[[nodiscard]] bool converges_until_binary64_floor(
+    std::span<const double> errors, double floor) {
+    if (errors.empty()) {
+        return false;
+    }
+    auto at_floor = errors.front() <= floor;
+    for (std::size_t index = 1U; index < errors.size(); ++index) {
+        if (at_floor) {
+            // Reaching the arithmetic floor does not license a later blow-up.
+            if (errors[index] > floor) {
+                return false;
+            }
+            continue;
+        }
+        if (errors[index] <= floor) {
+            at_floor = true;
+            continue;
+        }
+        if (errors[index] >= errors[index - 1U]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 [[nodiscard]] std::string axis_name(std::size_t axis) {
     return std::array<std::string, 3>{"x", "y", "z"}.at(axis);
 }
@@ -1005,8 +1030,8 @@ void emit_inputs(
     double force_scale = 0.0;
     double torque_origin_scale = 0.0;
     double torque_shifted_scale = 0.0;
-    double packet_power_scale = 0.0;
-    double relation_power_scale = 0.0;
+    double relation_endpoint_power_scale = 0.0;
+    double relation_rate_power_scale = 0.0;
     std::map<std::uint64_t, const MechanicalPacket*> packet_lookup;
     for (const auto& packet : current) {
         packet_lookup.emplace(packet.id, &packet);
@@ -1024,21 +1049,32 @@ void emit_inputs(
             packet.position_m - second_origin, packet_force.force_n);
         torque_shifted_scale += std::abs(shifted_torque.x) +
             std::abs(shifted_torque.y) + std::abs(shifted_torque.z);
-        packet_power_scale += std::abs(mls::experimental::dot(
-            packet_force.force_n, packet.velocity_m_per_s));
     }
     for (const auto& relation : evaluated.relation_coordinates) {
         const auto& first = *packet_lookup.at(relation.relation.first_id);
         const auto& second = *packet_lookup.at(relation.relation.second_id);
+        const auto tail_force = relation.conjugate_force_n *
+            relation.direction_first_to_second;
+        relation_endpoint_power_scale +=
+            std::abs(mls::experimental::dot(
+                tail_force, first.velocity_m_per_s)) +
+            std::abs(mls::experimental::dot(
+                -1.0 * tail_force, second.velocity_m_per_s));
         const auto extension_rate = mls::experimental::dot(
             relation.direction_first_to_second,
             second.velocity_m_per_s - first.velocity_m_per_s);
-        relation_power_scale +=
+        relation_rate_power_scale +=
             std::abs(relation.conjugate_force_n * extension_rate);
     }
     const auto torque_scale =
         std::max(torque_origin_scale, torque_shifted_scale);
-    const auto power_scale = packet_power_scale + relation_power_scale;
+    // The power identity compares two differently associated evaluations.
+    // Bound its arithmetic using the elementary endpoint relation-work terms
+    // that feed packet-force assembly as well as the relation-rate terms.
+    // Using only already-assembled packet powers would erase the cancellation
+    // scale responsible for their own rounding error.
+    const auto power_scale =
+        relation_endpoint_power_scale + relation_rate_power_scale;
     const auto tolerance_force = registered_tolerance(
         current.size(), evaluated.relation_coordinates.size(), 65536.0,
         force_scale);
@@ -1330,7 +1366,16 @@ void emit_reference_tangent(
             const auto decreases = errors[1] < errors[0] &&
                 errors[2] < errors[1] && errors[3] < errors[2];
             const auto minimum = *std::ranges::min_element(errors);
-            const auto pass = decreases && median >= 0.75 && median <= 1.25 &&
+            const auto floor = registered_tolerance(
+                reference.size(),
+                operator_case.frozen.force_operator.relations.size(),
+                262144.0, 1.0);
+            const auto convergence =
+                converges_until_binary64_floor(errors, floor);
+            const auto initially_at_floor = errors.front() <= floor;
+            const auto pass = convergence &&
+                (initially_at_floor ||
+                 (decreases && median >= 0.75 && median <= 1.25)) &&
                 minimum <= 2.0e-5;
             if (!pass) {
                 counts.raw_registered_failures += exponents.size();
@@ -2218,7 +2263,16 @@ void emit_floppy_mechanism(
         std::array order_values{orders[1], orders[2], orders[3]};
         std::ranges::sort(order_values);
         const auto median = order_values[1];
-        const auto pass = decreases && median >= 0.75 && median <= 1.25;
+        const auto floor = registered_tolerance(
+            operator_case.graph->packets.size(),
+            operator_case.frozen.force_operator.relations.size(),
+            262144.0, 1.0);
+        const auto convergence =
+            converges_until_binary64_floor(errors, floor);
+        const auto initially_at_floor = errors.front() <= floor;
+        const auto pass = convergence &&
+            (initially_at_floor ||
+             (decreases && median >= 0.75 && median <= 1.25));
         if (!pass) {
             counts.raw_registered_failures += exponents.size();
         }
