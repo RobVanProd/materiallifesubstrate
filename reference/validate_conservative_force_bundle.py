@@ -3788,11 +3788,13 @@ def validate_compression(
             )
             degeneracy_pass = (
                 independent_condition is not None
-                and hp_raw_converged
                 and hp_error <= hp_allowed
                 and (not registered or expected_adjacent)
             )
-            if registered:
+            # Raw high-precision nonconvergence is the earlier, explicitly
+            # inconclusive decision class.  Do not count that same failed
+            # convergence predicate again as collapse degeneracy.
+            if registered and hp_raw_converged:
                 if not findings.degeneracy(degeneracy_pass):
                     row_degenerate = True
             producer_pass = (not registered or exported_adjacent)

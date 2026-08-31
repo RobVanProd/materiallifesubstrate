@@ -411,9 +411,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             if (
                 inconclusive_summary["inconclusive_failure_events"] <= 0
                 or not inconclusive_summary["inconclusive_reasons"]
+                or inconclusive_summary["degeneracy_failure_events"] != 0
                 or inconclusive_summary["all_registered_noncoincident_cases_passed"]
             ):
-                raise AssertionError("inconclusive summary was not explicit")
+                raise AssertionError(
+                    "inconclusive summary was not explicit/category-exact"
+                )
         finally:
             implementation.registered_raw_convergence = original_convergence
 
