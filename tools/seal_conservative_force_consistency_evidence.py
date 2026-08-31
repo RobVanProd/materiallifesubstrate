@@ -1399,7 +1399,21 @@ def validate_ci_artifact_markers(prefix: str, files: dict[str, bytes],
         require_empty_marker_block(
             versions, "source_status_begin", "source_status_end", prefix)
         ctest = text_file("ctest.txt").lower()
-        require("100% tests passed" in ctest and "0 tests failed" in ctest,
+        # CTest emits two success-summary grammars in the registered matrix:
+        # Unix builds include `, 0 tests failed`, while the MSVC build omits
+        # that redundant clause.  Bind an exact, positive test count in either
+        # standard form and independently reject every positive failure count.
+        clean_summaries = re.findall(
+            r"(?m)^100% tests passed(?:, 0 tests failed)? out of "
+            r"([1-9][0-9]*)[ \t]*\r?$",
+            ctest,
+        )
+        positive_failures = re.search(
+            r"(?m)^[ \t]*[1-9][0-9]* tests? failed out of [1-9][0-9]*"
+            r"[ \t]*\r?$",
+            ctest,
+        )
+        require(len(clean_summaries) == 1 and positive_failures is None,
                 f"CI compiler artifact does not show a clean CTest run: {prefix}")
         for name in ("configure.txt", "build.txt"):
             require(bool(text_file(name).strip()),

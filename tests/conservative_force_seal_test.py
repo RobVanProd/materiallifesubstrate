@@ -243,7 +243,7 @@ def valid_artifact_downloads(tool, source_sha: str, run_id: str = "77",
                 "source_status_end\ng++ 15\n"),
             "configure.txt": "Build files have been written\n",
             "build.txt": "build complete\n",
-            "ctest.txt": "100% tests passed, 0 tests failed\n",
+            "ctest.txt": "100% tests passed, 0 tests failed out of 78\n",
         },
         "cpp-Linux Clang": {
             "tool-versions.txt": (
@@ -251,7 +251,7 @@ def valid_artifact_downloads(tool, source_sha: str, run_id: str = "77",
                 "source_status_end\nclang 21\n"),
             "configure.txt": "Build files have been written\n",
             "build.txt": "build complete\n",
-            "ctest.txt": "100% tests passed, 0 tests failed\n",
+            "ctest.txt": "100% tests passed, 0 tests failed out of 78\n",
         },
         "cpp-Windows MSVC": {
             "tool-versions.txt": (
@@ -259,7 +259,9 @@ def valid_artifact_downloads(tool, source_sha: str, run_id: str = "77",
                 "source_status_end\nMSVC 19\n"),
             "configure.txt": "Build files have been written\n",
             "build.txt": "build complete\n",
-            "ctest.txt": "100% tests passed, 0 tests failed\n",
+            # Current CTest/MSVC emits this standard success form without the
+            # redundant `0 tests failed` clause.
+            "ctest.txt": "100% tests passed out of 78\n",
         },
         "exact-oracle": {
             "python-version.txt": f"source_sha={source_sha}\nPython 3.13\n",
@@ -597,6 +599,29 @@ def main() -> int:
                 root / "missing-artifact" / "ci-run.json", ci, source_sha,
                 "77", 1, missing),
             "CI artifact inventory",
+        )
+        mutations += 1
+
+        contradictory_ctest = list(downloads)
+        cpp_index = next(
+            index for index, (metadata, _) in enumerate(contradictory_ctest)
+            if metadata["name"].startswith("cpp-Windows MSVC-")
+        )
+        metadata, payload = contradictory_ctest[cpp_index]
+        files = tool.safe_zip_files(payload, metadata["name"])
+        files["ctest.txt"] += b"1 test failed out of 78\n"
+        contradictory_ctest[cpp_index] = (
+            metadata,
+            zip_payload({
+                name: value.decode("utf-8") for name, value in files.items()
+            }),
+        )
+        expect_rejection(
+            tool,
+            lambda: tool.write_ci_capture_with_artifacts(
+                root / "contradictory-ctest" / "ci-run.json", ci,
+                source_sha, "77", 1, contradictory_ctest),
+            "contradictory CTest success/failure summary",
         )
         mutations += 1
 
