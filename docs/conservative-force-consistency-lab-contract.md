@@ -171,15 +171,18 @@ disabled by `-ffp-contract=off` or `/fp:strict`; the new evaluator and producer
 do not use native `long double`.  The independent Python implementation rebuilds
 the energy and gradient from exported reference/current coordinates and the
 complete exported `H`; it never calls the C++ force routine.  Registered
-subsets use exactly 100 decimal digits for directional derivatives and tangent
-checks.
+subsets use exactly 100 decimal digits for direction construction, directional
+derivatives, and tangent checks.  The explicit precision context begins before
+rigid-direction centroid, norm, and normalisation arithmetic; ambient Python
+Decimal precision is not part of the experiment.
 
 Known failure modes include stale or current-recomputed reference data,
 incorrect relation-coordinate permutation, double-counted collective terms,
 sign errors, partial output at coincidence, cancellation in force/torque
 sums, dropped geometric tangent terms, hidden ID orientation, and loss of
-resolution near collapse.  A unit test alone does not establish physical
-validity.
+resolution near collapse.  Ambient Decimal-context leakage is an evidence-
+pipeline failure mode and has a dedicated multi-precision regression.  A unit
+test alone does not establish physical validity.
 
 ## Test map
 

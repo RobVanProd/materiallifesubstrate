@@ -114,6 +114,7 @@ REQUIRED_SOURCE_FILES = {
     "docs/conservative-force-consistency-evidence-schema.md",
     "docs/conservative-force-consistency-source-audit.md",
     "docs/conservative-force-consistency-result.md",
+    "docs/conservative-force-consistency-failed-materialization-2026-08-31.md",
     "docs/implemented-subsystem-contracts.md",
     "tools/formal_trust_scan.py",
     "tools/conservative_force_tool_versions.py",

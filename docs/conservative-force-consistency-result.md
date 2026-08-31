@@ -114,6 +114,19 @@ materialization paths and the earlier failed public CI run remain identified
 in the evidence receipts/result handoff rather than being rewritten as passing
 runs.
 
+A later first canonical materialisation at source
+`6ca432abcf4dad86b3eb9711ff2d9396f9decbd9` generated
+`reject_force_implementation` with 27 rotation-only energy-gradient events.
+That disposition is quarantined as an evidence-pipeline implementation failure,
+not accepted force-law evidence: the independent rigid directions had been
+constructed at the ambient 28-digit Decimal precision before the declared
+100-digit context began.  The unchanged probes give at most `5.6e-101 N`
+virtual work after the precision scope is corrected, with no tolerance or force
+change.  The failed full bundle remains preserved under pre-hash
+`1279bdbe5c545bc5b9f030c95b5c396a77865f2946b33beda49159e3341694c0`;
+its complete identity and classification are in the
+[failed-materialisation record](conservative-force-consistency-failed-materialization-2026-08-31.md).
+
 ## Interpretation and limitations
 
 The bounded positive result is that the accepted finite distance-relation

@@ -124,6 +124,25 @@ Differentiation with respect to `x'=sx` leaves the finite tangent unchanged.
 Torque scales as `s^2`; power also scales as `s^2` when velocity is scaled by
 `s`.  These are the preregistered metamorphic expectations.
 
+## Independent Decimal precision-scope audit
+
+The first full materialisation at source `6ca432abcf4dad86b3eb9711ff2d9396f9decbd9`
+exposed a validator defect before sealing.  The independent rotation direction
+was constructed before the `Decimal-100` context began, so centroid, norm, and
+normalisation arithmetic inherited Python's default 28-digit context.  The
+resulting `1.46e-31` to `2.24e-29 N` virtual-work residues were then compared
+against the registered `1e-55 N` high-precision bound and produced 27 false
+energy-gradient events.
+
+The corrected implementation begins the explicit 100-digit context before any
+translation or rotation direction construction.  Re-evaluating the same 27
+rotation probes gives at most `5.6e-101 N` virtual work and
+`1.9000e-100` rigidity residual.  A regression varies the ambient Decimal
+precision and requires identical directions plus the frozen zero-work gate.
+No force law, graph, tolerance, inventory, or decision-order rule changed.  The
+invalid pre-seal materialisation remains separately recorded rather than being
+relabelled as force-law evidence.
+
 ## Condition diagnostic implementation audit
 
 A pre-final full-run audit found that the first producer implementation called

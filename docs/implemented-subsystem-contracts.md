@@ -1232,8 +1232,9 @@ The new evaluator/producer uses explicit-order, eight-byte, 53-bit IEC-559
 binary64 with contraction disabled and no native `long double`.  Parent `H`
 triangle roundoff is frozen by one mirrored binary64 pair average; its bounded
 representation delta is exported, not called exact or used as regularisation.
-The independent Python path reconstructs energy, force, and tangent with
-Decimal-100 and implements a separately ordered binary64 emulator.  High-
+The independent Python path constructs its rigid directions and reconstructs
+energy, force, and tangent inside explicit Decimal-100 contexts, and implements
+a separately ordered binary64 emulator.  High-
 precision directional and tangent checks preserve all four registered raw
 levels plus extrapolation; convergence must improve until its arithmetic floor
 and may not re-emerge above it.  Deterministic twins are byte-identical only
@@ -1249,7 +1250,10 @@ Audited scientific failures include energy-gradient disagreement, nonzero
 resultant force/torque, failed power, a missing geometric tangent, nonsymmetric
 mixed partials, objectivity/scale/label/order drift, fabricated restoring force
 on the missing-edge mechanism, and numerical loss of resolution on the
-positive collapse approach.
+positive collapse approach.  Ambient Decimal precision leaking into a claimed
+high-precision direction is also an explicit pipeline failure; the validator
+regression repeats every rigid direction under several ambient precisions and
+requires identical output and zero virtual work.
 
 Mapped C++ tests are `conservative force is exactly the frozen relation
 gradient`, `conservative reference tangent joins the accepted linear Hessian`,

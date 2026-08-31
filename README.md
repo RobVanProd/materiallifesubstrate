@@ -57,6 +57,7 @@ or `reward`. Those may exist only as observer interpretations.
 - [Conservative Force Consistency Lab preregistration](docs/conservative-force-consistency-preregistration.md)
 - [Conservative Force Consistency primary-source audit](docs/conservative-force-consistency-source-audit.md)
 - [Conservative Force Consistency Lab result](docs/conservative-force-consistency-result.md)
+- [Conservative Force Consistency failed materialisation record](docs/conservative-force-consistency-failed-materialization-2026-08-31.md)
 - [Forbidden-semantics contract](docs/forbidden-semantics.md)
 - [Accounting invariants](docs/accounting-invariants.md)
 - [Research roadmap and gates](docs/roadmap.md)

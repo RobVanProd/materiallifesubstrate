@@ -70,6 +70,10 @@ RAW_SUMMARY_SCHEMA = "mls.conservative-force-consistency.raw-summary.v1"
 RAW_PROVENANCE_SCHEMA = "mls.conservative-force-consistency.raw-provenance.v1"
 RAW_MANIFEST_SCHEMA = "mls.conservative-force-consistency.raw-manifest.v1"
 PREREGISTRATION_COMMIT = "d19cabc47849e0aab178915e90adcfc9df5a6fe1"
+HIGH_PRECISION_IMPLEMENTATION = (
+    "independent Decimal-100 direction construction, reconstruction, "
+    "and degree-3 extrapolation in h^2"
+)
 PARENT_OUTER_PRE_HASH = "5382848fab2c84b7fad4eb43647e368c492cd245d27c10f552c01edffdc0842c"
 PARENT_ARCHIVE_SHA256 = "1bc4dccee877cd4a3d4ee05df7d3aab00d4643b400186a6a5ef5447b6cbb1123"
 PARENT_BUNDLE_MANIFEST_PRE_HASH = "18b1af6837f2c67204094498eedd2a8d8eabaf315ebae1d58c4b2073b778973f"
@@ -4535,9 +4539,7 @@ def materialize_into(
         {
             "schema": PROVENANCE_SCHEMA,
             "materializer_python_version": platform.python_version(),
-            "high_precision_implementation": (
-                "independent Decimal-100 reconstruction and degree-3 extrapolation in h^2"
-            ),
+            "high_precision_implementation": HIGH_PRECISION_IMPLEMENTATION,
             "decimal_digits": DIGITS,
             "exact_oracle_pre_hash": exact_oracle_pre_hash,
             "producer_manifest_pre_hash": raw_manifest["pre_hash_sha256"],
@@ -4668,7 +4670,7 @@ def validate_final_bundle(
     outer_audit.require(provenance["decimal_digits"] == DIGITS, "final decimal digits")
     outer_audit.require(
         provenance["high_precision_implementation"]
-        == "independent Decimal-100 reconstruction and degree-3 extrapolation in h^2",
+        == HIGH_PRECISION_IMPLEMENTATION,
         "final high precision implementation",
     )
     outer_audit.require(
