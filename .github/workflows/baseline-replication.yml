@@ -14,6 +14,7 @@ on:
       - kelvin-covariance-audit
       - relational-observability-confirmation
       - constitutive-expressivity-lab
+      - conservative-force-consistency-lab
   pull_request:
   workflow_dispatch:
 
@@ -208,6 +209,19 @@ jobs:
             2>&1 | tee ci-artifacts/constitutive-expressivity-seal-compile.txt
           python tests/constitutive_expressivity_seal_test.py \
             2>&1 | tee ci-artifacts/constitutive-expressivity-seal.txt
+          python reference/conservative_force_oracle.py \
+            --verify tests/conservative_force_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/conservative-force-oracle.txt
+          python tests/conservative_force_oracle_test.py \
+            2>&1 | tee ci-artifacts/conservative-force-oracle-regression.txt
+          python -m py_compile \
+            reference/validate_conservative_force_bundle.py \
+            tests/conservative_force_bundle_validator_test.py \
+            tools/seal_conservative_force_consistency_evidence.py \
+            2>&1 | tee ci-artifacts/conservative-force-validator-compile.txt
+          python tests/conservative_force_seal_test.py \
+            --tool tools/seal_conservative_force_consistency_evidence.py \
+            2>&1 | tee ci-artifacts/conservative-force-seal.txt
 
       - name: Preserve exact-oracle evidence
         if: always()
