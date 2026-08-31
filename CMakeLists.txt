@@ -28,11 +28,17 @@ target_compile_definitions(mls_core PUBLIC MLS_AUDIT_DEFAULT=$<BOOL:${MLS_AUDIT_
 
 if(MSVC)
   target_compile_options(mls_core PRIVATE /W4 /permissive- /Zc:__cplusplus)
+  set_source_files_properties(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/conservative_force_consistency_lab.cpp"
+    PROPERTIES COMPILE_OPTIONS "/fp:strict")
   if(MLS_WARNINGS_AS_ERRORS)
     target_compile_options(mls_core PRIVATE /WX)
   endif()
 else()
   target_compile_options(mls_core PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+  set_source_files_properties(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/conservative_force_consistency_lab.cpp"
+    PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
   if(MLS_WARNINGS_AS_ERRORS)
     target_compile_options(mls_core PRIVATE -Werror)
   endif()
@@ -340,6 +346,41 @@ else()
   if(MLS_WARNINGS_AS_ERRORS)
     target_compile_options(
       mls_constitutive_expressivity_diagnostic PRIVATE -Werror)
+  endif()
+endif()
+
+add_executable(
+  mls_conservative_force_consistency_diagnostic
+  apps/conservative_force_consistency_diagnostic.cpp)
+target_link_libraries(
+  mls_conservative_force_consistency_diagnostic PRIVATE mls_core)
+target_compile_features(
+  mls_conservative_force_consistency_diagnostic PRIVATE cxx_std_20)
+target_compile_definitions(
+  mls_conservative_force_consistency_diagnostic
+  PRIVATE
+    MLS_CONFIGURED_SOURCE_SHA="${MLS_CONFIGURED_SOURCE_SHA}"
+    MLS_CONFIGURED_SOURCE_BRANCH="${MLS_CONFIGURED_SOURCE_BRANCH}"
+    MLS_CONFIGURED_SOURCE_DIRTY="${MLS_CONFIGURED_SOURCE_DIRTY}"
+    MLS_CONFIGURED_COMPILER_ID="${CMAKE_CXX_COMPILER_ID}"
+    MLS_CONFIGURED_COMPILER_VERSION="${CMAKE_CXX_COMPILER_VERSION}"
+    MLS_CONFIGURED_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
+if(MSVC)
+  target_compile_options(
+    mls_conservative_force_consistency_diagnostic
+    PRIVATE /W4 /permissive- /Zc:__cplusplus /fp:strict)
+  if(MLS_WARNINGS_AS_ERRORS)
+    target_compile_options(
+      mls_conservative_force_consistency_diagnostic PRIVATE /WX)
+  endif()
+else()
+  target_compile_options(
+    mls_conservative_force_consistency_diagnostic
+    PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow
+            -ffp-contract=off)
+  if(MLS_WARNINGS_AS_ERRORS)
+    target_compile_options(
+      mls_conservative_force_consistency_diagnostic PRIVATE -Werror)
   endif()
 endif()
 

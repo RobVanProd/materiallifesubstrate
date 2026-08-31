@@ -7,6 +7,7 @@ add_executable(
   angular_momentum_tests.cpp
   authoritative_api_tests.cpp
   compound_identity_tests.cpp
+  conservative_force_consistency_tests.cpp
   constitutive_expressivity_tests.cpp
   physical_support_tests.cpp
   affine_advection_tests.cpp
@@ -31,6 +32,40 @@ endif()
 
 add_test(NAME mls.validation COMMAND mls_validation)
 set_tests_properties(mls.validation PROPERTIES LABELS "deterministic;core")
+
+add_test(
+  NAME mls.conservative_force_consistency.schema.audit
+  COMMAND mls_conservative_force_consistency_diagnostic --schema-audit)
+set_tests_properties(
+  mls.conservative_force_consistency.schema.audit
+  PROPERTIES
+    LABELS "deterministic;conservative-force;schema"
+    PASS_REGULAR_EXPRESSION
+      "Conservative Force Consistency raw schema audit: PASS"
+    TIMEOUT 30)
+
+add_test(
+  NAME mls.conservative_force_consistency.smoke.a
+  COMMAND
+    mls_conservative_force_consistency_diagnostic
+    --smoke
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/conservative-force-smoke-a")
+add_test(
+  NAME mls.conservative_force_consistency.smoke.b
+  COMMAND
+    mls_conservative_force_consistency_diagnostic
+    --smoke
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/conservative-force-smoke-b")
+set_tests_properties(
+  mls.conservative_force_consistency.smoke.a
+  mls.conservative_force_consistency.smoke.b
+  PROPERTIES
+    LABELS "deterministic;conservative-force;raw;smoke"
+    PASS_REGULAR_EXPRESSION
+      "CONSERVATIVE FORCE RAW BUNDLE COMPLETE"
+    TIMEOUT 300)
 
 add_test(
   NAME mls.constitutive_expressivity.schema.audit
@@ -340,6 +375,24 @@ set_tests_properties(
 
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
+  add_test(
+    NAME mls.conservative_force_consistency.smoke.compare
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/compare_evidence_directories.py"
+      --first
+      "${CMAKE_CURRENT_BINARY_DIR}/conservative-force-smoke-a"
+      --second
+      "${CMAKE_CURRENT_BINARY_DIR}/conservative-force-smoke-b")
+  set_tests_properties(
+    mls.conservative_force_consistency.smoke.compare
+    PROPERTIES
+      DEPENDS
+        "mls.conservative_force_consistency.smoke.a;mls.conservative_force_consistency.smoke.b"
+      LABELS "deterministic;conservative-force;raw;smoke;twin"
+      PASS_REGULAR_EXPRESSION "byte comparison: PASS"
+      TIMEOUT 60)
+
   add_test(
     NAME mls.constitutive_expressivity.smoke.compare
     COMMAND
