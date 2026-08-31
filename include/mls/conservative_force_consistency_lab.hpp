@@ -53,8 +53,9 @@ struct PacketForce final {
 struct FrozenForceOperator final {
     // Parent is retained byte-for-byte for traceability. force_operator differs
     // only in H: each off-diagonal unordered pair is averaged once and mirrored
-    // exactly, while diagonals are copied. No eigenvalue shift, diagonal
-    // regularisation, current-state input, or constitutive rebuild occurs.
+    // exactly, while diagonals are copied. The bounded binary64 pair-average
+    // representation error is audited; no diagonal/eigenvalue regularisation,
+    // current-state input, or constitutive rebuild occurs.
     constitutive::RelationEnergyOperator parent_operator{};
     constitutive::RelationEnergyOperator force_operator{};
     double maximum_parent_h_magnitude_j_per_m2{0.0};
