@@ -38,7 +38,7 @@ CI_ARTIFACT_SCHEMA = \
     "mls-conservative-force-consistency-ci-artifact-capture-v1"
 BRANCH = "conservative-force-consistency-lab"
 PARENT_SHA = "2de8843faf76a75d16b3a3012897e719291c52cf"
-PREREGISTRATION_SHA = "3b84f6cbb685aed9895a8954e9bcd53a41caa790"
+PREREGISTRATION_SHA = "d19cabc47849e0aab178915e90adcfc9df5a6fe1"
 PARENT_EVIDENCE_PRE_HASH = (
     "18b1af6837f2c67204094498eedd2a8d8eabaf315ebae1d58c4b2073b778973f"
 )
@@ -84,9 +84,9 @@ INHERITED_BLOBS = {
 }
 PREREGISTERED_BLOBS = {
     "docs/conservative-force-consistency-evidence-schema.md":
-        "70090527a25d0b33b38d6dfeb64be9962f47883c",
+        "7949395186833a550bf2ca1da1b6d803de5e4167",
     "docs/conservative-force-consistency-preregistration.md":
-        "85ccb40d5cb543c93d5933ddf499db0538f512f1",
+        "458834550b7e380e80ddc5bcc0a0ddaca35ffd24",
 }
 REQUIRED_SOURCE_FILES = {
     ".github/workflows/baseline-replication.yml",

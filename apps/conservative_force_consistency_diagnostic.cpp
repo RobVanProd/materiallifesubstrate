@@ -60,7 +60,7 @@ constexpr std::uint64_t seed = 260828U;
 constexpr std::string_view parent_sha =
     "2de8843faf76a75d16b3a3012897e719291c52cf";
 constexpr std::string_view preregistration_commit =
-    "3b84f6cbb685aed9895a8954e9bcd53a41caa790";
+    "d19cabc47849e0aab178915e90adcfc9df5a6fe1";
 constexpr std::string_view parent_manifest_prehash =
     "18b1af6837f2c67204094498eedd2a8d8eabaf315ebae1d58c4b2073b778973f";
 constexpr std::string_view selected_configurations_hash =
