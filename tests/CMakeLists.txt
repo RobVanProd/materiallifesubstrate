@@ -394,6 +394,55 @@ if(Python3_Interpreter_FOUND)
       TIMEOUT 60)
 
   add_test(
+    NAME mls.conservative_force_consistency.validator.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/conservative_force_bundle_validator_test.py"
+      --producer
+      "${CMAKE_CURRENT_BINARY_DIR}/conservative-force-smoke-a"
+      --producer-compare
+      "${CMAKE_CURRENT_BINARY_DIR}/conservative-force-smoke-b"
+      --validator
+      "${PROJECT_SOURCE_DIR}/reference/validate_conservative_force_bundle.py")
+  set_tests_properties(
+    mls.conservative_force_consistency.validator.regression
+    PROPERTIES
+      DEPENDS
+        "mls.conservative_force_consistency.smoke.a;mls.conservative_force_consistency.smoke.b"
+      LABELS "deterministic;conservative-force;validator;independent"
+      PASS_REGULAR_EXPRESSION
+        "conservative force two-stage validator regression: PASS.*NO_PROMOTION"
+      TIMEOUT 900)
+
+  add_test(
+    NAME mls.conservative_force_consistency.oracle.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/conservative_force_oracle_test.py")
+  set_tests_properties(
+    mls.conservative_force_consistency.oracle.regression
+    PROPERTIES
+      LABELS "deterministic;conservative-force;oracle;independent"
+      PASS_REGULAR_EXPRESSION
+        "conservative force high-precision oracle regression: PASS"
+      TIMEOUT 300)
+
+  add_test(
+    NAME mls.conservative_force_consistency.seal.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/conservative_force_seal_test.py"
+      --tool
+      "${PROJECT_SOURCE_DIR}/tools/seal_conservative_force_consistency_evidence.py")
+  set_tests_properties(
+    mls.conservative_force_consistency.seal.regression
+    PROPERTIES
+      LABELS "deterministic;conservative-force;seal;independent"
+      PASS_REGULAR_EXPRESSION
+        "conservative force consistency outer-seal mutation regression: PASS"
+      TIMEOUT 120)
+
+  add_test(
     NAME mls.constitutive_expressivity.smoke.compare
     COMMAND
       "${Python3_EXECUTABLE}"
