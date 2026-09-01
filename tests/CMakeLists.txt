@@ -5,6 +5,7 @@ add_executable(
   test_main.cpp
   core_validation_tests.cpp
   angular_momentum_tests.cpp
+  authoritative_mechanics_state_bridge_tests.cpp
   authoritative_api_tests.cpp
   compound_identity_tests.cpp
   conservative_force_consistency_tests.cpp
@@ -33,6 +34,38 @@ endif()
 
 add_test(NAME mls.validation COMMAND mls_validation)
 set_tests_properties(mls.validation PROPERTIES LABELS "deterministic;core")
+
+add_test(
+  NAME mls.authoritative_mechanics_state_bridge.schema.audit
+  COMMAND mls_authoritative_mechanics_state_bridge_diagnostic --schema-audit)
+set_tests_properties(
+  mls.authoritative_mechanics_state_bridge.schema.audit
+  PROPERTIES
+    LABELS "deterministic;mechanics-bridge;schema"
+    PASS_REGULAR_EXPRESSION
+      "Authoritative Mechanics State Bridge raw schema audit: PASS"
+    TIMEOUT 30)
+
+add_test(
+  NAME mls.authoritative_mechanics_state_bridge.smoke.a
+  COMMAND
+    mls_authoritative_mechanics_state_bridge_diagnostic
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/authoritative-mechanics-state-bridge-smoke-a")
+add_test(
+  NAME mls.authoritative_mechanics_state_bridge.smoke.b
+  COMMAND
+    mls_authoritative_mechanics_state_bridge_diagnostic
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/authoritative-mechanics-state-bridge-smoke-b")
+set_tests_properties(
+  mls.authoritative_mechanics_state_bridge.smoke.a
+  mls.authoritative_mechanics_state_bridge.smoke.b
+  PROPERTIES
+    LABELS "deterministic;mechanics-bridge;raw;smoke"
+    PASS_REGULAR_EXPRESSION
+      "retain_direct_quantized_mechanics_bridge_for_research R=16 NO_PROMOTION"
+    TIMEOUT 120)
 
 add_test(
   NAME mls.conservative_force_consistency.schema.audit
@@ -376,6 +409,58 @@ set_tests_properties(
 
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
+  add_test(
+    NAME mls.authoritative_mechanics_state_bridge.smoke.compare
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/compare_evidence_directories.py"
+      --first
+      "${CMAKE_CURRENT_BINARY_DIR}/authoritative-mechanics-state-bridge-smoke-a"
+      --second
+      "${CMAKE_CURRENT_BINARY_DIR}/authoritative-mechanics-state-bridge-smoke-b")
+  set_tests_properties(
+    mls.authoritative_mechanics_state_bridge.smoke.compare
+    PROPERTIES
+      DEPENDS
+        "mls.authoritative_mechanics_state_bridge.smoke.a;mls.authoritative_mechanics_state_bridge.smoke.b"
+      LABELS "deterministic;mechanics-bridge;raw;twin"
+      PASS_REGULAR_EXPRESSION "byte comparison: PASS"
+      TIMEOUT 60)
+
+  add_test(
+    NAME mls.authoritative_mechanics_state_bridge.oracle
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/reference/authoritative_mechanics_state_bridge_oracle.py"
+      --raw
+      "${CMAKE_CURRENT_BINARY_DIR}/authoritative-mechanics-state-bridge-smoke-a"
+      --output
+      "${CMAKE_CURRENT_BINARY_DIR}/authoritative-mechanics-state-bridge-oracle.json")
+  set_tests_properties(
+    mls.authoritative_mechanics_state_bridge.oracle
+    PROPERTIES
+      DEPENDS "mls.authoritative_mechanics_state_bridge.smoke.a"
+      LABELS "deterministic;mechanics-bridge;oracle;independent"
+      PASS_REGULAR_EXPRESSION
+        "AUTHORITATIVE MECHANICS STATE BRIDGE ORACLE: PASS.*NO_PROMOTION"
+      TIMEOUT 120)
+
+  add_test(
+    NAME mls.authoritative_mechanics_state_bridge.oracle.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/authoritative_mechanics_state_bridge_oracle_test.py"
+      --raw
+      "${CMAKE_CURRENT_BINARY_DIR}/authoritative-mechanics-state-bridge-smoke-a")
+  set_tests_properties(
+    mls.authoritative_mechanics_state_bridge.oracle.regression
+    PROPERTIES
+      DEPENDS "mls.authoritative_mechanics_state_bridge.smoke.a"
+      LABELS "deterministic;mechanics-bridge;oracle;mutations"
+      PASS_REGULAR_EXPRESSION
+        "authoritative mechanics state bridge oracle regression: PASS"
+      TIMEOUT 180)
+
   add_test(
     NAME mls.conservative_force_consistency.smoke.compare
     COMMAND

@@ -15,6 +15,7 @@ import MLSFormal.RelationalObservability
 import MLSFormal.ConstitutiveExpressivity
 import MLSFormal.ConservativeForceConsistency
 import MLSFormal.RelationGeometryResolution
+import MLSFormal.AuthoritativeMechanicsStateBridge
 
 /-!
 Complete kernel axiom report for every theorem exported by the MLSFormal
@@ -154,3 +155,12 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.sqrt_sub_eq_sub_div_add
 #print axioms MLSFormal.relationSquaredDistance_nonnegative
 #print axioms MLSFormal.relationExtension_eq_squaredDistanceDifference_div_lengthSum
+#print axioms MLSFormal.mechanicsEnergyQuantum_eq_momentum_mul_velocity
+#print axioms MLSFormal.mechanicsForceQuantum_eq_energy_div_length
+#print axioms MLSFormal.refinedMomentumQuantum_identity
+#print axioms MLSFormal.refinedEnergyQuantum_identity
+#print axioms MLSFormal.exactQuantizedPairImpulse_preserves_momentum
+#print axioms MLSFormal.centralPrimitiveQuantizedImpulse_zero_couple
+#print axioms MLSFormal.centralPrimitiveQuantizedPair_preserves_orbitalAngularMomentum
+#print axioms MLSFormal.explicitRemainderStep_balance
+#print axioms MLSFormal.explicitRemainderAccumulation_balance
