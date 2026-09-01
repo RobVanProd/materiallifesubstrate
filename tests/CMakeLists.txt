@@ -394,26 +394,32 @@ if(Python3_Interpreter_FOUND)
       PASS_REGULAR_EXPRESSION "byte comparison: PASS"
       TIMEOUT 60)
 
-  add_test(
-    NAME mls.conservative_force_consistency.validator.regression
-    COMMAND
-      "${Python3_EXECUTABLE}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/conservative_force_bundle_validator_test.py"
-      --producer
-      "${CMAKE_CURRENT_BINARY_DIR}/conservative-force-smoke-a"
-      --producer-compare
-      "${CMAKE_CURRENT_BINARY_DIR}/conservative-force-smoke-b"
-      --validator
-      "${PROJECT_SOURCE_DIR}/reference/validate_conservative_force_bundle.py")
-  set_tests_properties(
-    mls.conservative_force_consistency.validator.regression
-    PROPERTIES
-      DEPENDS
-        "mls.conservative_force_consistency.smoke.a;mls.conservative_force_consistency.smoke.b"
-      LABELS "deterministic;conservative-force;validator;independent"
-      PASS_REGULAR_EXPRESSION
-        "conservative force two-stage validator regression: PASS.*NO_PROMOTION"
-      TIMEOUT 900)
+  # This sealed validator intentionally requires the literal source branch
+  # conservative-force-consistency-lab.  Its reusable force/oracle/seal tests
+  # remain active on descendants, but rematerializing that historical bundle
+  # under a different branch identity is correctly invalid.
+  if(MLS_CONFIGURED_SOURCE_BRANCH STREQUAL "conservative-force-consistency-lab")
+    add_test(
+      NAME mls.conservative_force_consistency.validator.regression
+      COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/conservative_force_bundle_validator_test.py"
+        --producer
+        "${CMAKE_CURRENT_BINARY_DIR}/conservative-force-smoke-a"
+        --producer-compare
+        "${CMAKE_CURRENT_BINARY_DIR}/conservative-force-smoke-b"
+        --validator
+        "${PROJECT_SOURCE_DIR}/reference/validate_conservative_force_bundle.py")
+    set_tests_properties(
+      mls.conservative_force_consistency.validator.regression
+      PROPERTIES
+        DEPENDS
+          "mls.conservative_force_consistency.smoke.a;mls.conservative_force_consistency.smoke.b"
+        LABELS "deterministic;conservative-force;validator;independent"
+        PASS_REGULAR_EXPRESSION
+          "conservative force two-stage validator regression: PASS.*NO_PROMOTION"
+        TIMEOUT 900)
+  endif()
 
   add_test(
     NAME mls.conservative_force_consistency.oracle.regression
