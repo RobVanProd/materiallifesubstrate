@@ -107,6 +107,10 @@ Lean kernel build is authoritative for theorem acceptance.
   and zero torque about every origin directly from the relation offsets. It
   performs no square-root differentiation, force installation, or time
   integration.
+- `RelationGeometryResolution.lean`: exact real-arithmetic equivalence between
+  direct and rationalized differences of nonnegative square roots, together
+  with its three-coordinate squared-distance specialization. It makes no
+  binary64 error or near-coincidence admissibility claim.
 - `AxiomReport.lean`: committed `#print axioms` coverage for every theorem
   exported by all project modules; CI checks declarations against this list.
 

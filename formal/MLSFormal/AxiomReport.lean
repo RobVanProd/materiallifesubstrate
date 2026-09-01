@@ -14,6 +14,7 @@ import MLSFormal.KelvinCovariance
 import MLSFormal.RelationalObservability
 import MLSFormal.ConstitutiveExpressivity
 import MLSFormal.ConservativeForceConsistency
+import MLSFormal.RelationGeometryResolution
 
 /-!
 Complete kernel axiom report for every theorem exported by the MLSFormal
@@ -150,3 +151,6 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.centralRelationForces_equal_opposite
 #print axioms MLSFormal.finiteCentralRelationForces_total_force_zero
 #print axioms MLSFormal.finiteCentralRelationForces_total_torque_zero
+#print axioms MLSFormal.sqrt_sub_eq_sub_div_add
+#print axioms MLSFormal.relationSquaredDistance_nonnegative
+#print axioms MLSFormal.relationExtension_eq_squaredDistanceDifference_div_lengthSum
