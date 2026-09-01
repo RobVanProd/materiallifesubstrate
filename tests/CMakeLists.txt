@@ -444,6 +444,21 @@ if(Python3_Interpreter_FOUND)
       TIMEOUT 120)
 
   add_test(
+    NAME mls.relation_geometry_resolution.seal.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/relation_geometry_resolution_seal_test.py"
+      --tool
+      "${PROJECT_SOURCE_DIR}/tools/seal_relation_geometry_resolution_evidence.py")
+  set_tests_properties(
+    mls.relation_geometry_resolution.seal.regression
+    PROPERTIES
+      LABELS "deterministic;relation-geometry;seal;independent"
+      PASS_REGULAR_EXPRESSION
+        "relation geometry outer-seal regression: PASS"
+      TIMEOUT 60)
+
+  add_test(
     NAME mls.constitutive_expressivity.smoke.compare
     COMMAND
       "${Python3_EXECUTABLE}"

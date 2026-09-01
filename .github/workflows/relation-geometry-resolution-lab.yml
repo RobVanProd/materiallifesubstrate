@@ -132,7 +132,12 @@ jobs:
             2>&1 | tee ci-artifacts/oracle-mutations.txt
           python -m py_compile \
             reference/relation_geometry_resolution_oracle.py \
-            tests/relation_geometry_resolution_oracle_test.py
+            reference/validate_relation_geometry_resolution_bundle.py \
+            tests/relation_geometry_resolution_oracle_test.py \
+            tests/relation_geometry_resolution_seal_test.py \
+            tools/seal_relation_geometry_resolution_evidence.py
+          python tests/relation_geometry_resolution_seal_test.py \
+            2>&1 | tee ci-artifacts/seal-mutations.txt
       - name: Preserve oracle evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
