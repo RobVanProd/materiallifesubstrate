@@ -31,6 +31,9 @@ if(MSVC)
   set_source_files_properties(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/conservative_force_consistency_lab.cpp"
     PROPERTIES COMPILE_OPTIONS "/fp:strict")
+  set_source_files_properties(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/relation_geometry_resolution_lab.cpp"
+    PROPERTIES COMPILE_OPTIONS "/fp:strict")
   if(MLS_WARNINGS_AS_ERRORS)
     target_compile_options(mls_core PRIVATE /WX)
   endif()
@@ -38,6 +41,9 @@ else()
   target_compile_options(mls_core PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
   set_source_files_properties(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/conservative_force_consistency_lab.cpp"
+    PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+  set_source_files_properties(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/relation_geometry_resolution_lab.cpp"
     PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
   if(MLS_WARNINGS_AS_ERRORS)
     target_compile_options(mls_core PRIVATE -Werror)

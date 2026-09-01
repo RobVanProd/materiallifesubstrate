@@ -16,6 +16,7 @@ add_executable(
   mechanical_observability_tests.cpp
   projection_exactness_nullspace_tests.cpp
   projection_foundation_tests.cpp
+  relation_geometry_resolution_tests.cpp
   relational_observability_confirmation_tests.cpp
   transfer_lab_tests.cpp
   time_checkpoint_tests.cpp)
