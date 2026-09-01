@@ -15,6 +15,7 @@ on:
       - relational-observability-confirmation
       - constitutive-expressivity-lab
       - conservative-force-consistency-lab
+      - relation-geometry-resolution-lab
   pull_request:
   workflow_dispatch:
 

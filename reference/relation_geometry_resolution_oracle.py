@@ -23,8 +23,6 @@ from decimal import localcontext
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
-import mpmath as mp
-
 
 SCHEMA = "mls.relation-geometry-resolution.oracle.v1"
 # The ordinary-scale adjacency probe changes a zero coordinate by as little as
@@ -564,12 +562,61 @@ def maximum_matrix_error(
 
 
 def spectrum(total: MatrixD, nonrigid_rank: int) -> tuple[D, D, D]:
-    mp.mp.dps = DIGITS
-    matrix = mp.matrix([[mp.mpf(str(value)) for value in row] for row in total])
-    eigenvalues = mp.eigsy(matrix, eigvals_only=True)
-    singular = sorted((abs(value) for value in eigenvalues), reverse=True)
-    largest = D(str(singular[0]))
-    smallest = D(str(singular[nonrigid_rank - 1]))
+    matrix = [list(row) for row in total]
+    dimension = len(matrix)
+    scale = max_abs_matrix(matrix)
+    tolerance = scale * (D(10) ** -(DIGITS - 60))
+    converged = dimension < 2
+    for _sweep in range(1024):
+        rotated = False
+        for first in range(dimension):
+            for second in range(first + 1, dimension):
+                correlation = matrix[first][second]
+                if abs(correlation) <= tolerance:
+                    continue
+                first_value = matrix[first][first]
+                second_value = matrix[second][second]
+                zeta = (second_value - first_value) / (D(2) * correlation)
+                tangent = (
+                    D(1)
+                    if zeta == 0
+                    else (D(1) if zeta > 0 else D(-1))
+                    / (abs(zeta) + (D(1) + zeta * zeta).sqrt())
+                )
+                cosine = D(1) / (D(1) + tangent * tangent).sqrt()
+                sine = tangent * cosine
+                for index in range(dimension):
+                    if index in (first, second):
+                        continue
+                    old_first = matrix[index][first]
+                    old_second = matrix[index][second]
+                    new_first = cosine * old_first - sine * old_second
+                    new_second = sine * old_first + cosine * old_second
+                    matrix[index][first] = new_first
+                    matrix[first][index] = new_first
+                    matrix[index][second] = new_second
+                    matrix[second][index] = new_second
+                matrix[first][first] = (
+                    cosine * cosine * first_value
+                    - D(2) * cosine * sine * correlation
+                    + sine * sine * second_value
+                )
+                matrix[second][second] = (
+                    sine * sine * first_value
+                    + D(2) * cosine * sine * correlation
+                    + cosine * cosine * second_value
+                )
+                matrix[first][second] = D(0)
+                matrix[second][first] = D(0)
+                rotated = True
+        if not rotated:
+            converged = True
+            break
+    if not converged:
+        raise ArithmeticError("420-digit symmetric Jacobi eigensolver did not converge")
+    singular = sorted((abs(matrix[index][index]) for index in range(dimension)), reverse=True)
+    largest = singular[0]
+    smallest = singular[nonrigid_rank - 1]
     condition = largest / smallest if smallest != 0 else D("Infinity")
     return smallest, largest, condition
 
@@ -685,6 +732,9 @@ def run(raw: Path, force_bundle: Path, output: Path) -> dict[str, object]:
     }
     collapse_pass: dict[str, dict[int, bool]] = {PATH_B: {}, PATH_C: {}}
     oracle_collapse: dict[str, dict[int, tuple[D, D]]] = {}
+    oracle_cache: dict[tuple[str, tuple[D, ...]], OracleEvaluation] = {}
+    spectrum_cache: dict[tuple[str, tuple[D, ...]], tuple[D, D, D]] = {}
+    gradient_cache: dict[tuple[str, tuple[D, ...]], D] = {}
     with localcontext() as context:
         context.prec = DIGITS
         for evaluation in evaluation_rows:
@@ -712,7 +762,17 @@ def run(raw: Path, force_bundle: Path, output: Path) -> dict[str, object]:
                 continue
             current = current_by_evaluation[evaluation_id]
             current_float = current_float_by_evaluation[evaluation_id]
-            oracle = evaluate_oracle(model, current)
+            cache_key = (
+                model.operator_id,
+                tuple(
+                    component
+                    for packet_id in model.packet_ids
+                    for component in current[packet_id]
+                ),
+            )
+            if cache_key not in oracle_cache:
+                oracle_cache[cache_key] = evaluate_oracle(model, current)
+            oracle = oracle_cache[cache_key]
             geometry_actual = sorted(
                 geometry_by_evaluation[evaluation_id], key=lambda row: int(row["relation_index"])
             )
@@ -784,10 +844,16 @@ def run(raw: Path, force_bundle: Path, output: Path) -> dict[str, object]:
                         maximum_force_error, abs(D.from_float(actual[axis]) - expected[axis])
                     )
             matrix_errors = maximum_matrix_error(tangent_by_evaluation[evaluation_id], oracle)
-            smallest, largest, condition = spectrum(
-                oracle.total, 3 * len(model.packet_ids) - 6
-            )
-            gradient_residual = directional_gradient_residual(model, current, oracle)
+            if cache_key not in spectrum_cache:
+                spectrum_cache[cache_key] = spectrum(
+                    oracle.total, 3 * len(model.packet_ids) - 6
+                )
+            smallest, largest, condition = spectrum_cache[cache_key]
+            if cache_key not in gradient_cache:
+                gradient_cache[cache_key] = directional_gradient_residual(
+                    model, current, oracle
+                )
+            gradient_residual = gradient_cache[cache_key]
             direction_pass = maximum_direction_ulp <= 8 or all(
                 abs(D.from_float(bitsf(row[f"direction_{name}_bits"])) - oracle.directions[index][axis])
                 <= D(64) * D.from_float(math.ulp(1.0)) * max(abs(oracle.directions[index][axis]), D(1))
