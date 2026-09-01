@@ -4,6 +4,8 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <map>
+#include <ranges>
 #include <stdexcept>
 
 namespace mls::experimental::relation_geometry_resolution {
@@ -144,6 +146,86 @@ struct DoubleDouble final {
 
 [[nodiscard]] bool same_coordinates(Vec3d lhs, Vec3d rhs) noexcept {
     return lhs.x == rhs.x && lhs.y == rhs.y && lhs.z == rhs.z;
+}
+
+[[nodiscard]] std::vector<observation::MechanicalPacket> canonical_packets(
+    std::span<const observation::MechanicalPacket> packets) {
+    std::vector<observation::MechanicalPacket> result(
+        packets.begin(), packets.end());
+    std::ranges::sort(result, {}, &observation::MechanicalPacket::id);
+    for (std::size_t index = 0; index < result.size(); ++index) {
+        const auto& packet = result[index];
+        if (packet.id == 0U || packet.mass_quanta <= 0 ||
+            !finite(packet.position_m) || !finite(packet.velocity_m_per_s) ||
+            (index != 0U && result[index - 1U].id == packet.id)) {
+            throw std::invalid_argument(
+                "resolved force packets must be unique finite positive state");
+        }
+    }
+    return result;
+}
+
+[[nodiscard]] std::map<std::uint64_t, std::size_t> packet_lookup(
+    std::span<const observation::MechanicalPacket> packets) {
+    std::map<std::uint64_t, std::size_t> result;
+    for (std::size_t index = 0; index < packets.size(); ++index) {
+        result.emplace(packets[index].id, index);
+    }
+    return result;
+}
+
+void validate_packet_correspondence(
+    std::span<const observation::MechanicalPacket> reference,
+    std::span<const observation::MechanicalPacket> current) {
+    if (reference.size() != current.size()) {
+        throw std::invalid_argument(
+            "reference/current packet counts differ");
+    }
+    for (std::size_t index = 0; index < reference.size(); ++index) {
+        if (reference[index].id != current[index].id ||
+            reference[index].mass_quanta != current[index].mass_quanta) {
+            throw std::invalid_argument(
+                "reference/current packet identities differ");
+        }
+    }
+}
+
+[[nodiscard]] observation::DenseMatrix material_hessian(
+    const observation::LinearizedOperator& rigidity,
+    const constitutive_expressivity::RelationEnergyOperator& energy_operator) {
+    const auto relation_count = rigidity.matrix.row_count();
+    const auto coordinate_count = rigidity.matrix.column_count();
+    observation::DenseMatrix h_times_r(relation_count, coordinate_count);
+    for (std::size_t row = 0; row < relation_count; ++row) {
+        for (std::size_t column = 0; column < coordinate_count; ++column) {
+            double value = 0.0;
+            for (std::size_t inner = 0; inner < relation_count; ++inner) {
+                value += energy_operator.h_j_per_m2(row, inner) *
+                    rigidity.matrix(inner, column);
+            }
+            if (!std::isfinite(value)) {
+                throw std::overflow_error("resolved material H*R overflow");
+            }
+            h_times_r(row, column) = value;
+        }
+    }
+    observation::DenseMatrix result(coordinate_count, coordinate_count);
+    for (std::size_t row = 0; row < coordinate_count; ++row) {
+        for (std::size_t column = 0; column < coordinate_count; ++column) {
+            double value = 0.0;
+            for (std::size_t relation = 0; relation < relation_count;
+                 ++relation) {
+                value += rigidity.matrix(relation, row) *
+                    h_times_r(relation, column);
+            }
+            if (!std::isfinite(value)) {
+                throw std::overflow_error(
+                    "resolved material R^T*H*R overflow");
+            }
+            result(row, column) = value;
+        }
+    }
+    return result;
 }
 
 [[nodiscard]] DoubleDouble exact_offset(double second, double first) noexcept {
@@ -377,6 +459,213 @@ RelationGeometryEvaluation evaluate_relation_geometry(
         throw std::overflow_error("relation extension evaluation overflow");
     }
     result.status = GeometryStatus::evaluated;
+    return result;
+}
+
+ResolvedForceEvaluation evaluate_resolved_spatial_force(
+    const conservative_force_consistency::FrozenForceOperator& frozen_operator,
+    std::span<const observation::MechanicalPacket> reference_packets,
+    std::span<const observation::MechanicalPacket> current_packets,
+    GeometryPath path) {
+    // Reuse the accepted reference evaluation as an immutable-integrity guard
+    // for the parent/force operator pairing.  Candidate geometry never enters
+    // this call and the accepted implementation remains untouched.
+    const auto accepted_reference =
+        conservative_force_consistency::evaluate_spatial_force(
+            frozen_operator, reference_packets);
+    if (accepted_reference.status !=
+        conservative_force_consistency::ForceDomainStatus::evaluated) {
+        throw std::invalid_argument(
+            "frozen operator does not evaluate on its reference packets");
+    }
+
+    const auto reference = canonical_packets(reference_packets);
+    const auto current = canonical_packets(current_packets);
+    validate_packet_correspondence(reference, current);
+    const auto reference_lookup = packet_lookup(reference);
+    const auto current_lookup = packet_lookup(current);
+    const auto& energy_operator = frozen_operator.force_operator;
+    const auto relation_count = energy_operator.relations.size();
+    if (energy_operator.reference_lengths_m.size() != relation_count ||
+        energy_operator.h_j_per_m2.row_count() != relation_count ||
+        energy_operator.h_j_per_m2.column_count() != relation_count) {
+        throw std::invalid_argument(
+            "resolved force operator dimensions disagree");
+    }
+
+    std::vector<RelationGeometryEvaluation> geometries;
+    geometries.reserve(relation_count);
+    for (std::size_t index = 0; index < relation_count; ++index) {
+        const auto relation = energy_operator.relations[index];
+        if (!reference_lookup.contains(relation.first_id) ||
+            !reference_lookup.contains(relation.second_id) ||
+            !current_lookup.contains(relation.first_id) ||
+            !current_lookup.contains(relation.second_id)) {
+            throw std::invalid_argument(
+                "resolved force relation endpoint is absent");
+        }
+        const auto& reference_first =
+            reference[reference_lookup.at(relation.first_id)];
+        const auto& reference_second =
+            reference[reference_lookup.at(relation.second_id)];
+        const auto& current_first =
+            current[current_lookup.at(relation.first_id)];
+        const auto& current_second =
+            current[current_lookup.at(relation.second_id)];
+        auto geometry = evaluate_relation_geometry(
+            {.reference_first_m = reference_first.position_m,
+             .reference_second_m = reference_second.position_m,
+             .current_first_m = current_first.position_m,
+             .current_second_m = current_second.position_m,
+             .frozen_reference_length_m =
+                 energy_operator.reference_lengths_m[index]},
+            path);
+        if (geometry.status != GeometryStatus::evaluated) {
+            ResolvedForceEvaluation failure{};
+            failure.status = geometry.status == GeometryStatus::coincident_relation
+                ? ResolvedForceStatus::coincident_relation
+                : ResolvedForceStatus::unresolved_noncoincident;
+            failure.failed_relation_index = index;
+            failure.failed_relation = relation;
+            return failure;
+        }
+        geometries.push_back(std::move(geometry));
+    }
+
+    std::vector<double> conjugate(relation_count, 0.0);
+    for (std::size_t row = 0; row < relation_count; ++row) {
+        for (std::size_t column = 0; column < relation_count; ++column) {
+            conjugate[row] += energy_operator.h_j_per_m2(row, column) *
+                geometries[column].extension_m;
+        }
+        if (!std::isfinite(conjugate[row])) {
+            throw std::overflow_error("resolved relation conjugate overflow");
+        }
+    }
+    double energy_twice = 0.0;
+    for (std::size_t index = 0; index < relation_count; ++index) {
+        energy_twice += geometries[index].extension_m * conjugate[index];
+    }
+    if (!std::isfinite(energy_twice)) {
+        throw std::overflow_error("resolved relation energy overflow");
+    }
+
+    ResolvedForceEvaluation result{};
+    result.status = ResolvedForceStatus::evaluated;
+    result.energy_j = 0.5 * energy_twice;
+    result.current_rigidity.kind =
+        observation::ObservableKind::central_bond_length_rate;
+    result.current_rigidity.matrix =
+        observation::DenseMatrix(relation_count, 3U * current.size());
+    result.current_rigidity.packet_ids.reserve(current.size());
+    for (const auto& packet : current) {
+        result.current_rigidity.packet_ids.push_back(packet.id);
+    }
+    std::vector<Vec3d> accumulated(current.size());
+    result.relation_coordinates.reserve(relation_count);
+    for (std::size_t index = 0; index < relation_count; ++index) {
+        const auto relation = energy_operator.relations[index];
+        const auto first = current_lookup.at(relation.first_id);
+        const auto second = current_lookup.at(relation.second_id);
+        const auto direction = geometries[index].direction_first_to_second;
+        const auto relation_force = conjugate[index] * direction;
+        accumulated[first] += relation_force;
+        accumulated[second] += -relation_force;
+        result.relation_coordinates.push_back(
+            {index, relation, geometries[index], conjugate[index]});
+        const std::array components{direction.x, direction.y, direction.z};
+        for (std::size_t axis = 0; axis < 3U; ++axis) {
+            result.current_rigidity.matrix(index, 3U * first + axis) =
+                -components[axis];
+            result.current_rigidity.matrix(index, 3U * second + axis) =
+                components[axis];
+        }
+    }
+    result.packet_forces.reserve(current.size());
+    for (std::size_t index = 0; index < current.size(); ++index) {
+        if (!finite(accumulated[index])) {
+            throw std::overflow_error("resolved packet force overflow");
+        }
+        result.packet_forces.push_back(
+            {current[index].id, accumulated[index]});
+    }
+    return result;
+}
+
+ResolvedTangentEvaluation evaluate_resolved_spatial_tangent(
+    const conservative_force_consistency::FrozenForceOperator& frozen_operator,
+    std::span<const observation::MechanicalPacket> reference_packets,
+    std::span<const observation::MechanicalPacket> current_packets,
+    GeometryPath path) {
+    const auto force = evaluate_resolved_spatial_force(
+        frozen_operator, reference_packets, current_packets, path);
+    if (force.status != ResolvedForceStatus::evaluated) {
+        ResolvedTangentEvaluation failure{};
+        failure.status = force.status;
+        failure.failed_relation_index = force.failed_relation_index;
+        failure.failed_relation = force.failed_relation;
+        return failure;
+    }
+    ResolvedTangentEvaluation result{};
+    result.status = ResolvedForceStatus::evaluated;
+    result.packet_ids = force.current_rigidity.packet_ids;
+    result.material_energy_hessian_n_per_m = material_hessian(
+        force.current_rigidity, frozen_operator.force_operator);
+    const auto coordinate_count = force.current_rigidity.matrix.column_count();
+    result.geometric_energy_hessian_n_per_m =
+        observation::DenseMatrix(coordinate_count, coordinate_count);
+    const auto current = canonical_packets(current_packets);
+    const auto lookup = packet_lookup(current);
+    for (const auto& coordinate : force.relation_coordinates) {
+        const auto first = lookup.at(coordinate.relation.first_id);
+        const auto second = lookup.at(coordinate.relation.second_id);
+        const auto direction = coordinate.geometry.direction_first_to_second;
+        const std::array n{direction.x, direction.y, direction.z};
+        const auto radius = coordinate.geometry.current_length_m;
+        if (!(radius > 0.0)) {
+            throw std::overflow_error(
+                "resolved tangent radius is not positive");
+        }
+        for (std::size_t row_axis = 0; row_axis < 3U; ++row_axis) {
+            for (std::size_t column_axis = 0; column_axis < 3U;
+                 ++column_axis) {
+                const auto identity =
+                    row_axis == column_axis ? 1.0 : 0.0;
+                const auto projector =
+                    (identity - n[row_axis] * n[column_axis]) / radius;
+                const auto contribution =
+                    coordinate.conjugate_force_n * projector;
+                const auto first_row = 3U * first + row_axis;
+                const auto second_row = 3U * second + row_axis;
+                const auto first_column = 3U * first + column_axis;
+                const auto second_column = 3U * second + column_axis;
+                result.geometric_energy_hessian_n_per_m(
+                    first_row, first_column) += contribution;
+                result.geometric_energy_hessian_n_per_m(
+                    second_row, second_column) += contribution;
+                result.geometric_energy_hessian_n_per_m(
+                    first_row, second_column) -= contribution;
+                result.geometric_energy_hessian_n_per_m(
+                    second_row, first_column) -= contribution;
+            }
+        }
+    }
+    result.total_energy_hessian_n_per_m =
+        observation::DenseMatrix(coordinate_count, coordinate_count);
+    result.force_jacobian_n_per_m =
+        observation::DenseMatrix(coordinate_count, coordinate_count);
+    for (std::size_t row = 0; row < coordinate_count; ++row) {
+        for (std::size_t column = 0; column < coordinate_count; ++column) {
+            const auto total =
+                result.material_energy_hessian_n_per_m(row, column) +
+                result.geometric_energy_hessian_n_per_m(row, column);
+            if (!std::isfinite(total)) {
+                throw std::overflow_error("resolved force tangent overflow");
+            }
+            result.total_energy_hessian_n_per_m(row, column) = total;
+            result.force_jacobian_n_per_m(row, column) = -total;
+        }
+    }
     return result;
 }
 

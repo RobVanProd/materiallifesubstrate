@@ -9,6 +9,9 @@
 namespace {
 
 namespace geometry = mls::experimental::relation_geometry_resolution;
+namespace constitutive = mls::experimental::constitutive_expressivity;
+namespace force = mls::experimental::conservative_force_consistency;
+namespace observation = mls::experimental::mechanical_observability;
 using mls::experimental::Vec3d;
 
 [[nodiscard]] geometry::RelationGeometryInput octahedron_relation() {
@@ -23,6 +26,19 @@ using mls::experimental::Vec3d;
 
 [[nodiscard]] bool close(double lhs, double rhs, double tolerance) {
     return std::abs(lhs - rhs) <= tolerance;
+}
+
+[[nodiscard]] std::vector<observation::MechanicalPacket> pair_packets() {
+    return {{1, 1, {1.0, 0.0, 0.0}, {}},
+            {2, 1, {0.0, 1.0, 0.0}, {}}};
+}
+
+[[nodiscard]] force::FrozenForceOperator pair_operator(
+    const std::vector<observation::MechanicalPacket>& reference) {
+    const std::array coefficients{
+        constitutive::PairRelationCoefficient{{1, 2}, 2.0}};
+    return force::freeze_symmetric_force_operator(
+        constitutive::build_pair_separable_energy(reference, coefficients));
 }
 
 } // namespace
@@ -120,3 +136,57 @@ MLS_TEST("relation geometry exact coincidence fails closed") {
     }
 }
 
+MLS_TEST("resolved Path A force is the accepted force on ordinary geometry") {
+    const auto reference = pair_packets();
+    const auto model = pair_operator(reference);
+    auto current = reference;
+    current[1].position_m = {0.25, 1.125, -0.5};
+    const auto accepted = force::evaluate_spatial_force(model, current);
+    const auto resolved = geometry::evaluate_resolved_spatial_force(
+        model, reference, current, geometry::GeometryPath::frozen_binary64);
+    MLS_REQUIRE_EQ(resolved.status, geometry::ResolvedForceStatus::evaluated);
+    MLS_REQUIRE_EQ(resolved.energy_j, accepted.energy_j);
+    MLS_REQUIRE_EQ(resolved.packet_forces, accepted.packet_forces);
+    MLS_REQUIRE_EQ(
+        resolved.current_rigidity.matrix, accepted.current_rigidity.matrix);
+
+    const auto accepted_tangent = force::evaluate_spatial_tangent(model, current);
+    const auto resolved_tangent = geometry::evaluate_resolved_spatial_tangent(
+        model, reference, current, geometry::GeometryPath::frozen_binary64);
+    MLS_REQUIRE_EQ(
+        resolved_tangent.status, geometry::ResolvedForceStatus::evaluated);
+    MLS_REQUIRE_EQ(
+        resolved_tangent.material_energy_hessian_n_per_m,
+        accepted_tangent.material_energy_hessian_n_per_m);
+    MLS_REQUIRE_EQ(
+        resolved_tangent.geometric_energy_hessian_n_per_m,
+        accepted_tangent.geometric_energy_hessian_n_per_m);
+    MLS_REQUIRE_EQ(
+        resolved_tangent.total_energy_hessian_n_per_m,
+        accepted_tangent.total_energy_hessian_n_per_m);
+}
+
+MLS_TEST("resolved force paths fail closed without partial output") {
+    const auto reference = pair_packets();
+    const auto model = pair_operator(reference);
+    auto current = reference;
+    current[1].position_m = current[0].position_m;
+    for (const auto path :
+         std::array{geometry::GeometryPath::frozen_binary64,
+                    geometry::GeometryPath::cancellation_resistant_binary64,
+                    geometry::GeometryPath::transient_double_double}) {
+        const auto evaluated = geometry::evaluate_resolved_spatial_force(
+            model, reference, current, path);
+        MLS_REQUIRE_EQ(
+            evaluated.status, geometry::ResolvedForceStatus::coincident_relation);
+        MLS_REQUIRE(std::isnan(evaluated.energy_j));
+        MLS_REQUIRE(evaluated.packet_forces.empty());
+        MLS_REQUIRE(evaluated.relation_coordinates.empty());
+        const auto tangent = geometry::evaluate_resolved_spatial_tangent(
+            model, reference, current, path);
+        MLS_REQUIRE_EQ(
+            tangent.status, geometry::ResolvedForceStatus::coincident_relation);
+        MLS_REQUIRE_EQ(
+            tangent.total_energy_hessian_n_per_m.row_count(), std::size_t{0});
+    }
+}

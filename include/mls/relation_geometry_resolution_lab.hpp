@@ -3,9 +3,14 @@
 #include "mls/conservative_force_consistency_lab.hpp"
 
 #include <cstdint>
+#include <limits>
+#include <span>
 #include <string_view>
+#include <vector>
 
 namespace mls::experimental::relation_geometry_resolution {
+
+namespace observation = mechanical_observability;
 
 // Read-only arithmetic paths for the accepted central-distance coordinate.
 // No value in this namespace is authoritative packet or relation state.
@@ -75,5 +80,54 @@ struct RelationGeometryEvaluation final {
 [[nodiscard]] RelationGeometryEvaluation evaluate_relation_geometry(
     const RelationGeometryInput& input, GeometryPath path);
 
-} // namespace mls::experimental::relation_geometry_resolution
+enum class ResolvedForceStatus : std::uint8_t {
+    evaluated,
+    coincident_relation,
+    unresolved_noncoincident,
+};
 
+struct ResolvedRelationForceCoordinate final {
+    std::size_t relation_index{0};
+    observation::BondRelation relation{};
+    RelationGeometryEvaluation geometry{};
+    double conjugate_force_n{0.0};
+};
+
+struct ResolvedForceEvaluation final {
+    ResolvedForceStatus status{ResolvedForceStatus::unresolved_noncoincident};
+    double energy_j{std::numeric_limits<double>::quiet_NaN()};
+    std::vector<ResolvedRelationForceCoordinate> relation_coordinates{};
+    std::vector<conservative_force_consistency::PacketForce> packet_forces{};
+    observation::LinearizedOperator current_rigidity{};
+    std::size_t failed_relation_index{
+        std::numeric_limits<std::size_t>::max()};
+    observation::BondRelation failed_relation{};
+};
+
+// Parallel read-only force assembly using the frozen accepted H and a named
+// relation-geometry path.  The accepted evaluator remains unchanged.
+[[nodiscard]] ResolvedForceEvaluation evaluate_resolved_spatial_force(
+    const conservative_force_consistency::FrozenForceOperator& energy_operator,
+    std::span<const observation::MechanicalPacket> reference_packets,
+    std::span<const observation::MechanicalPacket> current_packets,
+    GeometryPath path);
+
+struct ResolvedTangentEvaluation final {
+    ResolvedForceStatus status{ResolvedForceStatus::unresolved_noncoincident};
+    std::vector<std::uint64_t> packet_ids{};
+    observation::DenseMatrix material_energy_hessian_n_per_m{};
+    observation::DenseMatrix geometric_energy_hessian_n_per_m{};
+    observation::DenseMatrix total_energy_hessian_n_per_m{};
+    observation::DenseMatrix force_jacobian_n_per_m{};
+    std::size_t failed_relation_index{
+        std::numeric_limits<std::size_t>::max()};
+    observation::BondRelation failed_relation{};
+};
+
+[[nodiscard]] ResolvedTangentEvaluation evaluate_resolved_spatial_tangent(
+    const conservative_force_consistency::FrozenForceOperator& energy_operator,
+    std::span<const observation::MechanicalPacket> reference_packets,
+    std::span<const observation::MechanicalPacket> current_packets,
+    GeometryPath path);
+
+} // namespace mls::experimental::relation_geometry_resolution
