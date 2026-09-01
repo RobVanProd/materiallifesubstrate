@@ -462,6 +462,21 @@ if(Python3_Interpreter_FOUND)
       TIMEOUT 180)
 
   add_test(
+    NAME mls.authoritative_mechanics_state_bridge.seal.regression
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/authoritative_mechanics_state_bridge_seal_test.py"
+      --tool
+      "${PROJECT_SOURCE_DIR}/tools/seal_authoritative_mechanics_state_bridge_evidence.py")
+  set_tests_properties(
+    mls.authoritative_mechanics_state_bridge.seal.regression
+    PROPERTIES
+      LABELS "deterministic;mechanics-bridge;seal;mutations"
+      PASS_REGULAR_EXPRESSION
+        "authoritative mechanics bridge outer-seal regression: PASS"
+      TIMEOUT 60)
+
+  add_test(
     NAME mls.conservative_force_consistency.smoke.compare
     COMMAND
       "${Python3_EXECUTABLE}"
