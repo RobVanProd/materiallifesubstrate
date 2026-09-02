@@ -121,8 +121,22 @@ set_tests_properties(
     ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
     LABELS "deterministic;drift-bridge;mutation"
     PASS_REGULAR_EXPRESSION
-      "PASS \(2 deterministic positives, 14 mutations\)"
+      "PASS \\(2 deterministic positives, 14 mutations\\)"
     TIMEOUT 1200)
+
+add_test(
+  NAME mls.authoritative_drift_state_bridge.seal_mutations
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/authoritative_drift_state_bridge_seal_test.py")
+set_tests_properties(
+  mls.authoritative_drift_state_bridge.seal_mutations
+  PROPERTIES
+    ENVIRONMENT "PYTHONDWRITEBYTECODE=1"
+    LABELS "deterministic;drift-bridge;seal;mutation"
+    PASS_REGULAR_EXPRESSION
+      "PASS \\(2 positives, 3 mutations\\)"
+    TIMEOUT 60)
 endif()
 
 add_test(
