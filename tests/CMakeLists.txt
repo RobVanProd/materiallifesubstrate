@@ -242,7 +242,7 @@ set_tests_properties(
     ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
     LABELS "deterministic;phase-space-time-corefinement;mutation"
     PASS_REGULAR_EXPRESSION
-      "PASS \(2 deterministic positives, 33 mutations\)"
+      "PASS \\(2 deterministic positives, 33 mutations\\)"
     TIMEOUT 1800)
 endif()
 
