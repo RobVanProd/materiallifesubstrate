@@ -76,7 +76,7 @@ SCHEMAS = {
     "energies.csv": "scenario_id,path,level,sample,dt_raw,mechanical_energy_bits",
     "primitive_diagnostics.csv": (
         "scenario_id,path,level,step,stage,packet_id,px_raw,py_raw,pz_raw,g,"
-        "ux,uy,uz,primitive_norm_squared_ld,minimum_drift_m_bits"
+        "ux,uy,uz,primitive_norm_squared_bits,minimum_drift_m_bits"
     ),
     "relation_primitive_diagnostics.csv": (
         "scenario_id,path,level,step,stage,relation_index,first_id,second_id,"
@@ -562,15 +562,17 @@ def verify_primitive(raw: Path, units: dict[int, dict[str, Fraction | int]]) -> 
             require(u == expected_u, "primitive direction differs")
             if divisor != 0:
                 require(math.gcd(*(abs(value) for value in u)) == 1, "direction is not primitive")
-            squared = sum(value * value for value in u)
-            declared_squared = Decimal(row["primitive_norm_squared_ld"])
-            require(abs(declared_squared - Decimal(squared)) <= Decimal("0.5"), "primitive norm diagnostic differs")
             lq = units[level]["Lq"]
             assert isinstance(lq, Fraction)
             binary64_squared = 0.0
             for value in u:
                 binary64_component = float(value)
                 binary64_squared += binary64_component * binary64_component
+            require(
+                float_from_bits(row["primitive_norm_squared_bits"])
+                == binary64_squared,
+                "primitive norm diagnostic differs",
+            )
             expected_minimum = (
                 float(lq.numerator)
                 / float(lq.denominator)

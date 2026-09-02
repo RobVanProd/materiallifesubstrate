@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <iomanip>
 #include <initializer_list>
 #include <iostream>
 #include <limits>
@@ -123,13 +122,6 @@ private:
 [[nodiscard]] std::string rational(mechanics::PositiveRational value) {
     return std::to_string(value.numerator) + "/" +
         std::to_string(value.denominator);
-}
-
-[[nodiscard]] std::string precise(long double value) {
-    std::ostringstream stream;
-    stream << std::setprecision(std::numeric_limits<long double>::max_digits10)
-           << value;
-    return stream.str();
 }
 
 [[nodiscard]] DynamicPacket packet(
@@ -293,7 +285,7 @@ struct Tables final {
     Csv energies{
         "scenario_id,path,level,sample,dt_raw,mechanical_energy_bits"};
     Csv primitive{
-        "scenario_id,path,level,step,stage,packet_id,px_raw,py_raw,pz_raw,g,ux,uy,uz,primitive_norm_squared_ld,minimum_drift_m_bits"};
+        "scenario_id,path,level,step,stage,packet_id,px_raw,py_raw,pz_raw,g,ux,uy,uz,primitive_norm_squared_bits,minimum_drift_m_bits"};
     Csv relation_primitive{
         "scenario_id,path,level,step,stage,relation_index,first_id,second_id,rx_raw,ry_raw,rz_raw,g,ux,uy,uz,target_multiple_bits,applied_multiple,minimum_impulse_bits"};
     Csv reversibility{
@@ -398,11 +390,8 @@ void export_primitive(
         static_cast<double>(units.length_quantum_m.denominator);
     for (const auto& record : trajectory.primitive_records) {
         const auto& value = record.diagnostic;
-        long double squared = 0.0L;
         double binary64_squared = 0.0;
         for (const auto component_value : value.primitive_direction) {
-            const auto converted = static_cast<long double>(component_value);
-            squared += converted * converted;
             const auto binary64_component = static_cast<double>(component_value);
             binary64_squared += binary64_component * binary64_component;
         }
@@ -419,7 +408,7 @@ void export_primitive(
             std::to_string(value.primitive_direction[0]),
             std::to_string(value.primitive_direction[1]),
             std::to_string(value.primitive_direction[2]),
-            precise(squared), bits(minimum),
+            bits(binary64_squared), bits(minimum),
         });
     }
 }
