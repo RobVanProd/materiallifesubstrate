@@ -294,6 +294,8 @@ struct Tables final {
         "scenario_id,path,level,sample,dt_raw,mechanical_energy_bits"};
     Csv primitive{
         "scenario_id,path,level,step,stage,packet_id,px_raw,py_raw,pz_raw,g,ux,uy,uz,primitive_norm_squared_ld,minimum_drift_m_bits"};
+    Csv relation_primitive{
+        "scenario_id,path,level,step,stage,relation_index,first_id,second_id,rx_raw,ry_raw,rz_raw,g,ux,uy,uz,target_multiple_bits,applied_multiple,minimum_impulse_bits"};
     Csv reversibility{
         "scenario_id,level,dt_raw,steps,forward_status,backward_status,initial_hash,recovered_hash,bit_identical"};
     Csv covariance{
@@ -415,6 +417,44 @@ void export_primitive(
             std::to_string(value.primitive_direction[1]),
             std::to_string(value.primitive_direction[2]),
             precise(squared), bits(minimum),
+        });
+    }
+}
+
+void export_relation_primitive(
+    Tables& tables,
+    const std::string& scenario,
+    corefine::IntegratorPath path,
+    std::uint32_t level,
+    const corefine::TrajectoryResult& trajectory,
+    const corefine::UnitProfile& units) {
+    const auto pq =
+        static_cast<long double>(units.momentum_quantum_kg_m_per_s.numerator) /
+        static_cast<long double>(units.momentum_quantum_kg_m_per_s.denominator);
+    for (const auto& record : trajectory.relation_records) {
+        const auto& value = record.diagnostic;
+        long double squared = 0.0L;
+        for (const auto component_value : value.primitive_direction) {
+            const auto converted = static_cast<long double>(component_value);
+            squared += converted * converted;
+        }
+        const auto minimum = static_cast<double>(pq * std::sqrt(squared));
+        tables.relation_primitive.row({
+            scenario, std::string(parent::path_name(path)),
+            std::to_string(level), std::to_string(record.step_index),
+            std::string(parent::stage_name(record.stage)),
+            std::to_string(value.relation_index),
+            std::to_string(value.relation.first_id),
+            std::to_string(value.relation.second_id),
+            std::to_string(value.relative_position.x.raw()),
+            std::to_string(value.relative_position.y.raw()),
+            std::to_string(value.relative_position.z.raw()),
+            std::to_string(value.direction_gcd),
+            std::to_string(value.primitive_direction[0]),
+            std::to_string(value.primitive_direction[1]),
+            std::to_string(value.primitive_direction[2]),
+            std::to_string(value.target_multiple_bits),
+            std::to_string(value.applied_multiple), bits(minimum),
         });
     }
 }
@@ -652,14 +692,13 @@ void write_tables(const std::filesystem::path& output) {
                 scenario.state, level);
             const auto model = model_for(scenario.model_id, level);
             for (const auto path : paths) {
-                std::cerr << "corefinement progress: convergence level=" << level
-                          << " scenario=" << scenario.id << " path="
-                          << parent::path_name(path) << '\n';
                 const auto trajectory = corefine::evaluate_trajectory(
                     model, path, state, Time::from_raw(raw_timesteps[level]),
                     step_counts[level]);
                 export_endpoint(tables, scenario.id, path, level, trajectory);
                 export_primitive(
+                    tables, scenario.id, path, level, trajectory, units);
+                export_relation_primitive(
                     tables, scenario.id, path, level, trajectory, units);
             }
         }
@@ -680,8 +719,6 @@ void write_tables(const std::filesystem::path& output) {
                 continue;
             }
             try {
-                std::cerr << "corefinement progress: reversibility level="
-                          << level << " scenario=" << scenario.id << '\n';
                 const auto initial = corefine::map_level_zero_state(
                     scenario.state, level);
                 const auto model = model_for(scenario.model_id, level);
@@ -713,7 +750,6 @@ void write_tables(const std::filesystem::path& output) {
         }
 
         const auto& baseline = find_scenario("k4_internal");
-        std::cerr << "corefinement progress: covariance level=" << level << '\n';
         const auto base_initial = corefine::map_level_zero_state(
             baseline.state, level);
         const auto base_model = model_for("k4", level);
@@ -722,7 +758,6 @@ void write_tables(const std::filesystem::path& output) {
             base_initial, Time::from_raw(raw_timesteps[level]),
             step_counts[level]);
         const auto& translated_case = find_scenario("k4_translated");
-        std::cerr << "corefinement progress: translation level=" << level << '\n';
         try {
             const auto shifted = corefine::evaluate_trajectory(
                 model_for("k4_translated", level),
@@ -745,7 +780,6 @@ void write_tables(const std::filesystem::path& output) {
         }
 
         const auto& boost_case = find_scenario("k4_boosted");
-        std::cerr << "corefinement progress: boost level=" << level << '\n';
         const auto boost_run = corefine::evaluate_trajectory(
             base_model, corefine::IntegratorPath::quantized_kick_drift_kick,
             corefine::map_level_zero_state(boost_case.state, level),
@@ -764,9 +798,12 @@ void write_tables(const std::filesystem::path& output) {
             tables, boost_case.id,
             corefine::IntegratorPath::quantized_kick_drift_kick,
             level, boost_run, corefine::unit_profile(level));
+        export_relation_primitive(
+            tables, boost_case.id,
+            corefine::IntegratorPath::quantized_kick_drift_kick,
+            level, boost_run, corefine::unit_profile(level));
 
         const auto& rotated_case = find_scenario("k4_rotated");
-        std::cerr << "corefinement progress: rotation level=" << level << '\n';
         auto rotated_run = corefine::evaluate_trajectory(
             model_for("k4_rotated", level),
             corefine::IntegratorPath::quantized_kick_drift_kick,
@@ -786,7 +823,6 @@ void write_tables(const std::filesystem::path& output) {
             "evaluated"});
 
         const auto checkpoint_steps = step_counts[level] / 2U;
-        std::cerr << "corefinement progress: checkpoint level=" << level << '\n';
         const auto first = corefine::evaluate_trajectory(
             base_model, corefine::IntegratorPath::quantized_kick_drift_kick,
             base_initial, Time::from_raw(raw_timesteps[level]),
@@ -815,7 +851,6 @@ void write_tables(const std::filesystem::path& output) {
         });
 
         const auto& crossing = find_scenario("domain_crossing");
-        std::cerr << "corefinement progress: domain level=" << level << '\n';
         const auto crossing_initial = corefine::map_level_zero_state(
             crossing.state, level);
         const auto crossing_result = corefine::evaluate_step(
@@ -841,7 +876,6 @@ void write_tables(const std::filesystem::path& output) {
         });
 
         auto first_velocity = base_initial.packets.front();
-        std::cerr << "corefinement progress: bridge level=" << level << '\n';
         auto second_velocity = first_velocity;
         first_velocity.momentum = {
             Momentum::from_raw(3 * (mls::Scalar{1} << (3U * level))),
@@ -884,8 +918,6 @@ void write_tables(const std::filesystem::path& output) {
         });
 
         const auto long_steps = step_counts[level] * 16U;
-        std::cerr << "corefinement progress: long-energy level=" << level
-                  << '\n';
         const auto long_run = corefine::evaluate_trajectory(
             base_model, corefine::IntegratorPath::quantized_kick_drift_kick,
             base_initial, Time::from_raw(raw_timesteps[level]), long_steps);
@@ -940,6 +972,8 @@ void write_tables(const std::filesystem::path& output) {
     tables.endpoints.write(output / "endpoints.csv");
     tables.energies.write(output / "energies.csv");
     tables.primitive.write(output / "primitive_diagnostics.csv");
+    tables.relation_primitive.write(
+        output / "relation_primitive_diagnostics.csv");
     tables.reversibility.write(output / "reversibility.csv");
     tables.covariance.write(output / "covariance.csv");
     tables.checkpoint.write(output / "checkpoint.csv");
@@ -953,6 +987,8 @@ void schema_audit() {
     if (tables.metadata.text() != "key,value\n" ||
         tables.units.text().find("level,Lq,Mq,Tq,Pq,Eq,Fq") != 0U ||
         tables.primitive.text().find("scenario_id,path,level,step,stage") != 0U ||
+        tables.relation_primitive.text().find(
+            "scenario_id,path,level,step,stage,relation_index") != 0U ||
         tables.domain.text().find("scenario_id,level,status") != 0U) {
         throw std::runtime_error("corefinement raw schema inventory differs");
     }

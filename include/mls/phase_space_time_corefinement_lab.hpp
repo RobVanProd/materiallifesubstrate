@@ -86,6 +86,16 @@ struct PrimitiveMomentumDiagnostic final {
         const PrimitiveMomentumDiagnostic&) const noexcept = default;
 };
 
+struct PrimitiveRelationDiagnostic final {
+    std::size_t relation_index{0};
+    observation::BondRelation relation{};
+    Position3 relative_position{};
+    Scalar direction_gcd{0};
+    std::array<Scalar, 3> primitive_direction{};
+    std::uint64_t target_multiple_bits{0};
+    Scalar applied_multiple{0};
+};
+
 [[nodiscard]] PrimitiveMomentumDiagnostic primitive_momentum_diagnostic(
     const DynamicPacket& packet);
 
@@ -120,6 +130,7 @@ struct StageRecord final {
     ExactInvariants invariants{};
     std::uint64_t state_hash{0};
     std::vector<PrimitiveMomentumDiagnostic> primitive_momenta{};
+    std::vector<PrimitiveRelationDiagnostic> primitive_relations{};
 };
 
 struct StepInput final {
@@ -158,6 +169,12 @@ struct TrajectoryPrimitiveRecord final {
     PrimitiveMomentumDiagnostic diagnostic{};
 };
 
+struct TrajectoryRelationRecord final {
+    std::uint64_t step_index{0};
+    StageKind stage{StageKind::initial};
+    PrimitiveRelationDiagnostic diagnostic{};
+};
+
 struct TrajectoryResult final {
     IntegratorPath path{IntegratorPath::quantized_kick_drift_kick};
     StepStatus status{StepStatus::arithmetic_failure};
@@ -168,6 +185,7 @@ struct TrajectoryResult final {
     std::vector<std::uint64_t> event_hashes{};
     std::vector<double> mechanical_energy_j{};
     std::vector<TrajectoryPrimitiveRecord> primitive_records{};
+    std::vector<TrajectoryRelationRecord> relation_records{};
     bool exact_momentum_preserved{false};
     bool exact_orbital_angular_momentum_preserved{false};
 };

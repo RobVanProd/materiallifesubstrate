@@ -362,6 +362,7 @@ struct KickResult final {
     std::size_t failed_relation_index{
         std::numeric_limits<std::size_t>::max()};
     BondRelation failed_relation{};
+    std::vector<PrimitiveRelationDiagnostic> diagnostics{};
 };
 
 [[nodiscard]] KickResult kick(
@@ -381,13 +382,19 @@ struct KickResult final {
             StepStatus::force_domain_failure,
             {},
             evaluated.failed_relation_index,
-            evaluated.failed_relation};
+            evaluated.failed_relation,
+            {}};
     }
     const auto by_id = lookup(packets);
     const auto pq = rational_value(model.units.momentum_quantum_kg_m_per_s);
     const auto dt = static_cast<double>(interval.raw()) *
         rational_value(model.units.time_quantum_s);
-    for (const auto& relation : evaluated.relation_coordinates) {
+    std::vector<PrimitiveRelationDiagnostic> diagnostics;
+    diagnostics.reserve(evaluated.relation_coordinates.size());
+    for (std::size_t relation_index = 0;
+         relation_index < evaluated.relation_coordinates.size();
+         ++relation_index) {
+        const auto& relation = evaluated.relation_coordinates[relation_index];
         const auto first_index = by_id.at(relation.relation.first_id);
         const auto second_index = by_id.at(relation.relation.second_id);
         const auto direction = primitive_direction(
@@ -404,11 +411,31 @@ struct KickResult final {
             dt * dot(relation_force, raw_direction) /
             (pq * direction_squared);
         const auto multiple = nearest_even_binary64(target_multiple);
+        const auto relative =
+            packets[second_index].position - packets[first_index].position;
+        auto direction_gcd = std::gcd(
+            absolute_for_gcd(relative.x.raw()),
+            absolute_for_gcd(relative.y.raw()));
+        direction_gcd = std::gcd(
+            direction_gcd, absolute_for_gcd(relative.z.raw()));
+        diagnostics.push_back({
+            relation_index,
+            relation.relation,
+            relative,
+            direction_gcd,
+            direction,
+            std::bit_cast<std::uint64_t>(target_multiple),
+            multiple});
         const auto impulse = impulse_from_direction(direction, multiple);
         packets[first_index].momentum += impulse;
         packets[second_index].momentum -= impulse;
     }
-    return {StepStatus::accepted, std::move(packets), {}, {}};
+    return {
+        StepStatus::accepted,
+        std::move(packets),
+        {},
+        {},
+        std::move(diagnostics)};
 }
 
 [[nodiscard]] Position3 drift_displacement(
@@ -843,6 +870,7 @@ StepResult evaluate_step(
         }
         auto working = with_packets(result.prior_state, std::move(first.packets));
         append_stage(result.stages, StageKind::first_kick, working);
+        result.stages.back().primitive_relations = std::move(first.diagnostics);
         if (result.stages.back().invariants != initial_invariants) {
             return reject(StepStatus::invariant_failure, {}, {});
         }
@@ -874,6 +902,8 @@ StepResult evaluate_step(
             }
             working.packets = std::move(second.packets);
             append_stage(result.stages, StageKind::second_kick, working);
+            result.stages.back().primitive_relations =
+                std::move(second.diagnostics);
             if (result.stages.back().invariants != initial_invariants) {
                 return reject(StepStatus::invariant_failure, {}, {});
             }
@@ -933,6 +963,10 @@ TrajectoryResult evaluate_trajectory(
         for (const auto& stage : step.stages) {
             for (const auto& diagnostic : stage.primitive_momenta) {
                 result.primitive_records.push_back(
+                    {index, stage.stage, diagnostic});
+            }
+            for (const auto& diagnostic : stage.primitive_relations) {
+                result.relation_records.push_back(
                     {index, stage.stage, diagnostic});
             }
         }

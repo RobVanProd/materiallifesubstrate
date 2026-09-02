@@ -48,6 +48,7 @@ FILES = (
     "endpoints.csv",
     "energies.csv",
     "primitive_diagnostics.csv",
+    "relation_primitive_diagnostics.csv",
     "reversibility.csv",
     "covariance.csv",
     "checkpoint.csv",
@@ -76,6 +77,11 @@ SCHEMAS = {
     "primitive_diagnostics.csv": (
         "scenario_id,path,level,step,stage,packet_id,px_raw,py_raw,pz_raw,g,"
         "ux,uy,uz,primitive_norm_squared_ld,minimum_drift_m_bits"
+    ),
+    "relation_primitive_diagnostics.csv": (
+        "scenario_id,path,level,step,stage,relation_index,first_id,second_id,"
+        "rx_raw,ry_raw,rz_raw,g,ux,uy,uz,target_multiple_bits,applied_multiple,"
+        "minimum_impulse_bits"
     ),
     "reversibility.csv": (
         "scenario_id,level,dt_raw,steps,forward_status,backward_status,"
@@ -505,6 +511,59 @@ def verify_primitive(raw: Path, units: dict[int, dict[str, Fraction | int]]) -> 
     }
 
 
+def verify_relation_primitive(
+    raw: Path,
+    units: dict[int, dict[str, Fraction | int]],
+) -> dict[str, object]:
+    diagnostic_rows = rows(raw / "relation_primitive_diagnostics.csv")
+    require(diagnostic_rows, "relation primitive diagnostics empty")
+    summaries: dict[tuple[str, int], dict[str, object]] = {}
+    grouped = group(diagnostic_rows, ("scenario_id", "level"))
+    for key, values in grouped.items():
+        level = int(key[1])
+        gcd_one = 0
+        applied_zero = 0
+        resolved_target_but_zero = 0
+        maximum_minimum = 0.0
+        stages: set[str] = set()
+        for row in values:
+            relative = tuple(int(row[f"r{axis}_raw"]) for axis in "xyz")
+            divisor = math.gcd(*(abs(value) for value in relative))
+            require(divisor > 0 and int(row["g"]) == divisor, "relation gcd differs")
+            primitive = tuple(int(row[axis]) for axis in ("ux", "uy", "uz"))
+            require(primitive == tuple(value // divisor for value in relative), "relation primitive differs")
+            require(math.gcd(*(abs(value) for value in primitive)) == 1, "relation direction not primitive")
+            target = float_from_bits(row["target_multiple_bits"])
+            require(math.isfinite(target), "relation target multiple is nonfinite")
+            applied = int(row["applied_multiple"])
+            expected_applied = round(target)
+            require(applied == expected_applied, "relation nearest-even multiple differs")
+            pq = units[level]["Pq"]
+            assert isinstance(pq, Fraction)
+            expected_minimum = float(
+                mp(pq) * Decimal(sum(value * value for value in primitive)).sqrt()
+            )
+            observed_minimum = float_from_bits(row["minimum_impulse_bits"])
+            require(observed_minimum == expected_minimum, "minimum impulse diagnostic differs")
+            gcd_one += divisor == 1
+            applied_zero += applied == 0
+            resolved_target_but_zero += applied == 0 and target != 0.0
+            maximum_minimum = max(maximum_minimum, observed_minimum)
+            stages.add(row["stage"])
+        require("first_kick" in stages, f"{key}: first-kick diagnostic missing")
+        summaries[(key[0], level)] = {
+            "rows": len(values),
+            "gcd_one_rows": gcd_one,
+            "applied_zero_rows": applied_zero,
+            "nonzero_target_rounded_to_zero_rows": resolved_target_but_zero,
+            "maximum_minimum_impulse_kg_m_per_s": maximum_minimum,
+        }
+    return {
+        f"{scenario}/level-{level}": value
+        for (scenario, level), value in sorted(summaries.items())
+    }
+
+
 def verify_exact_gates(raw: Path, units: dict[int, dict[str, Fraction | int]]) -> tuple[dict[str, object], bool, bool, bool]:
     bridge_rows = rows(raw / "bridge_contracts.csv")
     require(len(bridge_rows) == 5, "bridge level count differs")
@@ -637,9 +696,13 @@ def verify(raw: Path, parent_raw: Path) -> dict[str, object]:
     endpoints, endpoint_invariants = load_endpoints(raw, units)
     convergence, convergence_pass, control_pass = convergence_report(endpoints, oracle)
     primitive = verify_primitive(raw, units)
+    relation_primitive = verify_relation_primitive(raw, units)
     exact, exact_pass, reversible, frame_pass = verify_exact_gates(raw, units)
     energy, energy_pass = energy_report(raw)
-    width_blocks_window = bool(mapping["signed64_overflow"]) and not convergence_pass
+    width_blocks_window = any(
+        scenario in CONVERGENCE_SCENARIOS
+        for scenario, _level in mapping["signed64_overflow"]
+    )
     if parent_report["decision"] != "temporal_convergence_blocked_by_authoritative_quantization":
         decision = "stop_inconclusive_or_wrong_parent"
     elif width_blocks_window:
@@ -664,6 +727,7 @@ def verify(raw: Path, parent_raw: Path) -> dict[str, object]:
         "oracle_refinement_errors": {key: format(value, ".29E") for key, value in oracle_refinements.items()},
         "convergence": convergence,
         "primitive_diagnostics": primitive,
+        "relation_primitive_diagnostics": relation_primitive,
         "exact_gates": exact,
         "energy": energy,
         "endpoint_invariants_independently_recomputed": endpoint_invariants,
