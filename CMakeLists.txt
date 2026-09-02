@@ -527,6 +527,40 @@ else()
   endif()
 endif()
 
+add_executable(
+  mls_phase_space_time_corefinement_diagnostic
+  apps/phase_space_time_corefinement_diagnostic.cpp)
+target_link_libraries(
+  mls_phase_space_time_corefinement_diagnostic PRIVATE mls_core)
+target_compile_features(
+  mls_phase_space_time_corefinement_diagnostic PRIVATE cxx_std_20)
+target_compile_definitions(
+  mls_phase_space_time_corefinement_diagnostic
+  PRIVATE
+    MLS_CONFIGURED_SOURCE_SHA="${MLS_CONFIGURED_SOURCE_SHA}"
+    MLS_CONFIGURED_SOURCE_BRANCH="${MLS_CONFIGURED_SOURCE_BRANCH}"
+    MLS_CONFIGURED_SOURCE_DIRTY="${MLS_CONFIGURED_SOURCE_DIRTY}"
+    MLS_CONFIGURED_COMPILER_ID="${CMAKE_CXX_COMPILER_ID}"
+    MLS_CONFIGURED_COMPILER_VERSION="${CMAKE_CXX_COMPILER_VERSION}"
+    MLS_CONFIGURED_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
+if(MSVC)
+  target_compile_options(
+    mls_phase_space_time_corefinement_diagnostic
+    PRIVATE /W4 /permissive- /Zc:__cplusplus /fp:strict)
+  if(MLS_WARNINGS_AS_ERRORS)
+    target_compile_options(
+      mls_phase_space_time_corefinement_diagnostic PRIVATE /WX)
+  endif()
+else()
+  target_compile_options(
+    mls_phase_space_time_corefinement_diagnostic
+    PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -ffp-contract=off)
+  if(MLS_WARNINGS_AS_ERRORS)
+    target_compile_options(
+      mls_phase_space_time_corefinement_diagnostic PRIVATE -Werror)
+  endif()
+endif()
+
 include(CTest)
 if(BUILD_TESTING AND MLS_BUILD_TESTS)
   add_subdirectory(tests)

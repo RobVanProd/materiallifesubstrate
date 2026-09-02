@@ -13,6 +13,7 @@ add_executable(
   conservative_force_consistency_tests.cpp
   constitutive_expressivity_tests.cpp
   physical_support_tests.cpp
+  phase_space_time_corefinement_tests.cpp
   affine_advection_tests.cpp
   moving_apic_limit_tests.cpp
   kelvin_covariance_audit_tests.cpp
