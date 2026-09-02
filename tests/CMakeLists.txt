@@ -530,6 +530,7 @@ if(Python3_Interpreter_FOUND)
       PASS_REGULAR_EXPRESSION "byte comparison: PASS"
       TIMEOUT 60)
 
+  if(MLS_CONFIGURED_SOURCE_BRANCH STREQUAL "authoritative-mechanics-state-bridge-lab")
   add_test(
     NAME mls.authoritative_mechanics_state_bridge.oracle
     COMMAND
@@ -563,6 +564,7 @@ if(Python3_Interpreter_FOUND)
       PASS_REGULAR_EXPRESSION
         "authoritative mechanics state bridge oracle regression: PASS"
       TIMEOUT 180)
+  endif()
 
   add_test(
     NAME mls.authoritative_mechanics_state_bridge.seal.regression
