@@ -244,6 +244,22 @@ set_tests_properties(
     PASS_REGULAR_EXPRESSION
       "PASS \\(2 deterministic positives, 33 mutations\\)"
     TIMEOUT 1800)
+
+add_test(
+  NAME mls.phase_space_time_corefinement.seal_mutations
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/phase_space_time_corefinement_seal_test.py"
+    --tool
+    "${PROJECT_SOURCE_DIR}/tools/seal_phase_space_time_corefinement_evidence.py")
+set_tests_properties(
+  mls.phase_space_time_corefinement.seal_mutations
+  PROPERTIES
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+    LABELS "deterministic;phase-space-time-corefinement;seal;mutation"
+    PASS_REGULAR_EXPRESSION
+      "outer-seal regression: PASS \\(2 positives, 3 mutations\\)"
+    TIMEOUT 60)
 endif()
 
 add_test(
