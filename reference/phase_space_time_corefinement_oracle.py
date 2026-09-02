@@ -567,7 +567,15 @@ def verify_primitive(raw: Path, units: dict[int, dict[str, Fraction | int]]) -> 
             require(abs(declared_squared - Decimal(squared)) <= Decimal("0.5"), "primitive norm diagnostic differs")
             lq = units[level]["Lq"]
             assert isinstance(lq, Fraction)
-            expected_minimum = float(mp(lq) * Decimal(squared).sqrt())
+            binary64_squared = 0.0
+            for value in u:
+                binary64_component = float(value)
+                binary64_squared += binary64_component * binary64_component
+            expected_minimum = (
+                float(lq.numerator)
+                / float(lq.denominator)
+                * math.sqrt(binary64_squared)
+            )
             observed_minimum = float_from_bits(row["minimum_drift_m_bits"])
             require(observed_minimum == expected_minimum, "minimum drift diagnostic differs")
             maximum_minimum = max(maximum_minimum, observed_minimum)
@@ -614,8 +622,14 @@ def verify_relation_primitive(
             require(applied == expected_applied, "relation nearest-even multiple differs")
             pq = units[level]["Pq"]
             assert isinstance(pq, Fraction)
-            expected_minimum = float(
-                mp(pq) * Decimal(sum(value * value for value in primitive)).sqrt()
+            binary64_squared = 0.0
+            for value in primitive:
+                binary64_component = float(value)
+                binary64_squared += binary64_component * binary64_component
+            expected_minimum = (
+                float(pq.numerator)
+                / float(pq.denominator)
+                * math.sqrt(binary64_squared)
             )
             observed_minimum = float_from_bits(row["minimum_impulse_bits"])
             require(observed_minimum == expected_minimum, "minimum impulse diagnostic differs")

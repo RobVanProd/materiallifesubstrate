@@ -394,16 +394,19 @@ void export_primitive(
     std::uint32_t level,
     const corefine::TrajectoryResult& trajectory,
     const corefine::UnitProfile& units) {
-    const auto lq = static_cast<long double>(units.length_quantum_m.numerator) /
-        static_cast<long double>(units.length_quantum_m.denominator);
+    const auto lq = static_cast<double>(units.length_quantum_m.numerator) /
+        static_cast<double>(units.length_quantum_m.denominator);
     for (const auto& record : trajectory.primitive_records) {
         const auto& value = record.diagnostic;
         long double squared = 0.0L;
+        double binary64_squared = 0.0;
         for (const auto component_value : value.primitive_direction) {
             const auto converted = static_cast<long double>(component_value);
             squared += converted * converted;
+            const auto binary64_component = static_cast<double>(component_value);
+            binary64_squared += binary64_component * binary64_component;
         }
-        const auto minimum = static_cast<double>(lq * std::sqrt(squared));
+        const auto minimum = lq * std::sqrt(binary64_squared);
         tables.primitive.row({
             scenario, std::string(parent::path_name(path)),
             std::to_string(level), std::to_string(record.step_index),
@@ -429,16 +432,19 @@ void export_relation_primitive(
     const corefine::TrajectoryResult& trajectory,
     const corefine::UnitProfile& units) {
     const auto pq =
-        static_cast<long double>(units.momentum_quantum_kg_m_per_s.numerator) /
-        static_cast<long double>(units.momentum_quantum_kg_m_per_s.denominator);
+        static_cast<double>(units.momentum_quantum_kg_m_per_s.numerator) /
+        static_cast<double>(units.momentum_quantum_kg_m_per_s.denominator);
     for (const auto& record : trajectory.relation_records) {
         const auto& value = record.diagnostic;
         long double squared = 0.0L;
+        double binary64_squared = 0.0;
         for (const auto component_value : value.primitive_direction) {
             const auto converted = static_cast<long double>(component_value);
             squared += converted * converted;
+            const auto binary64_component = static_cast<double>(component_value);
+            binary64_squared += binary64_component * binary64_component;
         }
-        const auto minimum = static_cast<double>(pq * std::sqrt(squared));
+        const auto minimum = pq * std::sqrt(binary64_squared);
         tables.relation_primitive.row({
             scenario, std::string(parent::path_name(path)),
             std::to_string(level), std::to_string(record.step_index),
