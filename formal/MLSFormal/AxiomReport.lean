@@ -17,6 +17,7 @@ import MLSFormal.ConservativeForceConsistency
 import MLSFormal.RelationGeometryResolution
 import MLSFormal.AuthoritativeMechanicsStateBridge
 import MLSFormal.AuthoritativeDriftStateBridge
+import MLSFormal.TimeIntegrationFoundation
 
 /-!
 Complete kernel axiom report for every theorem exported by the MLSFormal
@@ -171,3 +172,7 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.primitiveDirectionalQuantization_zero_orbitalDelta
 #print axioms MLSFormal.primitiveDirectionalDrift_preserves_orbitalAngularMomentum
 #print axioms MLSFormal.coherentRefinedDriftRawIdentity
+#print axioms MLSFormal.quantizedKDK_preserves_totalMomentum
+#print axioms MLSFormal.quantizedKDK_preserves_orbitalAngularMomentum
+#print axioms MLSFormal.symmetricKDK_signedTime_reversible
+#print axioms MLSFormal.atomicCandidate_rejection_unchanged

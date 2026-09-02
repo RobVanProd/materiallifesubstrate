@@ -22,7 +22,8 @@ add_executable(
   relation_geometry_resolution_tests.cpp
   relational_observability_confirmation_tests.cpp
   transfer_lab_tests.cpp
-  time_checkpoint_tests.cpp)
+  time_checkpoint_tests.cpp
+  time_integration_foundation_tests.cpp)
 
 target_link_libraries(mls_validation PRIVATE mls_core)
 target_include_directories(mls_validation PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -36,6 +37,94 @@ endif()
 
 add_test(NAME mls.validation COMMAND mls_validation)
 set_tests_properties(mls.validation PROPERTIES LABELS "deterministic;core")
+
+add_test(
+  NAME mls.time_integration_foundation.schema.audit
+  COMMAND mls_time_integration_foundation_diagnostic --schema-audit)
+set_tests_properties(
+  mls.time_integration_foundation.schema.audit
+  PROPERTIES
+    LABELS "deterministic;time-integration;schema"
+    PASS_REGULAR_EXPRESSION
+      "Time Integration Foundation raw schema audit: PASS"
+    TIMEOUT 30)
+
+add_test(
+  NAME mls.time_integration_foundation.smoke.a
+  COMMAND
+    mls_time_integration_foundation_diagnostic
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/time-integration-foundation-smoke-a")
+add_test(
+  NAME mls.time_integration_foundation.smoke.b
+  COMMAND
+    mls_time_integration_foundation_diagnostic
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/time-integration-foundation-smoke-b")
+set_tests_properties(
+  mls.time_integration_foundation.smoke.a
+  mls.time_integration_foundation.smoke.b
+  PROPERTIES
+    LABELS "deterministic;time-integration;raw;smoke"
+    PASS_REGULAR_EXPRESSION
+      "TIME INTEGRATION FOUNDATION RAW COMPLETE: R=128 NO_PROMOTION"
+    TIMEOUT 300)
+
+if(Python3_Interpreter_FOUND)
+add_test(
+  NAME mls.time_integration_foundation.raw_twin
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/compare_evidence_directories.py"
+    --first
+    "${CMAKE_CURRENT_BINARY_DIR}/time-integration-foundation-smoke-a"
+    --second
+    "${CMAKE_CURRENT_BINARY_DIR}/time-integration-foundation-smoke-b")
+set_tests_properties(
+  mls.time_integration_foundation.raw_twin
+  PROPERTIES
+    DEPENDS
+      "mls.time_integration_foundation.smoke.a;mls.time_integration_foundation.smoke.b"
+    LABELS "deterministic;time-integration;twin"
+    PASS_REGULAR_EXPRESSION "byte comparison: PASS"
+    TIMEOUT 60)
+
+add_test(
+  NAME mls.time_integration_foundation.oracle
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/reference/time_integration_foundation_oracle.py"
+    --raw
+    "${CMAKE_CURRENT_BINARY_DIR}/time-integration-foundation-smoke-a"
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/time-integration-foundation-oracle.json")
+set_tests_properties(
+  mls.time_integration_foundation.oracle
+  PROPERTIES
+    DEPENDS "mls.time_integration_foundation.raw_twin"
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+    LABELS "deterministic;time-integration;oracle"
+    PASS_REGULAR_EXPRESSION
+      "TIME INTEGRATION FOUNDATION ORACLE: PASS temporal_convergence_blocked_by_authoritative_quantization NO_PROMOTION"
+    TIMEOUT 1800)
+
+add_test(
+  NAME mls.time_integration_foundation.oracle_mutations
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/time_integration_foundation_oracle_test.py"
+    --raw
+    "${CMAKE_CURRENT_BINARY_DIR}/time-integration-foundation-smoke-a")
+set_tests_properties(
+  mls.time_integration_foundation.oracle_mutations
+  PROPERTIES
+    DEPENDS "mls.time_integration_foundation.oracle"
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+    LABELS "deterministic;time-integration;mutation"
+    PASS_REGULAR_EXPRESSION
+      "PASS \\(1 deterministic positive, 20 mutations\\)"
+    TIMEOUT 1800)
+endif()
 
 add_test(
   NAME mls.authoritative_drift_state_bridge.schema.audit
