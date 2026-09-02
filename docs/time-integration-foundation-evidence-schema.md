@@ -21,6 +21,9 @@ and SHA-256. Symlinks, unsafe paths, ignored files, and extra files are rejected
 `source/source-identity.json` binds the exact source archive, commit, tree, and
 branch. `receipts/ci-run.json` binds the successful branch CI run and the exact
 five required GCC, Clang, MSVC, Python-oracle, and pinned-Lean jobs.
+Raw materialization accepts the authorized branch name or Git's detached
+`HEAD` spelling used by immutable-tag CI; sealed public evidence itself must
+carry the authorized branch name and exact source SHA.
 
 ## Raw schema
 

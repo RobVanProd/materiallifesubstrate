@@ -180,7 +180,7 @@ def verify_metadata(raw: Path) -> tuple[Fraction, Fraction, Fraction]:
     require(meta.get("source_dirty") == "false", "source materialization is dirty")
     require(SHA1.fullmatch(meta.get("source_sha", "")) is not None, "source SHA malformed")
     require(
-        meta.get("configured_source_branch") == BRANCH,
+        meta.get("configured_source_branch") in {BRANCH, "HEAD"},
         "configured source branch differs",
     )
     unit_rows = rows(raw / "units.csv")
