@@ -172,7 +172,11 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.primitiveDirectionalQuantization_zero_orbitalDelta
 #print axioms MLSFormal.primitiveDirectionalDrift_preserves_orbitalAngularMomentum
 #print axioms MLSFormal.coherentRefinedDriftRawIdentity
+#print axioms MLSFormal.preserves_comp
+#print axioms MLSFormal.symmetricKDK_preserves
 #print axioms MLSFormal.quantizedKDK_preserves_totalMomentum
 #print axioms MLSFormal.quantizedKDK_preserves_orbitalAngularMomentum
 #print axioms MLSFormal.symmetricKDK_signedTime_reversible
 #print axioms MLSFormal.atomicCandidate_rejection_unchanged
+#print axioms MLSFormal.exactCentralKickPairMomentumWitness
+#print axioms MLSFormal.exactCentralKickPairAngularWitness
