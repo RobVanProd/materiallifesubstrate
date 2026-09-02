@@ -1,10 +1,12 @@
 include("${CMAKE_CURRENT_SOURCE_DIR}/api_compile_contracts.cmake")
+find_package(Python3 QUIET COMPONENTS Interpreter)
 
 add_executable(
   mls_validation
   test_main.cpp
   core_validation_tests.cpp
   angular_momentum_tests.cpp
+  authoritative_drift_state_bridge_tests.cpp
   authoritative_mechanics_state_bridge_tests.cpp
   authoritative_api_tests.cpp
   compound_identity_tests.cpp
@@ -34,6 +36,94 @@ endif()
 
 add_test(NAME mls.validation COMMAND mls_validation)
 set_tests_properties(mls.validation PROPERTIES LABELS "deterministic;core")
+
+add_test(
+  NAME mls.authoritative_drift_state_bridge.schema.audit
+  COMMAND mls_authoritative_drift_state_bridge_diagnostic --schema-audit)
+set_tests_properties(
+  mls.authoritative_drift_state_bridge.schema.audit
+  PROPERTIES
+    LABELS "deterministic;drift-bridge;schema"
+    PASS_REGULAR_EXPRESSION
+      "Authoritative Drift State Bridge raw schema audit: PASS"
+    TIMEOUT 30)
+
+add_test(
+  NAME mls.authoritative_drift_state_bridge.smoke.a
+  COMMAND
+    mls_authoritative_drift_state_bridge_diagnostic
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/authoritative-drift-state-bridge-smoke-a")
+add_test(
+  NAME mls.authoritative_drift_state_bridge.smoke.b
+  COMMAND
+    mls_authoritative_drift_state_bridge_diagnostic
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/authoritative-drift-state-bridge-smoke-b")
+set_tests_properties(
+  mls.authoritative_drift_state_bridge.smoke.a
+  mls.authoritative_drift_state_bridge.smoke.b
+  PROPERTIES
+    LABELS "deterministic;drift-bridge;raw;smoke"
+    PASS_REGULAR_EXPRESSION
+      "retain_refined_stateless_mechanics_representation_for_research R=128 NO_PROMOTION"
+    TIMEOUT 180)
+
+if(Python3_Interpreter_FOUND)
+add_test(
+  NAME mls.authoritative_drift_state_bridge.raw_twin
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/compare_evidence_directories.py"
+    --first
+    "${CMAKE_CURRENT_BINARY_DIR}/authoritative-drift-state-bridge-smoke-a"
+    --second
+    "${CMAKE_CURRENT_BINARY_DIR}/authoritative-drift-state-bridge-smoke-b")
+set_tests_properties(
+  mls.authoritative_drift_state_bridge.raw_twin
+  PROPERTIES
+    DEPENDS
+      "mls.authoritative_drift_state_bridge.smoke.a;mls.authoritative_drift_state_bridge.smoke.b"
+    LABELS "deterministic;drift-bridge;twin"
+    PASS_REGULAR_EXPRESSION "byte comparison: PASS"
+    TIMEOUT 60)
+
+add_test(
+  NAME mls.authoritative_drift_state_bridge.oracle
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/reference/authoritative_drift_state_bridge_oracle.py"
+    --raw
+    "${CMAKE_CURRENT_BINARY_DIR}/authoritative-drift-state-bridge-smoke-a"
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/authoritative-drift-state-bridge-oracle.json")
+set_tests_properties(
+  mls.authoritative_drift_state_bridge.oracle
+  PROPERTIES
+    DEPENDS "mls.authoritative_drift_state_bridge.raw_twin"
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+    LABELS "deterministic;drift-bridge;oracle"
+    PASS_REGULAR_EXPRESSION
+      "AUTHORITATIVE DRIFT STATE BRIDGE ORACLE: PASS R=128"
+    TIMEOUT 1200)
+
+add_test(
+  NAME mls.authoritative_drift_state_bridge.oracle_mutations
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/authoritative_drift_state_bridge_oracle_test.py"
+    --raw
+    "${CMAKE_CURRENT_BINARY_DIR}/authoritative-drift-state-bridge-smoke-a")
+set_tests_properties(
+  mls.authoritative_drift_state_bridge.oracle_mutations
+  PROPERTIES
+    DEPENDS "mls.authoritative_drift_state_bridge.oracle"
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+    LABELS "deterministic;drift-bridge;mutation"
+    PASS_REGULAR_EXPRESSION
+      "PASS \(2 deterministic positives, 14 mutations\)"
+    TIMEOUT 1200)
+endif()
 
 add_test(
   NAME mls.authoritative_mechanics_state_bridge.schema.audit
@@ -407,7 +497,6 @@ set_tests_properties(
     PASS_REGULAR_EXPRESSION "Kelvin Covariance Audit logic audit: PASS"
     TIMEOUT 30)
 
-find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
   add_test(
     NAME mls.authoritative_mechanics_state_bridge.smoke.compare

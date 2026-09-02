@@ -14,7 +14,7 @@ namespace {
 
 [[nodiscard]] bool valid_refinement(std::uint32_t value) noexcept {
     return value == 1U || value == 2U || value == 4U || value == 8U ||
-        value == 16U;
+        value == 16U || value == 32U || value == 64U || value == 128U;
 }
 
 [[nodiscard]] PositiveRational reduced(

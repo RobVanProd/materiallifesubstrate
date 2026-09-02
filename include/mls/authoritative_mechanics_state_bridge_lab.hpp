@@ -32,8 +32,9 @@ struct MechanicsUnitContract final {
         const MechanicsUnitContract&) const noexcept = default;
 };
 
-// Returns the preregistered coherent representation family.  Refinement must
-// be one of 1,2,4,8,16.  The exact SI state and physics do not change.
+// Returns the preregistered coherent representation family.  The mechanics
+// bridge selected R=16; the authorized drift fallback may additionally audit
+// R=32,64,128 without changing the exact SI state or physics.
 [[nodiscard]] MechanicsUnitContract mechanics_unit_contract(
     std::uint32_t refinement);
 
