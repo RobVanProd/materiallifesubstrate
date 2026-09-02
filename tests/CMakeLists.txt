@@ -141,6 +141,112 @@ set_tests_properties(
 endif()
 
 add_test(
+  NAME mls.phase_space_time_corefinement.schema.audit
+  COMMAND mls_phase_space_time_corefinement_diagnostic --schema-audit)
+set_tests_properties(
+  mls.phase_space_time_corefinement.schema.audit
+  PROPERTIES
+    LABELS "deterministic;phase-space-time-corefinement;schema"
+    PASS_REGULAR_EXPRESSION
+      "Phase-Space/Time Co-Refinement raw schema audit: PASS"
+    TIMEOUT 30)
+
+add_test(
+  NAME mls.phase_space_time_corefinement.smoke.a
+  COMMAND
+    mls_phase_space_time_corefinement_diagnostic
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/phase-space-time-corefinement-smoke-a")
+add_test(
+  NAME mls.phase_space_time_corefinement.smoke.b
+  COMMAND
+    mls_phase_space_time_corefinement_diagnostic
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/phase-space-time-corefinement-smoke-b")
+add_test(
+  NAME mls.phase_space_time_corefinement.parent
+  COMMAND
+    mls_time_integration_foundation_diagnostic
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/phase-space-time-corefinement-parent")
+set_tests_properties(
+  mls.phase_space_time_corefinement.smoke.a
+  mls.phase_space_time_corefinement.smoke.b
+  PROPERTIES
+    LABELS "deterministic;phase-space-time-corefinement;raw;smoke"
+    PASS_REGULAR_EXPRESSION
+      "PHASE SPACE TIME COREFINEMENT RAW COMPLETE: signed64 NO_PROMOTION"
+    TIMEOUT 600)
+set_tests_properties(
+  mls.phase_space_time_corefinement.parent
+  PROPERTIES
+    LABELS "deterministic;phase-space-time-corefinement;parent"
+    PASS_REGULAR_EXPRESSION
+      "TIME INTEGRATION FOUNDATION RAW COMPLETE: R=128 NO_PROMOTION"
+    TIMEOUT 600)
+
+if(Python3_Interpreter_FOUND)
+add_test(
+  NAME mls.phase_space_time_corefinement.raw_twin
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/compare_evidence_directories.py"
+    --first
+    "${CMAKE_CURRENT_BINARY_DIR}/phase-space-time-corefinement-smoke-a"
+    --second
+    "${CMAKE_CURRENT_BINARY_DIR}/phase-space-time-corefinement-smoke-b")
+set_tests_properties(
+  mls.phase_space_time_corefinement.raw_twin
+  PROPERTIES
+    DEPENDS
+      "mls.phase_space_time_corefinement.smoke.a;mls.phase_space_time_corefinement.smoke.b"
+    LABELS "deterministic;phase-space-time-corefinement;twin"
+    PASS_REGULAR_EXPRESSION "byte comparison: PASS"
+    TIMEOUT 120)
+
+add_test(
+  NAME mls.phase_space_time_corefinement.oracle
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/reference/phase_space_time_corefinement_oracle.py"
+    --raw
+    "${CMAKE_CURRENT_BINARY_DIR}/phase-space-time-corefinement-smoke-a"
+    --parent-raw
+    "${CMAKE_CURRENT_BINARY_DIR}/phase-space-time-corefinement-parent"
+    --output
+    "${CMAKE_CURRENT_BINARY_DIR}/phase-space-time-corefinement-oracle.json")
+set_tests_properties(
+  mls.phase_space_time_corefinement.oracle
+  PROPERTIES
+    DEPENDS
+      "mls.phase_space_time_corefinement.raw_twin;mls.phase_space_time_corefinement.parent"
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+    LABELS "deterministic;phase-space-time-corefinement;oracle"
+    PASS_REGULAR_EXPRESSION
+      "PHASE SPACE TIME COREFINEMENT ORACLE: PASS reject_order_matched_space_time_corefinement NO_PROMOTION"
+    TIMEOUT 1800)
+
+add_test(
+  NAME mls.phase_space_time_corefinement.oracle_mutations
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/phase_space_time_corefinement_oracle_test.py"
+    --raw
+    "${CMAKE_CURRENT_BINARY_DIR}/phase-space-time-corefinement-smoke-a"
+    --parent-raw
+    "${CMAKE_CURRENT_BINARY_DIR}/phase-space-time-corefinement-parent")
+set_tests_properties(
+  mls.phase_space_time_corefinement.oracle_mutations
+  PROPERTIES
+    DEPENDS "mls.phase_space_time_corefinement.oracle"
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+    LABELS "deterministic;phase-space-time-corefinement;mutation"
+    PASS_REGULAR_EXPRESSION
+      "PASS \(2 deterministic positives, 33 mutations\)"
+    TIMEOUT 1800)
+endif()
+
+add_test(
   NAME mls.authoritative_drift_state_bridge.schema.audit
   COMMAND mls_authoritative_drift_state_bridge_diagnostic --schema-audit)
 set_tests_properties(

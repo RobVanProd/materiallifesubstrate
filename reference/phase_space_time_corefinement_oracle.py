@@ -203,6 +203,30 @@ def verify_parent(parent_raw: Path) -> dict[str, object]:
     }
 
 
+def verify_level_zero_parent_seam(raw: Path, parent_raw: Path) -> dict[str, int]:
+    comparisons = {
+        "reference_packets.csv": (
+            "model_id", "packet_id", "x_raw", "y_raw", "z_raw", "mass_raw"
+        ),
+        "initial_states.csv": (
+            "scenario_id", "model_id", "convergence", "packet_id", "x_raw",
+            "y_raw", "z_raw", "px_raw", "py_raw", "pz_raw", "mass_raw",
+        ),
+    }
+    counts: dict[str, int] = {}
+    for filename, fields in comparisons.items():
+        candidate = [row for row in rows(raw / filename) if row["level"] == "0"]
+        parent = rows(parent_raw / filename)
+        candidate_projection = sorted(tuple(row[field] for field in fields) for row in candidate)
+        parent_projection = sorted(tuple(row[field] for field in fields) for row in parent)
+        require(
+            candidate_projection == parent_projection,
+            f"level-zero parent seam differs: {filename}",
+        )
+        counts[filename] = len(candidate_projection)
+    return counts
+
+
 def verify_schema_and_metadata(raw: Path) -> dict[str, str]:
     require(set(FILES) == set(SCHEMAS), "schema inventory differs")
     for filename, expected in SCHEMAS.items():
@@ -322,15 +346,65 @@ def verify_mapping(raw: Path) -> dict[str, object]:
 
 
 def load_models(raw: Path, units: dict[int, dict[str, Fraction | int]]) -> dict[str, foundation.Model]:
+    require(
+        sha256(raw / "relations.csv") == PARENT_CONTENT_HASHES["relations.csv"],
+        "accepted relation topology/orientation differs",
+    )
+    require(
+        sha256(raw / "force_operator.csv")
+        == PARENT_CONTENT_HASHES["force_operator.csv"],
+        "accepted force operator differs",
+    )
     reference = group(rows(raw / "reference_packets.csv"), ("model_id", "level"))
     relations = group(rows(raw / "relations.csv"), ("model_id",))
     operators = group(rows(raw / "force_operator.csv"), ("model_id",))
     model_ids = {key[0] for key in relations}
     require(model_ids == {"k4", "k4_translated", "k4_rotated", "octahedron", "pair"}, "model inventory differs")
+    metre = 128_000_000_000
+    kilogram = 524_288
+    k4 = {
+        1: (0, 0, 0),
+        2: (metre, 0, 0),
+        3: (0, metre, 0),
+        4: (0, 0, metre),
+    }
+    shift = (17 * metre, -11 * metre, 7 * metre)
+    expected_level_zero: dict[str, dict[int, tuple[int, int, int]]] = {
+        "k4": k4,
+        "k4_translated": {
+            identifier: tuple(value[axis] + shift[axis] for axis in range(3))
+            for identifier, value in k4.items()
+        },
+        "k4_rotated": {
+            identifier: (-value[1], value[0], value[2])
+            for identifier, value in k4.items()
+        },
+        "octahedron": {
+            1: (metre, 0, 0),
+            2: (-metre, 0, 0),
+            3: (0, metre, 0),
+            4: (0, -metre, 0),
+            5: (0, 0, metre),
+            6: (0, 0, -metre),
+        },
+        "pair": {1: (-metre, 0, 0), 2: (metre, 0, 0)},
+    }
     result: dict[str, foundation.Model] = {}
     for model_id in sorted(model_ids):
         level_zero = sorted(reference[(model_id, "0")], key=lambda row: int(row["packet_id"]))
         packet_ids = [int(row["packet_id"]) for row in level_zero]
+        actual_level_zero = {
+            int(row["packet_id"]): tuple(int(row[f"{axis}_raw"]) for axis in "xyz")
+            for row in level_zero
+        }
+        require(
+            actual_level_zero == expected_level_zero[model_id],
+            f"{model_id}: accepted reference coordinates differ",
+        )
+        require(
+            all(int(row["mass_raw"]) == kilogram for row in level_zero),
+            f"{model_id}: accepted reference masses differ",
+        )
         lq0 = units[0]["Lq"]
         mq0 = units[0]["Mq"]
         assert isinstance(lq0, Fraction) and isinstance(mq0, Fraction)
@@ -641,7 +715,10 @@ def verify_exact_gates(raw: Path, units: dict[int, dict[str, Fraction | int]]) -
     return report, bridge_pass and checkpoint_pass and domain_pass and translation_pass and rotation_pass, reversible, boost_pass
 
 
-def energy_report(raw: Path) -> tuple[dict[str, object], bool]:
+def energy_report(
+    raw: Path,
+    units: dict[int, dict[str, Fraction | int]],
+) -> tuple[dict[str, object], bool]:
     grouped = group(rows(raw / "energies.csv"), ("scenario_id", "path", "level"))
     report: dict[str, object] = {}
     short_pass = True
@@ -666,39 +743,72 @@ def energy_report(raw: Path) -> tuple[dict[str, object], bool]:
         error = [value - values[0] for value in values]
         mean = sum(error) / len(error)
         x_mean = (len(error) - 1) / 2
-        slope = sum((i - x_mean) * (value - mean) for i, value in enumerate(error)) / sum((i - x_mean) ** 2 for i in range(len(error)))
+        slope = sum(
+            (i - x_mean) * (value - mean) for i, value in enumerate(error)
+        ) / sum((i - x_mean) ** 2 for i in range(len(error)))
+        time_quantum = units[level]["Tq"]
+        assert isinstance(time_quantum, Fraction)
+        sample_seconds = float(TIMESTEPS[level] * time_quantum)
         long_reports.append({
             "level": level,
             "maximum_excursion": max(abs(value) for value in error),
             "final_error": error[-1],
             "mean_offset": mean,
             "least_squares_slope_per_sample": slope,
+            "sample_seconds": sample_seconds,
+            "least_squares_slope_per_second": slope / sample_seconds,
         })
+    def contraction_orders(field: str) -> list[float]:
+        magnitudes = [abs(float(entry[field])) for entry in long_reports]
+        require(all(value > 0.0 for value in magnitudes), f"long energy {field} unresolved")
+        return [math.log2(magnitudes[index] / magnitudes[index + 1]) for index in range(4)]
+
+    maximum_orders = contraction_orders("maximum_excursion")
+    final_orders = contraction_orders("final_error")
+    physical_slope_orders = contraction_orders("least_squares_slope_per_second")
+    # The per-sample slope shrinks automatically as the sampling interval is
+    # halved.  The physical-time slope is the scientific quantity.  Require
+    # all three registered diagnostics to enter the same three-halving,
+    # second-order contraction window as the short KDK energy envelope.
     long_pass = all(
-        long_reports[index + 1]["maximum_excursion"] < long_reports[index]["maximum_excursion"]
-        and abs(long_reports[index + 1]["final_error"]) < abs(long_reports[index]["final_error"])
-        and abs(long_reports[index + 1]["least_squares_slope_per_sample"]) < abs(long_reports[index]["least_squares_slope_per_sample"])
-        for index in range(3)
+        contains_window(values, 1.5, 2.5, 3)
+        for values in (maximum_orders, final_orders, physical_slope_orders)
     )
     report["long_run"] = long_reports
+    report["long_run_contraction_orders"] = {
+        "maximum_excursion": maximum_orders,
+        "final_error": final_orders,
+        "least_squares_slope_per_second": physical_slope_orders,
+    }
     report["long_run_contracts"] = long_pass
     return report, short_pass and long_pass
 
 
-def verify(raw: Path, parent_raw: Path) -> dict[str, object]:
+def verify(
+    raw: Path,
+    parent_raw: Path,
+    precomputed_oracle: tuple[
+        dict[str, list[Decimal]], dict[str, Decimal]
+    ] | None = None,
+) -> dict[str, object]:
     parent_report = verify_parent(parent_raw)
+    level_zero_seam = verify_level_zero_parent_seam(raw, parent_raw)
     meta = verify_schema_and_metadata(raw)
     units = verify_units(raw)
     mapping = verify_mapping(raw)
     models = load_models(raw, units)
     initial = load_initial_physical(raw, units)
-    oracle, oracle_refinements = foundation.oracle_states(models, initial)
+    oracle, oracle_refinements = (
+        foundation.oracle_states(models, initial)
+        if precomputed_oracle is None
+        else precomputed_oracle
+    )
     endpoints, endpoint_invariants = load_endpoints(raw, units)
     convergence, convergence_pass, control_pass = convergence_report(endpoints, oracle)
     primitive = verify_primitive(raw, units)
     relation_primitive = verify_relation_primitive(raw, units)
     exact, exact_pass, reversible, frame_pass = verify_exact_gates(raw, units)
-    energy, energy_pass = energy_report(raw)
+    energy, energy_pass = energy_report(raw, units)
     width_blocks_window = any(
         scenario in CONVERGENCE_SCENARIOS
         for scenario, _level in mapping["signed64_overflow"]
@@ -722,6 +832,7 @@ def verify(raw: Path, parent_raw: Path) -> dict[str, object]:
         "precision_decimal_digits": getcontext().prec,
         "source_sha": meta["source_sha"],
         "parent_fingerprint": parent_report,
+        "level_zero_parent_seam_rows": level_zero_seam,
         "unit_profiles": {str(level): {key: str(value) for key, value in units[level].items()} for level in LEVELS},
         "mapping": mapping,
         "oracle_refinement_errors": {key: format(value, ".29E") for key, value in oracle_refinements.items()},
