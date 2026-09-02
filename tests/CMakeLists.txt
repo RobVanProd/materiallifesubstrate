@@ -124,6 +124,19 @@ set_tests_properties(
     PASS_REGULAR_EXPRESSION
       "PASS \\(1 deterministic positive, 20 mutations\\)"
     TIMEOUT 1800)
+
+add_test(
+  NAME mls.time_integration_foundation.seal_mutations
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/time_integration_foundation_seal_test.py")
+set_tests_properties(
+  mls.time_integration_foundation.seal_mutations
+  PROPERTIES
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+    LABELS "deterministic;time-integration;seal;mutation"
+    PASS_REGULAR_EXPRESSION "PASS \\(2 positives, 3 mutations\\)"
+    TIMEOUT 60)
 endif()
 
 add_test(

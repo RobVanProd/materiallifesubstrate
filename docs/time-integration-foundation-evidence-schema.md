@@ -18,6 +18,9 @@ inventory, canonical pre-hash, and no-promotion boundary.
 
 Every file other than `outer-seal.json` is bound by relative path, byte size,
 and SHA-256. Symlinks, unsafe paths, ignored files, and extra files are rejected.
+`source/source-identity.json` binds the exact source archive, commit, tree, and
+branch. `receipts/ci-run.json` binds the successful branch CI run and the exact
+five required GCC, Clang, MSVC, Python-oracle, and pinned-Lean jobs.
 
 ## Raw schema
 

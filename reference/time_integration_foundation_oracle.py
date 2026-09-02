@@ -8,6 +8,7 @@ import csv
 import hashlib
 import json
 import math
+import re
 import struct
 import sys
 from collections import defaultdict
@@ -20,6 +21,7 @@ PARENT_SHA = "ffefb2ea9ee0f032946af4ed23acd12883f20cfe"
 PARENT_TAG = "authoritative-drift-state-bridge-lab-evidence-v1"
 PARENT_TAG_OBJECT = "5a6237a9dcbe676aa4c89c10d5f9f94e935507e6"
 BRANCH = "time-integration-foundation-lab"
+SHA1 = re.compile(r"[0-9a-f]{40}")
 KDK = "quantized_kick_drift_kick"
 CONTROL = "symplectic_euler_control"
 TIMESTEPS = (62_500_000, 31_250_000, 15_625_000, 7_812_500, 3_906_250)
@@ -175,6 +177,12 @@ def verify_metadata(raw: Path) -> tuple[Fraction, Fraction, Fraction]:
     }
     for key, value in expected.items():
         require(meta.get(key) == value, f"metadata {key} differs")
+    require(meta.get("source_dirty") == "false", "source materialization is dirty")
+    require(SHA1.fullmatch(meta.get("source_sha", "")) is not None, "source SHA malformed")
+    require(
+        meta.get("configured_source_branch") == BRANCH,
+        "configured source branch differs",
+    )
     unit_rows = rows(raw / "units.csv")
     require(len(unit_rows) == 1 and unit_rows[0]["refinement"] == "128", "unit row differs")
     unit = unit_rows[0]
