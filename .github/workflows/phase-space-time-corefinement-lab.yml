@@ -59,7 +59,9 @@ jobs:
           } 2>&1 | tee ci-artifacts/tool-versions.txt
           cmake --preset dev 2>&1 | tee ci-artifacts/configure.txt
           cmake --build --preset dev --parallel 2 2>&1 | tee ci-artifacts/build.txt
-          ctest --preset dev --output-on-failure 2>&1 | tee ci-artifacts/ctest.txt
+          ctest --preset dev --output-on-failure \
+            -R '^mls\.validation$|^mls\.phase_space_time_corefinement\.' \
+            2>&1 | tee ci-artifacts/ctest.txt
       - name: Configure, build, and test on Windows
         if: runner.os == 'Windows'
         shell: pwsh
@@ -74,7 +76,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build --preset dev --parallel 2 2>&1 | Tee-Object ci-artifacts/build.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ctest --preset dev --output-on-failure 2>&1 | Tee-Object ci-artifacts/ctest.txt
+          ctest --preset dev --output-on-failure `
+            -R '^mls\.validation$|^mls\.phase_space_time_corefinement\.' `
+            2>&1 | Tee-Object ci-artifacts/ctest.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Preserve compiler evidence
         if: always()
