@@ -209,11 +209,18 @@ never becomes heat, stored energy, or hidden state.
 At the initial state and after every complete registered step, export for every
 packet, phase kind, and component:
 
-- reduced residual numerator and positive denominator;
+- packet/phase/component identity and a hash of the reduced residual;
 - numerator bit length (`0` has bit length `0`);
 - denominator bit length;
 - physical time and timestep level; and
 - canonical state/checkpoint byte count.
+
+Initial states, endpoints, reversibility recoveries, and interior checkpoints
+export the complete reduced numerators and denominators. Per-step complexity
+rows use their hashes plus bit lengths so the evidence size does not itself
+scale with the decimal expansion of every intermediate rational; the
+independent implementation recomputes those hashes from the complete live
+fractions. This is an evidence-encoding rule, not state truncation.
 
 Report maxima, medians, linear bit-growth slopes versus physical time, and
 level-to-level growth. Before any candidate trajectory data, the finite

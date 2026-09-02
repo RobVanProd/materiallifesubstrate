@@ -19,6 +19,7 @@ import MLSFormal.AuthoritativeMechanicsStateBridge
 import MLSFormal.AuthoritativeDriftStateBridge
 import MLSFormal.TimeIntegrationFoundation
 import MLSFormal.PhaseSpaceTimeCorefinement
+import MLSFormal.ExplicitFractionalPhaseState
 
 /-!
 Complete kernel axiom report for every theorem exported by the MLSFormal
@@ -186,3 +187,9 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.nonzeroPrimitiveMultiple_minimumSquaredDisplacement
 #print axioms MLSFormal.gcdOneMinimumPhysicalDriftIdentity
 #print axioms MLSFormal.orderMatchedRawBallisticFactor
+#print axioms MLSFormal.integerCrossZeroKick_isPrimitiveMultiple
+#print axioms MLSFormal.nonzeroPrimitiveKick_minimumSquaredImpulse
+#print axioms MLSFormal.minimumCentralKickSquared_physical
+#print axioms MLSFormal.minimumDriftSquared_physical
+#print axioms MLSFormal.reciprocalKickDriftResolution_squared
+#print axioms MLSFormal.primitiveReciprocalKickDriftResolution_squared
