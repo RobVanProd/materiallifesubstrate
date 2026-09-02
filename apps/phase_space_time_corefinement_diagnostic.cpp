@@ -436,11 +436,8 @@ void export_relation_primitive(
         static_cast<double>(units.momentum_quantum_kg_m_per_s.denominator);
     for (const auto& record : trajectory.relation_records) {
         const auto& value = record.diagnostic;
-        long double squared = 0.0L;
         double binary64_squared = 0.0;
         for (const auto component_value : value.primitive_direction) {
-            const auto converted = static_cast<long double>(component_value);
-            squared += converted * converted;
             const auto binary64_component = static_cast<double>(component_value);
             binary64_squared += binary64_component * binary64_component;
         }
