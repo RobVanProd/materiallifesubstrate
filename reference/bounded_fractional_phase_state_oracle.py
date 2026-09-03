@@ -81,8 +81,13 @@ EXACT_MEDIAN_COMPONENT_BITS = 131_072
 EXACT_MAX_CHECKPOINT_BYTES = 8_388_608
 
 STATE_MAGIC = b"MLS-BOUNDED-BINARY-PHASE-v1\x00"
-OBSERVER_EVENT_MAGIC = b"MLS-BOUNDED-OBSERVER-EVENT-v1\x00"
-OBSERVER_STREAM_MAGIC = b"MLS-BOUNDED-OBSERVER-STREAM-v1\x00"
+OBSERVER_EVENT_MAGIC = b"MLS-BOUNDED-OBSERVER-EVENT-v2\x00"
+OBSERVER_STREAM_MAGIC = b"MLS-BOUNDED-OBSERVER-STREAM-v2\x00"
+REPRESENTATION_ERROR_COMMITMENT_MAGIC = (
+    b"MLS-BOUNDED-REPRESENTATION-ERROR-v2\x00"
+)
+REPRESENTATION_ERROR_DISPLAY_BITS = 64
+REPRESENTATION_ERROR_DISPLAY_MAX_BYTES = 32
 ROUNDING_AUDIT_MAGIC = b"MLS-BOUNDED-ROUNDING-AUDIT-v1\x00"
 ROUNDING_AUDIT_MERGE_MAGIC = b"MLS-BOUNDED-ROUNDING-AUDIT-MERGE-v1\x00"
 SHA1 = re.compile(r"[0-9a-f]{40}")
@@ -138,33 +143,40 @@ def _state_fields() -> tuple[str, ...]:
     )
 
 
-def _vector_fields(prefixes: Sequence[str]) -> tuple[str, ...]:
+def _raw_vector_fields(prefixes: Sequence[str]) -> tuple[str, ...]:
     return tuple(
         field
         for prefix in prefixes
-        for field in (
-            f"{prefix}_hash", f"{prefix}_raw_max_dyadic",
-            *(f"{prefix}_raw_{axis}_dyadic" for axis in "xyz"),
-            f"{prefix}_max_num", f"{prefix}_max_den",
-            *(f"{prefix}_{axis}_{part}" for axis in "xyz" for part in ("num", "den")),
-        )
+        for field in (f"{prefix}_raw_{axis}_dyadic" for axis in "xyz")
     )
 
 
 STATE_FIELDS = _state_fields()
 INVARIANT_FIELDS = (
     "trajectory_id", "precision", "level", "step", "stage", "state_hash",
-) + _vector_fields(("momentum", "angular", "delta_momentum", "delta_angular"))
+) + _raw_vector_fields(("momentum", "angular"))
 FORCE_FIELDS = (
     "trajectory_id", "precision", "level", "step", "stage", "relation_index",
     "first_id", "second_id", "length_bits", "conjugate_bits", "causal_offset_raw_hash",
     "exact_stored_offset_raw_hash", "ideal_impulse_raw_hash",
     "first_actual_impulse_raw_hash", "second_actual_impulse_raw_hash",
-) + _vector_fields((
+) + _raw_vector_fields((
     "pair_momentum_residual", "stored_impulse_centrality_residual",
     "first_actual_centrality_residual", "second_actual_centrality_residual",
     "relation_angular_residual",
 ))
+REPRESENTATION_ERROR_IDENTITY_FIELDS = (
+    "scenario_id", "scope", "path", "precision", "level", "dt_raw", "sample",
+    "candidate_state_hash", "control_state_hash",
+)
+REPRESENTATION_ERROR_METRICS = (
+    "position_raw_error", "momentum_raw_error", "energy_error",
+)
+REPRESENTATION_ERROR_FIELDS = (
+    *REPRESENTATION_ERROR_IDENTITY_FIELDS,
+    "exact_errors_sha256",
+    *(f"{metric}_display" for metric in REPRESENTATION_ERROR_METRICS),
+)
 ENERGY_EVENT_FIELDS = (
     "trajectory_id", "precision", "level", "step", "state_hash",
     "potential_binary64_bits", "kinetic_num", "kinetic_den", "kinetic_hash",
@@ -196,13 +208,7 @@ SCHEMAS: dict[str, tuple[str, ...]] = {
     "long_endpoints.csv": STATE_FIELDS,
     "checkpoint_states.csv": STATE_FIELDS,
     "recovery_states.csv": STATE_FIELDS,
-    "representation_error.csv": (
-        "scenario_id", "scope", "path", "precision", "level", "dt_raw", "sample",
-        "candidate_state_hash", "control_state_hash", "position_raw_error_num",
-        "position_raw_error_den", "position_physical_error_num", "position_physical_error_den",
-        "momentum_raw_error_num", "momentum_raw_error_den", "momentum_physical_error_num",
-        "momentum_physical_error_den", "energy_error_num", "energy_error_den",
-    ),
+    "representation_error.csv": REPRESENTATION_ERROR_FIELDS,
     "energies.csv": (
         "scenario_id", "scope", "path", "precision", "level", "dt_raw", "sample",
         "potential_binary64_bits", "kinetic_num", "kinetic_den", "kinetic_hash",
@@ -343,6 +349,74 @@ def grouped(values: Iterable[dict[str, str]], fields: Sequence[str]) -> dict[tup
     for row in values:
         result[tuple(row[field] for field in fields)].append(row)
     return dict(result)
+
+
+def representation_identity_key(row: dict[str, str]) -> tuple[str, ...]:
+    for field in ("precision", "level", "dt_raw", "sample"):
+        decimal_integer(row[field], unsigned=True)
+    return tuple(row[field] for field in REPRESENTATION_ERROR_IDENTITY_FIELDS[:7])
+
+
+def verify_representation_error_inventory(raw: Path) -> dict[str, int]:
+    """Require the producer's complete, unique, global row sequence."""
+    evidence = rows(raw / "representation_error.csv")
+    expected: list[tuple[str, ...]] = []
+    for level in LEVELS:
+        for scenario in SCENARIOS:
+            for path in (CONTROL, KDK):
+                for precision in PRECISIONS:
+                    for sample in range(STEP_COUNTS[level] + 1):
+                        expected.append((
+                            scenario, "short", path, str(precision), str(level),
+                            str(TIMESTEPS_RAW[level]), str(sample),
+                        ))
+
+    comparator_evidence = rows(raw / "rational_comparator.csv")
+    comparator_rows = {
+        (row["scenario_id"], row["level"]): row for row in comparator_evidence
+    }
+    require(len(comparator_rows) == len(comparator_evidence),
+            "duplicate rational-comparator identity")
+    expected_comparators = {
+        (scenario, str(level))
+        for level in LEVELS for scenario in ("k4_internal", "k4_boosted")
+    }
+    require(set(comparator_rows) == expected_comparators,
+            "representation comparator inventory differs")
+    for level in LEVELS:
+        for precision in PRECISIONS:
+            for scenario in ("k4_internal", "k4_boosted"):
+                completed = decimal_integer(
+                    comparator_rows[(scenario, str(level))]["completed_steps"],
+                    unsigned=True,
+                )
+                require(completed <= 16 * STEP_COUNTS[level],
+                        "representation comparator prefix exceeds requested horizon")
+                for sample in range(completed + 1):
+                    expected.append((
+                        scenario, "long_exact_prefix", KDK, str(precision), str(level),
+                        str(TIMESTEPS_RAW[level]), str(sample),
+                    ))
+
+    actual = [representation_identity_key(row) for row in evidence]
+    require(actual == expected,
+            "representation-error global order/key inventory differs")
+    require(len(set(actual)) == len(actual),
+            "duplicate representation-error identity")
+    for row in evidence:
+        require(SHA256.fullmatch(row["candidate_state_hash"]) is not None,
+                "representation candidate state hash is malformed")
+        require(SHA256.fullmatch(row["control_state_hash"]) is not None,
+                "representation control state hash is malformed")
+        require(SHA256.fullmatch(row["exact_errors_sha256"]) is not None,
+                "representation exact-error commitment is malformed")
+        for metric in REPRESENTATION_ERROR_METRICS:
+            display = row[f"{metric}_display"]
+            require(display and len(display.encode("ascii")) <= REPRESENTATION_ERROR_DISPLAY_MAX_BYTES,
+                    f"representation {metric} display is absent or oversized")
+    short_count = sum(row["scope"] == "short" for row in evidence)
+    return {"rows": len(evidence), "short_rows": short_count,
+            "long_rows": len(evidence) - short_count}
 
 
 def float_from_bits(value: str | int) -> float:
@@ -578,7 +652,7 @@ def verify_schema_metadata_profiles(raw: Path, allow_dirty: bool) -> dict[str, s
 
     meta = metadata(raw / "metadata.csv")
     expected_metadata = {
-        "schema": "mls.bounded-fractional-phase-state.raw.v1",
+        "schema": "mls.bounded-fractional-phase-state.raw.v2",
         "accepted_parent_sha": PARENT_SHA,
         "accepted_parent_tag": PARENT_TAG,
         "accepted_parent_tag_object": PARENT_TAG_OBJECT,
@@ -605,13 +679,25 @@ def verify_schema_metadata_profiles(raw: Path, allow_dirty: bool) -> dict[str, s
         "domain_scratch_bit_limit_formula": (
             "4*(B+(leading_exponent_max-leading_exponent_min))+64"
         ),
-        "observer_event_encoding": "length_framed_utf8_fields_then_sha256_v1",
-        "observer_stream_encoding": "step_framed_ordered_event_sha256_v1",
+        "observer_event_encoding": "length_framed_utf8_fields_then_sha256_v2",
+        "observer_stream_encoding": "step_framed_ordered_event_sha256_v2",
+        "representation_error_commitment_encoding": (
+            "identified_exact_fraction_triplet_sha256_v2"
+        ),
+        "representation_error_display": (
+            "nonauthoritative_rn_even_binary64_significand_max_32_bytes"
+        ),
         "exact_comparator_maximum_component_bits": "262144",
         "exact_comparator_median_component_bits": "131072",
         "exact_comparator_maximum_checkpoint_bytes": "8388608",
         "promotion": "NO_PROMOTION",
     }
+    require(
+        set(meta) == set(expected_metadata) | {
+            "source_sha", "configured_source_branch", "source_dirty",
+        },
+        "metadata key inventory differs",
+    )
     for key, value in expected_metadata.items():
         require(meta.get(key) == value, f"metadata {key} differs")
     require(SHA1.fullmatch(meta.get("source_sha", "")) is not None, "source SHA malformed")
@@ -1014,6 +1100,106 @@ def encode_signed(value: int) -> bytes:
 
 def encode_fraction(value: Fraction) -> bytes:
     return encode_signed(value.numerator) + encode_unsigned(value.denominator)
+
+
+def _length_frame(value: bytes) -> bytes:
+    return struct.pack("<Q", len(value)) + value
+
+
+def _fraction_floor_log2(value: Fraction) -> int:
+    require(value > 0, "binary display logarithm requires positive input")
+    numerator = value.numerator
+    denominator = value.denominator
+    exponent = numerator.bit_length() - denominator.bit_length()
+    if exponent >= 0:
+        if numerator < denominator << exponent:
+            exponent -= 1
+    elif numerator << -exponent < denominator:
+        exponent -= 1
+    return exponent
+
+
+def _round_nonnegative_ratio_ties_even(numerator: int, denominator: int) -> int:
+    require(numerator >= 0 and denominator > 0, "invalid binary display ratio")
+    quotient, remainder = divmod(numerator, denominator)
+    doubled = 2 * remainder
+    if doubled > denominator or (doubled == denominator and quotient % 2 == 1):
+        quotient += 1
+    return quotient
+
+
+def bounded_fraction_display(value: Fraction) -> str:
+    """Independently derive the bounded nonauthoritative RN-even display."""
+    if value == 0:
+        return "0"
+    magnitude = abs(value)
+    display_exponent = (
+        _fraction_floor_log2(magnitude) - (REPRESENTATION_ERROR_DISPLAY_BITS - 1)
+    )
+    numerator = magnitude.numerator
+    denominator = magnitude.denominator
+    if display_exponent >= 0:
+        denominator <<= display_exponent
+    else:
+        numerator <<= -display_exponent
+    significand = _round_nonnegative_ratio_ties_even(numerator, denominator)
+    if significand == 1 << REPRESENTATION_ERROR_DISPLAY_BITS:
+        significand >>= 1
+        display_exponent += 1
+    require(
+        1 << (REPRESENTATION_ERROR_DISPLAY_BITS - 1)
+        <= significand < 1 << REPRESENTATION_ERROR_DISPLAY_BITS,
+        "binary display normalization failed",
+    )
+    result = f"{'-' if value < 0 else ''}0x{significand:016x}@{display_exponent:+d}"
+    require(
+        len(result.encode("ascii")) <= REPRESENTATION_ERROR_DISPLAY_MAX_BYTES,
+        "representation error display bound exceeded",
+    )
+    return result
+
+
+def representation_error_commitment(
+    identity: dict[str, object] | dict[str, str], position_raw_error: Fraction,
+    momentum_raw_error: Fraction, energy_error: Fraction,
+) -> str:
+    """Commit fixed identity and exact errors with an independent encoder."""
+    require(position_raw_error >= 0 and momentum_raw_error >= 0,
+            "state-error maxima must be nonnegative")
+    result = bytearray(REPRESENTATION_ERROR_COMMITMENT_MAGIC)
+    result.extend(struct.pack("<Q", len(REPRESENTATION_ERROR_IDENTITY_FIELDS)))
+    for field_name in REPRESENTATION_ERROR_IDENTITY_FIELDS:
+        require(field_name in identity, f"representation identity omits {field_name}")
+        result.extend(_length_frame(field_name.encode("utf-8")))
+        result.extend(_length_frame(str(identity[field_name]).encode("utf-8")))
+    values = (position_raw_error, momentum_raw_error, energy_error)
+    result.extend(struct.pack("<Q", len(REPRESENTATION_ERROR_METRICS)))
+    for metric, exact in zip(REPRESENTATION_ERROR_METRICS, values):
+        result.extend(_length_frame(metric.encode("utf-8")))
+        result.extend(_length_frame(encode_fraction(exact)))
+    return hashlib.sha256(result).hexdigest()
+
+
+def verify_representation_error_row(
+    row: dict[str, str], identity: dict[str, object],
+    position_raw_error: Fraction, momentum_raw_error: Fraction,
+    energy_error: Fraction,
+) -> None:
+    """Bind a row to its independently replayed exact comparator quantities."""
+    for field_name in REPRESENTATION_ERROR_IDENTITY_FIELDS:
+        require(row[field_name] == str(identity[field_name]),
+                f"representation identity {field_name} differs")
+    exact_values = (position_raw_error, momentum_raw_error, energy_error)
+    expected_commitment = representation_error_commitment(
+        identity, *exact_values
+    )
+    require(SHA256.fullmatch(row["exact_errors_sha256"]) is not None,
+            "representation exact-error commitment is malformed")
+    require(row["exact_errors_sha256"] == expected_commitment,
+            "representation exact-error commitment differs")
+    for metric, exact in zip(REPRESENTATION_ERROR_METRICS, exact_values):
+        require(row[f"{metric}_display"] == bounded_fraction_display(exact),
+                f"representation {metric} display differs")
 
 
 def fraction_hash(value: Fraction) -> str:
@@ -2408,32 +2594,6 @@ def table_model_map(
     return result
 
 
-def vector_from_row(row: dict[str, str], prefix: str) -> tuple[Fraction, Fraction, Fraction]:
-    value: list[Fraction] = []
-    for axis in "xyz":
-        numerator = decimal_integer(row[f"{prefix}_{axis}_num"])
-        denominator = decimal_integer(row[f"{prefix}_{axis}_den"], unsigned=True)
-        require(denominator > 0, f"{prefix}: nonpositive vector denominator")
-        component = Fraction(numerator, denominator)
-        require(component.numerator == numerator and component.denominator == denominator,
-                f"{prefix}: vector component is not reduced")
-        value.append(component)
-    result = tuple(value)
-    maximum = infinity_norm(result)
-    maximum_numerator = decimal_integer(row[f"{prefix}_max_num"], unsigned=True)
-    maximum_denominator = decimal_integer(row[f"{prefix}_max_den"], unsigned=True)
-    require(maximum_denominator > 0, f"{prefix}: nonpositive maximum denominator")
-    encoded_maximum = Fraction(maximum_numerator, maximum_denominator)
-    require(
-        encoded_maximum.numerator == maximum_numerator
-        and encoded_maximum.denominator == maximum_denominator
-        and encoded_maximum == maximum,
-        f"{prefix}: vector maximum differs",
-    )
-    require(row[f"{prefix}_hash"] == vector_hash(result), f"{prefix}: vector hash differs")
-    return result  # type: ignore[return-value]
-
-
 DYADIC_TEXT = re.compile(r"(-?)0x([0-9a-f]+)@(-?[0-9]+)")
 
 
@@ -2467,34 +2627,35 @@ def parse_dyadic_text(text: str) -> Fraction:
     return value
 
 
-def verify_vector_matches(
-    row: dict[str, str], prefix: str, expected: Sequence[Fraction],
-    raw_expected: Sequence[Fraction] | None = None,
+def raw_vector_from_row(
+    row: dict[str, str], prefix: str,
 ) -> tuple[Fraction, Fraction, Fraction]:
-    expected_tuple = tuple(expected)
-    require(row[f"{prefix}_hash"] == vector_hash(expected_tuple),
-            f"{prefix}: vector hash differs")
-    if raw_expected is None:
-        raw_expected = expected_tuple
-    require(parse_dyadic_text(row[f"{prefix}_raw_max_dyadic"]) == infinity_norm(raw_expected),
-            f"{prefix}: raw maximum dyadic differs")
-    raw_fields = [row[f"{prefix}_raw_{axis}_dyadic"] for axis in "xyz"]
-    if any(raw_fields):
-        require(all(raw_fields), f"{prefix}: partially omitted raw vector")
-        require(tuple(parse_dyadic_text(value) for value in raw_fields) == tuple(raw_expected),
-                f"{prefix}: raw exact vector differs")
-    physical_fields = [
-        row[f"{prefix}_{axis}_{part}"]
-        for axis in "xyz" for part in ("num", "den")
-    ]
-    if any(physical_fields):
-        require(all(physical_fields), f"{prefix}: partially omitted physical vector")
-        actual = vector_from_row(row, prefix)
-        require(actual == expected_tuple, f"{prefix}: exact vector differs")
-        return actual
-    require(row[f"{prefix}_max_num"] == row[f"{prefix}_max_den"] == "",
-            f"{prefix}: partially omitted physical maximum")
-    return expected_tuple  # type: ignore[return-value]
+    """Decode the complete compact xyz vector; no derived value is trusted."""
+    encoded = tuple(row[f"{prefix}_raw_{axis}_dyadic"] for axis in "xyz")
+    require(all(encoded), f"{prefix}: compact raw xyz vector is incomplete")
+    result = tuple(parse_dyadic_text(value) for value in encoded)
+    return result  # type: ignore[return-value]
+
+
+def verify_raw_vector_matches(
+    row: dict[str, str], prefix: str, raw_expected: Sequence[Fraction],
+    scale: Fraction,
+) -> tuple[Fraction, Fraction, Fraction]:
+    """Compare retained raw xyz, then independently derive physical/hash/max."""
+    expected = tuple(raw_expected)
+    require(len(expected) == 3, f"{prefix}: expected xyz inventory differs")
+    actual_raw = raw_vector_from_row(row, prefix)
+    require(actual_raw == expected, f"{prefix}: raw exact xyz vector differs")
+    physical = tuple(component * scale for component in actual_raw)
+    # These are intentionally recomputed rather than read from the compact row.
+    derived_hash = vector_hash(physical)
+    derived_raw_maximum = infinity_norm(actual_raw)
+    derived_physical_maximum = infinity_norm(physical)
+    require(SHA256.fullmatch(derived_hash) is not None,
+            f"{prefix}: independently derived vector hash is malformed")
+    require(derived_raw_maximum * abs(scale) == derived_physical_maximum,
+            f"{prefix}: independently derived vector scaling differs")
+    return physical  # type: ignore[return-value]
 
 
 def scalar_from_columns(row: dict[str, str], prefix: str) -> Fraction:
@@ -2533,29 +2694,26 @@ def verify_invariant_row(
     delta_momentum = vector_sub(momentum, vector_scale(PQ, baseline[0]))
     delta_angular = vector_sub(angular, vector_scale(LQ * PQ, baseline[1]))
     require(row["state_hash"] == phase_hash(state), "invariant stage state hash differs")
-    compact = row["trajectory_id"].startswith("long:")
-    for prefix in ("momentum", "angular"):
-        raw_present = [bool(row[f"{prefix}_raw_{axis}_dyadic"]) for axis in "xyz"]
-        require(all(not value for value in raw_present) if compact else all(raw_present),
-                f"{prefix}: invariant raw omission contract differs")
-    for prefix in ("delta_momentum", "delta_angular"):
-        require(all(row[f"{prefix}_raw_{axis}_dyadic"] for axis in "xyz"),
-                f"{prefix}: invariant signed raw components omitted")
-    for prefix in ("momentum", "angular", "delta_momentum", "delta_angular"):
-        physical_present = any(
-            row[f"{prefix}_{axis}_{part}"]
-            for axis in "xyz" for part in ("num", "den")
-        )
-        require(physical_present != compact,
-                f"{prefix}: invariant physical omission contract differs")
-    verify_vector_matches(row, "momentum", momentum, momentum_raw)
-    verify_vector_matches(row, "angular", angular, angular_raw)
-    verify_vector_matches(
-        row, "delta_momentum", delta_momentum, vector_sub(momentum_raw, baseline[0])
+    observed_momentum = verify_raw_vector_matches(
+        row, "momentum", momentum_raw, PQ
     )
-    verify_vector_matches(
-        row, "delta_angular", delta_angular, vector_sub(angular_raw, baseline[1])
+    observed_angular = verify_raw_vector_matches(
+        row, "angular", angular_raw, LQ * PQ
     )
+    # The compact schema deliberately stores absolute current invariants only.
+    # Deltas, physical units, maxima, and hashes are all derived here.
+    observed_delta_momentum = vector_sub(
+        observed_momentum, vector_scale(PQ, baseline[0])
+    )
+    observed_delta_angular = vector_sub(
+        observed_angular, vector_scale(LQ * PQ, baseline[1])
+    )
+    require(observed_delta_momentum == delta_momentum,
+            "derived total-momentum delta differs")
+    require(observed_delta_angular == delta_angular,
+            "derived orbital-angular-momentum delta differs")
+    vector_hash(observed_delta_momentum)
+    vector_hash(observed_delta_angular)
     precision = state.precision
     step = int(row["step"])
     unit_roundoff = Fraction(1, 2**precision)
@@ -2613,15 +2771,7 @@ def verify_force_row(row: dict[str, str], expected: dict[str, object]) -> dict[s
         else:
             scale = LQ * PQ
         raw_expected = tuple(component / scale for component in expected_vector)
-        require(all(row[f"{prefix}_raw_{axis}_dyadic"] for axis in "xyz"),
-                f"{prefix}: force raw components were omitted")
-        physical_present = any(
-            row[f"{prefix}_{axis}_{part}"]
-            for axis in "xyz" for part in ("num", "den")
-        )
-        require(physical_present != row["trajectory_id"].startswith("long:"),
-                f"{prefix}: force physical omission contract differs")
-        actual = verify_vector_matches(row, prefix, expected_vector, raw_expected)
+        actual = verify_raw_vector_matches(row, prefix, raw_expected, scale)
         require(all(abs(actual[index]) <= bound[index] for index in range(3)),
                 f"{prefix}: residual exceeds independently summed half-ULP bound")
         residuals[prefix] = infinity_norm(actual)
@@ -3034,6 +3184,7 @@ def verify_short_replay(
             for precision, values in maximum_analytic_bounds.items()
         },
         "causal_rounding_records_recomputed_and_digest_bound": True,
+        "compact_xyz_hash_max_physical_and_delta_derivations": True,
     }
 
 
@@ -3044,7 +3195,11 @@ def verify_representation_and_temporal(
     trajectories: dict[tuple[int, str, str, int], Trajectory],
     smooth: dict[str, list[Decimal]],
     smooth_traces: dict[str, list[list[Decimal]]],
-) -> tuple[dict[str, object], dict[int, bool], bool]:
+) -> tuple[
+    dict[str, object], dict[int, bool], bool,
+    dict[str, dict[int, Fraction]],
+]:
+    inventory_report = verify_representation_error_inventory(raw)
     parent_initial = grouped(rows(parent_raw / "initial_states.csv"), ("scenario_id",))
     parent_endpoints = {
         (row["scenario_id"], row["path"], int(row["level"])): row["state_hash"]
@@ -3063,6 +3218,13 @@ def verify_representation_and_temporal(
             "short representation-error inventory differs")
 
     envelope: dict[tuple[str, str, int, int], tuple[Fraction, Fraction, Decimal]] = {}
+    exact_structure_envelopes = {
+        name: {precision: Fraction() for precision in PRECISIONS}
+        for name in (
+            "representation_position", "representation_momentum",
+            "representation_energy",
+        )
+    }
     rational_endpoint: dict[tuple[str, str, int], RationalState] = {}
     exact_truncation: dict[tuple[str, str, int], Decimal] = {}
     exact_truncation_samples: dict[tuple[str, str, int], list[Decimal]] = {}
@@ -3113,12 +3275,17 @@ def verify_representation_and_temporal(
                     for sample, (row, bounded, exact, exact_energy) in enumerate(
                         zip(evidence, bounded_samples, rational_samples, rational_energies)
                     ):
-                        require(int(row["sample"]) == sample,
-                                "short representation sample order differs")
-                        require(row["candidate_state_hash"] == phase_hash(bounded),
-                                "representation candidate hash differs")
-                        require(row["control_state_hash"] == rational_hash(exact),
-                                "representation rational-control hash differs")
+                        identity: dict[str, object] = {
+                            "scenario_id": scenario,
+                            "scope": "short",
+                            "path": path,
+                            "precision": precision,
+                            "level": level,
+                            "dt_raw": TIMESTEPS_RAW[level],
+                            "sample": sample,
+                            "candidate_state_hash": phase_hash(bounded),
+                            "control_state_hash": rational_hash(exact),
+                        }
                         x_raw = bounded_rational_error(bounded, exact)
                         p_raw = bounded_rational_error(bounded, exact, True)
                         x_physical = x_raw * LQ
@@ -3133,18 +3300,23 @@ def verify_representation_and_temporal(
                             registered_smooth[sample],
                             len(bounded.packets),
                         ))
-                        require(scalar_from_columns(row, "position_raw_error") == x_raw,
-                                "position raw representation error differs")
-                        require(scalar_from_columns(row, "position_physical_error") == x_physical,
-                                "position physical representation error differs")
-                        require(scalar_from_columns(row, "momentum_raw_error") == p_raw,
-                                "momentum raw representation error differs")
-                        require(scalar_from_columns(row, "momentum_physical_error") == p_physical,
-                                "momentum physical representation error differs")
                         bounded_energy = mechanical_energy(model, bounded)[2]
-                        require(scalar_from_columns(row, "energy_error")
-                                == bounded_energy - exact_energy,
-                                "representation-induced energy error differs")
+                        energy_error = bounded_energy - exact_energy
+                        verify_representation_error_row(
+                            row, identity, x_raw, p_raw, energy_error,
+                        )
+                        exact_structure_envelopes["representation_position"][precision] = max(
+                            exact_structure_envelopes["representation_position"][precision],
+                            x_physical,
+                        )
+                        exact_structure_envelopes["representation_momentum"][precision] = max(
+                            exact_structure_envelopes["representation_momentum"][precision],
+                            p_physical,
+                        )
+                        exact_structure_envelopes["representation_energy"][precision] = max(
+                            exact_structure_envelopes["representation_energy"][precision],
+                            abs(energy_error),
+                        )
                         maximum_x = max(maximum_x, x_physical)
                         maximum_p = max(maximum_p, p_physical)
                         maximum_state = max(maximum_state, state_error)
@@ -3261,6 +3433,9 @@ def verify_representation_and_temporal(
         for precision in PRECISIONS
     }
     return {
+        "compact_exact_error_inventory": inventory_report,
+        "exact_error_commitments_independently_reproduced": True,
+        "bounded_displays_independently_reproduced": True,
         "precision_scaling": precision_scaling,
         "precision_scaling_cutoff": "R_state<=T_exact_Q_vs_smooth",
         "selection_margin": "R_state<=0.1*T_exact_Q_vs_smooth",
@@ -3297,7 +3472,7 @@ def verify_representation_and_temporal(
     }, {
         precision: temporal_pass[precision] and selectable_representation[precision]
         for precision in PRECISIONS
-    }, internal_velocity_temporal_pass[256]
+    }, internal_velocity_temporal_pass[256], exact_structure_envelopes
 
 
 def physical_state_decimal_from_phase(state: PhaseState) -> list[Decimal]:
@@ -3445,19 +3620,10 @@ def observer_stream_sha256(groups: Sequence[Sequence[str]]) -> str:
 
 def _observer_add_vector(
     row: dict[str, object], prefix: str, raw_value: Sequence[Fraction],
-    scale: Fraction,
 ) -> None:
-    physical = tuple(component * scale for component in raw_value)
-    row[f"{prefix}_hash"] = vector_hash(physical)
-    row[f"{prefix}_raw_max_dyadic"] = canonical_dyadic_text(infinity_norm(raw_value))
+    require(len(raw_value) == 3, f"{prefix}: observer xyz inventory differs")
     for axis, component in zip("xyz", raw_value):
         row[f"{prefix}_raw_{axis}_dyadic"] = canonical_dyadic_text(component)
-    maximum = infinity_norm(physical)
-    row[f"{prefix}_max_num"] = maximum.numerator
-    row[f"{prefix}_max_den"] = maximum.denominator
-    for axis, component in zip("xyz", physical):
-        row[f"{prefix}_{axis}_num"] = component.numerator
-        row[f"{prefix}_{axis}_den"] = component.denominator
 
 
 def observer_invariant_row(
@@ -3474,10 +3640,9 @@ def observer_invariant_row(
         "stage": stage,
         "state_hash": phase_hash(state),
     }
-    _observer_add_vector(row, "momentum", momentum, PQ)
-    _observer_add_vector(row, "angular", angular, LQ * PQ)
-    _observer_add_vector(row, "delta_momentum", vector_sub(momentum, baseline[0]), PQ)
-    _observer_add_vector(row, "delta_angular", vector_sub(angular, baseline[1]), LQ * PQ)
+    del baseline
+    _observer_add_vector(row, "momentum", momentum)
+    _observer_add_vector(row, "angular", angular)
     return row
 
 
@@ -3515,7 +3680,7 @@ def observer_force_row(
         physical = audit[prefix]
         assert isinstance(physical, tuple)
         raw_value = tuple(component / scale for component in physical)
-        _observer_add_vector(row, prefix, raw_value, scale)
+        _observer_add_vector(row, prefix, raw_value)
     return row
 
 
@@ -4145,7 +4310,10 @@ def verify_long_replay(
     parent_raw: Path,
     state_report: dict[str, object],
     models: dict[str, Model],
-) -> tuple[dict[str, object], dict[int, bool], bool]:
+) -> tuple[
+    dict[str, object], dict[int, bool], bool,
+    dict[str, dict[int, Fraction]],
+]:
     initial = state_report["initial"]
     long_endpoints = state_report["long_endpoint"]
     assert isinstance(initial, dict) and isinstance(long_endpoints, dict)
@@ -4227,6 +4395,13 @@ def verify_long_replay(
     slope_envelopes: dict[str, dict[int, Fraction]] = {
         name: {precision: Fraction() for precision in PRECISIONS}
         for name in ("momentum", "angular", "energy", "boost_position", "boost_momentum")
+    }
+    exact_structure_envelopes = {
+        name: {precision: Fraction() for precision in PRECISIONS}
+        for name in (
+            "representation_position", "representation_momentum",
+            "representation_energy",
+        )
     }
     full_anchor_pass = {precision: True for precision in PRECISIONS}
     full_anchor_report: dict[str, object] = {}
@@ -4521,21 +4696,33 @@ def verify_long_replay(
                         len(bounded.packets),
                     )
                     bounded_energy = mechanical_energy(models["k4"], bounded)[2]
-                    require(
-                        int(row["sample"]) == sample
-                        and row["candidate_state_hash"] == phase_hash(bounded)
-                        and row["control_state_hash"] == exact_hash,
-                        "long rational comparator hashes differ",
+                    identity: dict[str, object] = {
+                        "scenario_id": scenario,
+                        "scope": "long_exact_prefix",
+                        "path": KDK,
+                        "precision": precision,
+                        "level": level,
+                        "dt_raw": TIMESTEPS_RAW[level],
+                        "sample": sample,
+                        "candidate_state_hash": phase_hash(bounded),
+                        "control_state_hash": exact_hash,
+                    }
+                    verify_representation_error_row(
+                        row, identity, x_raw, p_raw,
+                        bounded_energy - exact_energy,
                     )
-                    for prefix, expected in (
-                        ("position_raw_error", x_raw),
-                        ("position_physical_error", x_raw * LQ),
-                        ("momentum_raw_error", p_raw),
-                        ("momentum_physical_error", p_raw * PQ),
-                        ("energy_error", bounded_energy - exact_energy),
-                    ):
-                        require(scalar_from_columns(row, prefix) == expected,
-                                f"long representation {prefix} differs")
+                    exact_structure_envelopes["representation_position"][precision] = max(
+                        exact_structure_envelopes["representation_position"][precision],
+                        x_raw * LQ,
+                    )
+                    exact_structure_envelopes["representation_momentum"][precision] = max(
+                        exact_structure_envelopes["representation_momentum"][precision],
+                        p_raw * PQ,
+                    )
+                    exact_structure_envelopes["representation_energy"][precision] = max(
+                        exact_structure_envelopes["representation_energy"][precision],
+                        abs(bounded_energy - exact_energy),
+                    )
                     if scenario == "k4_internal":
                         exact_energy_error[precision].append(bounded_energy - exact_energy)
                     prefix_state_series[(precision, level, scenario)].append(
@@ -4838,6 +5025,7 @@ def verify_long_replay(
         "comparator_free_b256_trace_agreement": full_anchor_report,
         "boost_timestep_contraction": boost_timestep_contraction,
         "exact_rational_comparator_receipts": comparator_report,
+        "compact_xyz_hash_max_physical_and_delta_derivations": True,
     }, precision_pass, (
         all(slope_scaling.values())
         and slope_anchor_unit_roundoff_scaling
@@ -4848,7 +5036,7 @@ def verify_long_replay(
                 "momentum_maximum", "momentum_final",
             )
         )
-    )
+    ), exact_structure_envelopes
 
 
 def scaling_until_budget(values: dict[int, Fraction], budget: Fraction) -> bool:
@@ -4883,7 +5071,10 @@ def unit_roundoff_pair_scales(lower: Fraction, higher: Fraction, bit_gap: int) -
     return higher < lower and higher <= 4 * Fraction(1, 2**bit_gap) * lower
 
 
-def structure_residual_report(raw: Path) -> tuple[dict[str, object], dict[int, bool], bool]:
+def structure_residual_report(
+    raw: Path, state_report: dict[str, object],
+    exact_representation: dict[str, dict[int, Fraction]],
+) -> tuple[dict[str, object], dict[int, bool], bool]:
     quantities: dict[str, tuple[Fraction, dict[int, Fraction]]] = {
         "representation_position": (
             POSITION_BUDGET, {precision: Fraction() for precision in PRECISIONS}
@@ -4910,12 +5101,53 @@ def structure_residual_report(raw: Path) -> tuple[dict[str, object], dict[int, b
         del budget
         envelope[precision] = max(envelope[precision], abs(value))
 
+    initial = state_report["initial"]
+    endpoints = state_report["endpoint"]
+    assert isinstance(initial, dict) and isinstance(endpoints, dict)
+
+    def baseline_for(
+        trajectory: str, precision: int, level: int,
+    ) -> tuple[tuple[Fraction, Fraction, Fraction], tuple[Fraction, Fraction, Fraction]]:
+        parts = trajectory.split(":")
+        if parts[0] == "short":
+            state = initial[(precision, parts[1], "initial", 0)]
+        elif parts[0] == "reverse":
+            state = endpoints[(precision, parts[1], KDK, level)]
+        elif parts[0] == "covariance":
+            scenario = {
+                "translation": "k4_translated",
+                "galilean_boost": "k4_boosted",
+                "proper_lattice_rotation": "k4_rotated",
+                "packet_permutation": "k4_internal",
+            }[parts[1]]
+            state = initial[(precision, scenario, "initial", 0)]
+        elif parts[0] == "checkpoint":
+            state = initial[(precision, "k4_internal", "initial", 0)]
+        elif parts[0] == "long":
+            state = initial[(precision, parts[1], "initial", 0)]
+        else:
+            raise OracleError(f"unknown invariant trajectory {trajectory!r}")
+        assert isinstance(state, PhaseState)
+        return exact_state_invariants(state)
+
+    baseline_cache: dict[
+        tuple[str, int, int],
+        tuple[tuple[Fraction, Fraction, Fraction], tuple[Fraction, Fraction, Fraction]],
+    ] = {}
     for row in iter_rows(raw / "invariants.csv"):
         precision = int(row["precision"])
+        level = int(row["level"])
+        trajectory = row["trajectory_id"]
+        cache_key = (trajectory, precision, level)
+        baseline = baseline_cache.setdefault(
+            cache_key, baseline_for(trajectory, precision, level)
+        )
+        momentum = raw_vector_from_row(row, "momentum")
+        angular = raw_vector_from_row(row, "angular")
         update("momentum", precision,
-               parse_dyadic_text(row["delta_momentum_raw_max_dyadic"]) * PQ)
+               infinity_norm(vector_sub(momentum, baseline[0])) * PQ)
         update("angular", precision,
-               parse_dyadic_text(row["delta_angular_raw_max_dyadic"]) * LQ * PQ)
+               infinity_norm(vector_sub(angular, baseline[1])) * LQ * PQ)
     force_names = {
         "pair_momentum_residual": ("pair_momentum", PQ),
         "stored_impulse_centrality_residual": ("stored_centrality", LQ * PQ),
@@ -4926,7 +5158,7 @@ def structure_residual_report(raw: Path) -> tuple[dict[str, object], dict[int, b
     for row in iter_rows(raw / "force_audit.csv"):
         precision = int(row["precision"])
         for prefix, (name, scale) in force_names.items():
-            update(name, precision, parse_dyadic_text(row[f"{prefix}_raw_max_dyadic"]) * scale)
+            update(name, precision, infinity_norm(raw_vector_from_row(row, prefix)) * scale)
     for row in rows(raw / "reversibility.csv"):
         precision = int(row["precision"])
         update("reversal_position", precision, scalar_from_columns(row, "position_physical_error"))
@@ -4935,13 +5167,16 @@ def structure_residual_report(raw: Path) -> tuple[dict[str, object], dict[int, b
         precision = int(row["precision"])
         update("frame_position", precision, scalar_from_columns(row, "relative_position_physical"))
         update("frame_momentum", precision, scalar_from_columns(row, "relative_momentum_physical"))
-    for row in iter_rows(raw / "representation_error.csv"):
-        precision = int(row["precision"])
-        update("representation_position", precision,
-               scalar_from_columns(row, "position_physical_error"))
-        update("representation_momentum", precision,
-               scalar_from_columns(row, "momentum_physical_error"))
-        update("representation_energy", precision, scalar_from_columns(row, "energy_error"))
+    require(
+        set(exact_representation)
+        == {"representation_position", "representation_momentum", "representation_energy"},
+        "recomputed representation envelope inventory differs",
+    )
+    for name, envelope in exact_representation.items():
+        require(set(envelope) == set(PRECISIONS),
+                f"{name}: recomputed precision inventory differs")
+        for precision, value in envelope.items():
+            update(name, precision, value)
 
     scaling = {
         name: scaling_until_budget(envelope, budget)
@@ -5112,7 +5347,10 @@ def verify(
     models = load_models(raw)
     state_report = verify_state_tables(raw, parent_raw)
     trajectories, short_replay = verify_short_replay(raw, state_report, models)
-    representation, representation_temporal_pass, highest_precision_dynamics_pass = (
+    (
+        representation, representation_temporal_pass,
+        highest_precision_dynamics_pass, short_representation_envelopes,
+    ) = (
         verify_representation_and_temporal(
             raw, parent_raw, models, trajectories, smooth_data[0], smooth_data[2]
         )
@@ -5120,10 +5358,24 @@ def verify(
     composition, composition_pass = verify_reversal_checkpoint_covariance_domain(
         raw, state_report, models, trajectories
     )
-    long_run, long_pass, long_scaling = verify_long_replay(
+    long_run, long_pass, long_scaling, long_representation_envelopes = verify_long_replay(
         raw, parent_raw, state_report, models
     )
-    residuals, residual_budget_pass, residual_scaling = structure_residual_report(raw)
+    require(set(short_representation_envelopes) == set(long_representation_envelopes),
+            "short/long recomputed representation envelope inventory differs")
+    representation_envelopes = {
+        name: {
+            precision: max(
+                short_representation_envelopes[name][precision],
+                long_representation_envelopes[name][precision],
+            )
+            for precision in PRECISIONS
+        }
+        for name in short_representation_envelopes
+    }
+    residuals, residual_budget_pass, residual_scaling = structure_residual_report(
+        raw, state_report, representation_envelopes
+    )
     composition["structure_residuals"] = residuals
     state_size, size_pass = verify_state_size(raw, state_report)
 

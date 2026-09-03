@@ -71,6 +71,149 @@ def edit_cell(
         writer.writerows(content)
 
 
+def perturb_compact_dyadic(value: str):
+    return oracle.canonical_dyadic_text(
+        oracle.parse_dyadic_text(value) + oracle.Fraction(1, 2**1000)
+    )
+
+
+def flip_sha256(value: str) -> str:
+    if len(value) != 64:
+        raise RuntimeError("mutation target is not SHA-256 text")
+    return ("0" if value[0] != "0" else "1") + value[1:]
+
+
+def rewrite_csv(root: Path, filename: str, content: list[dict[str, str]]) -> None:
+    path = root / filename
+    with path.open(newline="", encoding="utf-8") as stream:
+        fields = list(csv.DictReader(stream).fieldnames or [])
+    if path.is_symlink():
+        path.unlink()
+    with path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(content)
+
+
+def representation_scope_rows(root: Path, scope: str) -> tuple[list[dict[str, str]], list[int]]:
+    content = oracle.rows(root / "representation_error.csv")
+    indices = [index for index, row in enumerate(content) if row["scope"] == scope]
+    if not indices:
+        raise RuntimeError(f"representation scope absent: {scope}")
+    return content, indices
+
+
+def positional_index(indices: list[int], position: str) -> int:
+    if position == "first":
+        return indices[0]
+    if position == "middle":
+        return indices[len(indices) // 2]
+    if position == "last":
+        return indices[-1]
+    raise RuntimeError(f"unknown row position {position!r}")
+
+
+def delete_representation_row(root: Path, scope: str, position: str) -> None:
+    content, indices = representation_scope_rows(root, scope)
+    del content[positional_index(indices, position)]
+    rewrite_csv(root, "representation_error.csv", content)
+
+
+def duplicate_representation_row(root: Path, scope: str, position: str) -> None:
+    content, indices = representation_scope_rows(root, scope)
+    index = positional_index(indices, position)
+    content.insert(index + 1, dict(content[index]))
+    rewrite_csv(root, "representation_error.csv", content)
+
+
+def reorder_representation_rows(root: Path, scope: str, position: str) -> None:
+    content, indices = representation_scope_rows(root, scope)
+    index = positional_index(indices, position)
+    neighbor = index + 1 if index < indices[-1] else index - 1
+    content[index], content[neighbor] = content[neighbor], content[index]
+    rewrite_csv(root, "representation_error.csv", content)
+
+
+def mutate_representation_identity(root: Path, scope: str, position: str) -> None:
+    content, indices = representation_scope_rows(root, scope)
+    index = positional_index(indices, position)
+    content[index]["sample"] = str(int(content[index]["sample"]) + 1)
+    rewrite_csv(root, "representation_error.csv", content)
+
+
+def transplant_representation_commitment(root: Path) -> None:
+    content, indices = representation_scope_rows(root, "short")
+    target = next(
+        index for index in indices
+        if content[index]["scenario_id"] == "k4_breathing"
+        and content[index]["path"] == oracle.CONTROL
+        and content[index]["precision"] == "64"
+        and content[index]["level"] == "0"
+        and content[index]["sample"] == "1"
+    )
+    donor = next(
+        index for index in indices
+        if content[index]["scenario_id"] == "k4_breathing"
+        and content[index]["path"] == oracle.CONTROL
+        and content[index]["precision"] == "64"
+        and content[index]["level"] == "0"
+        if content[index]["exact_errors_sha256"] != content[target]["exact_errors_sha256"]
+    )
+    content[target]["exact_errors_sha256"] = content[donor]["exact_errors_sha256"]
+    rewrite_csv(root, "representation_error.csv", content)
+
+
+def alter_representation_display(root: Path) -> None:
+    content, indices = representation_scope_rows(root, "short")
+    target = next(
+        index for index in indices
+        if content[index]["scenario_id"] == "k4_breathing"
+        and content[index]["path"] == oracle.CONTROL
+        and content[index]["precision"] == "64"
+        and content[index]["level"] == "0"
+        and content[index]["sample"] == "1"
+    )
+    field = "position_raw_error_display"
+    content[target][field] = (
+        "0x8000000000000000@-999" if content[target][field] == "0" else "0"
+    )
+    rewrite_csv(root, "representation_error.csv", content)
+
+
+def display_fraction(value: str):
+    if value == "0":
+        return oracle.Fraction()
+    sign = -1 if value.startswith("-") else 1
+    unsigned = value[1:] if sign < 0 else value
+    significand, separator, exponent = unsigned.partition("@")
+    if separator != "@" or not significand.startswith("0x"):
+        raise RuntimeError("invalid bounded representation display")
+    return sign * oracle.Fraction(int(significand[2:], 16)) * oracle.power_of_two(int(exponent))
+
+
+def replace_with_display_rounded_commitment(root: Path) -> None:
+    content, indices = representation_scope_rows(root, "short")
+    for index in indices:
+        row = content[index]
+        if not (
+            row["scenario_id"] == "k4_breathing"
+            and row["path"] == oracle.CONTROL
+            and row["precision"] == "64"
+            and row["level"] == "0"
+        ):
+            continue
+        approximate = tuple(
+            display_fraction(row[f"{metric}_display"])
+            for metric in oracle.REPRESENTATION_ERROR_METRICS
+        )
+        candidate = oracle.representation_error_commitment(row, *approximate)
+        if candidate != row["exact_errors_sha256"]:
+            row["exact_errors_sha256"] = candidate
+            rewrite_csv(root, "representation_error.csv", content)
+            return
+    raise RuntimeError("no lossy representation display found")
+
+
 def add_hidden_column(root: Path) -> None:
     path = root / "initial_states.csv"
     lines = path.read_text(encoding="utf-8").splitlines()
@@ -220,22 +363,122 @@ def first_auxiliary_audit(raw: Path, context: dict[str, object]) -> None:
     )
 
 
-def representation_zero(raw: Path, context: dict[str, object]) -> None:
-    row = next(
-        row for row in oracle.iter_rows(raw / "representation_error.csv")
-        if row["scenario_id"] == "k4_breathing" and row["scope"] == "short"
-        and row["path"] == oracle.CONTROL and row["precision"] == "256"
-        and row["level"] == "0" and row["sample"] == "0"
+def expected_representation_row(
+    identity: dict[str, object], position_raw_error, momentum_raw_error, energy_error,
+) -> dict[str, str]:
+    result = {field: str(identity[field]) for field in oracle.REPRESENTATION_ERROR_IDENTITY_FIELDS}
+    result["exact_errors_sha256"] = oracle.representation_error_commitment(
+        identity, position_raw_error, momentum_raw_error, energy_error
     )
-    state = context["state_report"]["initial"][(256, "k4_breathing", "initial", 0)]
-    oracle.require(row["candidate_state_hash"] == oracle.phase_hash(state),
-                   "initial representation candidate hash differs")
-    for prefix in (
-        "position_raw_error", "position_physical_error", "momentum_raw_error",
-        "momentum_physical_error", "energy_error",
+    for metric, exact in zip(
+        oracle.REPRESENTATION_ERROR_METRICS,
+        (position_raw_error, momentum_raw_error, energy_error),
     ):
-        oracle.require(oracle.scalar_from_columns(row, prefix) == 0,
-                       f"initial {prefix} is not zero")
+        result[f"{metric}_display"] = oracle.bounded_fraction_display(exact)
+    return result
+
+
+def representation_key(row: dict[str, str]) -> tuple[str, ...]:
+    return tuple(row[field] for field in oracle.REPRESENTATION_ERROR_IDENTITY_FIELDS[:7])
+
+
+def verify_cached_representation_rows(
+    raw: Path, expected: dict[tuple[str, ...], dict[str, str]],
+) -> None:
+    selected = {
+        representation_key(row): row
+        for row in oracle.iter_rows(raw / "representation_error.csv")
+        if representation_key(row) in expected
+    }
+    oracle.require(set(selected) == set(expected),
+                   "cached representation row inventory differs")
+    for key, expected_row in expected.items():
+        oracle.require(selected[key] == expected_row,
+                       "cached independently replayed representation row differs")
+
+
+def first_short_representation(
+    raw: Path, parent_raw: Path, context: dict[str, object],
+) -> dict[tuple[str, ...], dict[str, str]]:
+    precision = 64
+    level = 0
+    scenario = "k4_breathing"
+    path = oracle.CONTROL
+    model = context["models"]["k4"]
+    bounded_initial = context["state_report"]["initial"][
+        (precision, scenario, "initial", 0)
+    ]
+    parent_initial = oracle.grouped(
+        oracle.rows(parent_raw / "initial_states.csv"), ("scenario_id",)
+    )
+    exact_initial = oracle.rational_from_parent_rows(parent_initial[(scenario,)])
+    bounded = oracle.run_trajectory(
+        model, bounded_initial, oracle.TIMESTEPS_RAW[level],
+        oracle.STEP_COUNTS[level], path,
+    )[0].samples
+    exact = oracle.run_rational_trajectory(
+        model, exact_initial, oracle.TIMESTEPS_RAW[level],
+        oracle.STEP_COUNTS[level], path,
+    )
+    evidence = [
+        row for row in oracle.iter_rows(raw / "representation_error.csv")
+        if row["scenario_id"] == scenario and row["scope"] == "short"
+        and row["path"] == path and row["precision"] == str(precision)
+        and row["level"] == str(level)
+    ]
+    oracle.require(len(evidence) == len(bounded) == len(exact),
+                   "first short representation inventory differs")
+    expected_rows: dict[tuple[str, ...], dict[str, str]] = {}
+    for sample, (row, candidate, control) in enumerate(zip(evidence, bounded, exact)):
+        x_raw = oracle.bounded_rational_error(candidate, control)
+        p_raw = oracle.bounded_rational_error(candidate, control, True)
+        energy_error = (
+            oracle.mechanical_energy(model, candidate)[2]
+            - oracle.rational_energy(model, control)
+        )
+        identity = {
+            "scenario_id": scenario,
+            "scope": "short",
+            "path": path,
+            "precision": precision,
+            "level": level,
+            "dt_raw": oracle.TIMESTEPS_RAW[level],
+            "sample": sample,
+            "candidate_state_hash": oracle.phase_hash(candidate),
+            "control_state_hash": oracle.rational_hash(control),
+        }
+        oracle.verify_representation_error_row(
+            row, identity, x_raw, p_raw, energy_error
+        )
+        expected = expected_representation_row(identity, x_raw, p_raw, energy_error)
+        expected_rows[representation_key(expected)] = expected
+    return expected_rows
+
+
+def display_alias_positive() -> None:
+    identity = {
+        "scenario_id": "display_alias_positive",
+        "scope": "short",
+        "path": oracle.KDK,
+        "precision": 64,
+        "level": 0,
+        "dt_raw": oracle.TIMESTEPS_RAW[0],
+        "sample": 0,
+        "candidate_state_hash": "1" * 64,
+        "control_state_hash": "2" * 64,
+    }
+    first = oracle.Fraction(1) + oracle.Fraction(1, 2**100)
+    second = oracle.Fraction(1) + oracle.Fraction(1, 2**101)
+    oracle.require(first != second, "display-alias values unexpectedly equal")
+    oracle.require(
+        oracle.bounded_fraction_display(first) == oracle.bounded_fraction_display(second),
+        "display-alias positive did not alias at 64 display bits",
+    )
+    oracle.require(
+        oracle.representation_error_commitment(identity, first, first, first)
+        != oracle.representation_error_commitment(identity, second, first, first),
+        "exact commitments failed to distinguish display aliases",
+    )
 
 
 def first_reversal(raw: Path, context: dict[str, object]) -> None:
@@ -448,7 +691,9 @@ def half_ulp_bound_negative(raw: Path, context: dict[str, object]) -> None:
     raise RuntimeError("independent half-ULP bound negative was not detected")
 
 
-def first_comparator_receipt(raw: Path, parent_raw: Path, context: dict[str, object]) -> None:
+def first_comparator_receipt(
+    raw: Path, parent_raw: Path, context: dict[str, object],
+) -> dict[tuple[str, ...], dict[str, str]]:
     level = 0
     scenario = "k4_internal"
     row = next(
@@ -464,7 +709,11 @@ def first_comparator_receipt(raw: Path, parent_raw: Path, context: dict[str, obj
     maximum_median = oracle.Fraction()
     maximum_bytes = 0
     crossing = None
+    selected_steps = {0, requested // 2, requested}
+    exact_samples = {}
     for step in range(requested + 1):
+        if step in selected_steps:
+            exact_samples[step] = state.clone()
         component, median, checkpoint_bytes, exceeded = oracle.rational_complexity(state)
         maximum = max(maximum, component)
         maximum_median = max(maximum_median, median)
@@ -486,6 +735,55 @@ def first_comparator_receipt(raw: Path, parent_raw: Path, context: dict[str, obj
         and int(row["maximum_checkpoint_bytes"]) == maximum_bytes,
         "first exact-rational comparator receipt differs",
     )
+    oracle.require(set(exact_samples) == selected_steps,
+                   "selected long exact-comparator samples differ")
+    precision = 64
+    bounded_initial = context["state_report"]["initial"][
+        (precision, scenario, "initial", 0)
+    ]
+    bounded_samples = oracle.run_trajectory(
+        context["models"]["k4"], bounded_initial, oracle.TIMESTEPS_RAW[level],
+        requested, oracle.KDK,
+    )[0].samples
+    evidence = {
+        int(item["sample"]): item
+        for item in oracle.iter_rows(raw / "representation_error.csv")
+        if item["scenario_id"] == scenario
+        and item["scope"] == "long_exact_prefix"
+        and item["path"] == oracle.KDK
+        and item["precision"] == str(precision)
+        and item["level"] == str(level)
+        and int(item["sample"]) in selected_steps
+    }
+    oracle.require(set(evidence) == selected_steps,
+                   "selected long representation inventory differs")
+    expected_rows: dict[tuple[str, ...], dict[str, str]] = {}
+    for sample in sorted(selected_steps):
+        candidate = bounded_samples[sample]
+        exact = exact_samples[sample]
+        x_raw = oracle.bounded_rational_error(candidate, exact)
+        p_raw = oracle.bounded_rational_error(candidate, exact, True)
+        energy_error = (
+            oracle.mechanical_energy(context["models"]["k4"], candidate)[2]
+            - oracle.rational_energy(context["models"]["k4"], exact)
+        )
+        identity = {
+            "scenario_id": scenario,
+            "scope": "long_exact_prefix",
+            "path": oracle.KDK,
+            "precision": precision,
+            "level": level,
+            "dt_raw": oracle.TIMESTEPS_RAW[level],
+            "sample": sample,
+            "candidate_state_hash": oracle.phase_hash(candidate),
+            "control_state_hash": oracle.rational_hash(exact),
+        }
+        oracle.verify_representation_error_row(
+            evidence[sample], identity, x_raw, p_raw, energy_error
+        )
+        expected = expected_representation_row(identity, x_raw, p_raw, energy_error)
+        expected_rows[representation_key(expected)] = expected
+    return expected_rows
 
 
 def detect_state(raw: Path, parent_raw: Path) -> None:
@@ -510,7 +808,18 @@ def main() -> int:
     first_auxiliary_audit(arguments.raw, context)
     first_checkpoint(arguments.raw, context)
     half_ulp_bound_negative(arguments.raw, context)
-    first_comparator_receipt(arguments.raw, arguments.parent_raw, context)
+    long_representation_expectations = first_comparator_receipt(
+        arguments.raw, arguments.parent_raw, context
+    )
+    oracle.verify_representation_error_inventory(arguments.raw)
+    short_representation_expectations = first_short_representation(
+        arguments.raw, arguments.parent_raw, context
+    )
+    selected_representation_expectations = {
+        **short_representation_expectations,
+        **long_representation_expectations,
+    }
+    display_alias_positive()
     oracle.verify_state_size(arguments.raw, context["state_report"])
 
     schema = lambda raw, _parent: oracle.verify_schema_metadata_profiles(raw, True)
@@ -520,7 +829,15 @@ def main() -> int:
     short = lambda raw, _parent: first_short_replay(raw, context)
     long_audit = lambda raw, _parent: first_long_audit(raw, context)
     auxiliary_audit = lambda raw, _parent: first_auxiliary_audit(raw, context)
-    representation = lambda raw, _parent: representation_zero(raw, context)
+    representation = lambda raw, parent: first_short_representation(raw, parent, context)
+    representation_inventory = (
+        lambda raw, _parent: oracle.verify_representation_error_inventory(raw)
+    )
+    cached_representation = (
+        lambda raw, _parent: verify_cached_representation_rows(
+            raw, selected_representation_expectations
+        )
+    )
     reversal = lambda raw, _parent: first_reversal(raw, context)
     covariance = lambda raw, _parent: covariance_scaling(raw, context)
     domain = lambda raw, _parent: first_domain(raw, context)
@@ -549,6 +866,19 @@ def main() -> int:
         ("wrong_parent_sha", lambda r, _p: edit_cell(
             r, "metadata.csv", lambda row: row["key"] == "accepted_parent_sha",
             "value", "0" * 40), schema),
+        ("raw_schema_discriminator", lambda r, _p: edit_cell(
+            r, "metadata.csv", lambda row: row["key"] == "schema",
+            "value", "mls.bounded-fractional-phase-state.raw.v1"), schema),
+        ("observer_event_discriminator", lambda r, _p: edit_cell(
+            r, "metadata.csv", lambda row: row["key"] == "observer_event_encoding",
+            "value", "length_framed_utf8_fields_then_sha256_v1"), schema),
+        ("observer_stream_discriminator", lambda r, _p: edit_cell(
+            r, "metadata.csv", lambda row: row["key"] == "observer_stream_encoding",
+            "value", "step_framed_ordered_event_sha256_v1"), schema),
+        ("representation_commitment_discriminator", lambda r, _p: edit_cell(
+            r, "metadata.csv",
+            lambda row: row["key"] == "representation_error_commitment_encoding",
+            "value", "identified_exact_fraction_triplet_sha256_v1"), schema),
         ("parent_fingerprint_false", lambda r, _p: edit_cell(
             r, "parent_fingerprint.csv", lambda row: True, "passed", "false"), parent_check),
         ("positive_control_false", lambda r, _p: edit_cell(
@@ -603,7 +933,8 @@ def main() -> int:
         ("false_force_length", lambda r, _p: edit_cell(
             r, "force_audit.csv", first_force, "length_bits", lambda value: str(int(value) + 1)), short),
         ("false_force_residual", lambda r, _p: edit_cell(
-            r, "force_audit.csv", first_force, "pair_momentum_residual_raw_x_dyadic", "0x1@0"), short),
+            r, "force_audit.csv", first_force,
+            "pair_momentum_residual_raw_x_dyadic", perturb_compact_dyadic), short),
         ("omitted_long_force_observer", lambda r, _p: edit_cell(
             r, "force_audit.csv", first_long, "relation_angular_residual_raw_x_dyadic", ""), long_audit),
         ("reordered_or_fused_operation", lambda r, _p: edit_cell(
@@ -619,20 +950,38 @@ def main() -> int:
             r, "operation_counts.csv", first_operation, "rounding_audit_sha256",
             "0" * 64), short),
         ("false_invariant_residual", lambda r, _p: edit_cell(
-            r, "invariants.csv", first_invariant, "delta_momentum_raw_x_dyadic", "0x1@0"), short),
+            r, "invariants.csv", first_invariant,
+            "momentum_raw_x_dyadic", perturb_compact_dyadic), short),
         ("omitted_long_invariant_observer", lambda r, _p: edit_cell(
-            r, "invariants.csv", first_long, "delta_angular_raw_x_dyadic", ""), long_audit),
+            r, "invariants.csv", first_long, "angular_raw_x_dyadic", ""), long_audit),
         ("false_transformed_absolute_angular", lambda r, _p: edit_cell(
             r, "invariants.csv", first_auxiliary, "angular_raw_x_dyadic", "0x1@0"),
          auxiliary_audit),
         ("false_transformed_centrality", lambda r, _p: edit_cell(
             r, "force_audit.csv", first_auxiliary,
-            "stored_impulse_centrality_residual_raw_x_dyadic", "0x1@0"),
+            "stored_impulse_centrality_residual_raw_x_dyadic", perturb_compact_dyadic),
          auxiliary_audit),
-        ("false_representation_error", lambda r, _p: edit_cell(
+        ("representation_digest_flip", lambda r, _p: edit_cell(
             r, "representation_error.csv", lambda row: row["scenario_id"] == "k4_breathing"
-            and row["precision"] == "256" and row["scope"] == "short" and row["sample"] == "0",
-            "position_raw_error_num", "1"), representation),
+            and row["path"] == oracle.CONTROL and row["precision"] == "64"
+            and row["level"] == "0" and row["scope"] == "short" and row["sample"] == "1",
+            "exact_errors_sha256", flip_sha256), representation),
+        ("representation_digest_transplant",
+         lambda r, _p: transplant_representation_commitment(r), representation),
+        ("representation_display_only",
+         lambda r, _p: alter_representation_display(r), representation),
+        ("representation_rounded_commitment",
+         lambda r, _p: replace_with_display_rounded_commitment(r), representation),
+        ("representation_candidate_hash", lambda r, _p: edit_cell(
+            r, "representation_error.csv", lambda row: row["scenario_id"] == "k4_breathing"
+            and row["path"] == oracle.CONTROL and row["precision"] == "64"
+            and row["level"] == "0" and row["scope"] == "short" and row["sample"] == "1",
+            "candidate_state_hash", "3" * 64), representation),
+        ("representation_control_hash", lambda r, _p: edit_cell(
+            r, "representation_error.csv", lambda row: row["scenario_id"] == "k4_breathing"
+            and row["path"] == oracle.CONTROL and row["precision"] == "64"
+            and row["level"] == "0" and row["scope"] == "short" and row["sample"] == "1",
+            "control_state_hash", "4" * 64), representation),
         ("false_energy_trace", lambda r, _p: edit_cell(
             r, "long_energy.csv", lambda row: row["precision"] == "64"
             and row["level"] == "0" and row["sample"] == "0",
@@ -671,6 +1020,49 @@ def main() -> int:
         ("hidden_state_column", lambda r, _p: add_hidden_column(r), schema),
     ]
 
+    for scope in ("short", "long_exact_prefix"):
+        label = "short" if scope == "short" else "long"
+        for position in ("first", "middle", "last"):
+            cases.append((
+                f"representation_delete_{label}_{position}",
+                lambda r, _p, s=scope, q=position: delete_representation_row(r, s, q),
+                representation_inventory,
+            ))
+        cases.extend((
+            (
+                f"representation_duplicate_{label}",
+                lambda r, _p, s=scope: duplicate_representation_row(r, s, "middle"),
+                representation_inventory,
+            ),
+            (
+                f"representation_reorder_{label}",
+                lambda r, _p, s=scope: reorder_representation_rows(r, s, "middle"),
+                representation_inventory,
+            ),
+            (
+                f"representation_identity_{label}",
+                lambda r, _p, s=scope: mutate_representation_identity(r, s, "middle"),
+                representation_inventory,
+            ),
+        ))
+
+    for label, scope, scenario, path, samples in (
+        ("short", "short", "k4_breathing", oracle.CONTROL, (0, 8, 16)),
+        ("long", "long_exact_prefix", "k4_internal", oracle.KDK, (0, 128, 256)),
+    ):
+        for position, sample in zip(("first", "middle", "last"), samples):
+            cases.append((
+                f"representation_digest_{label}_{position}",
+                lambda r, _p, s=scope, c=scenario, q=path, n=sample: edit_cell(
+                    r, "representation_error.csv",
+                    lambda row: row["scope"] == s and row["scenario_id"] == c
+                    and row["path"] == q and row["precision"] == "64"
+                    and row["level"] == "0" and row["sample"] == str(n),
+                    "exact_errors_sha256", flip_sha256,
+                ),
+                cached_representation,
+            ))
+
     detected = 0
     failures = (
         OSError, ValueError, ArithmeticError, IndexError, KeyError, StopIteration,
@@ -694,7 +1086,8 @@ def main() -> int:
 
     print(
         "BOUNDED FRACTIONAL PHASE STATE ORACLE MUTATIONS: "
-        f"PASS (2 deterministic positives, 1 analytic-bound negative, {detected} mutations)"
+        "PASS (2 deterministic replay positives, 1 display-alias positive, "
+        f"1 analytic-bound negative, {detected} mutations)"
     )
     return 0
 

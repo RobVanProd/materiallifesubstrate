@@ -89,6 +89,37 @@ ORACLE_FIELDS = {
 MAX_PUBLIC_EXPANDED_BYTES = 20 * 1024 * 1024 * 1024
 
 
+def raw_vector_fields(prefixes: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(
+        field
+        for prefix in prefixes
+        for field in (f"{prefix}_raw_{axis}_dyadic" for axis in "xyz")
+    )
+
+
+INVARIANT_FIELDS = (
+    "trajectory_id", "precision", "level", "step", "stage", "state_hash",
+    *raw_vector_fields(("momentum", "angular")),
+)
+FORCE_FIELDS = (
+    "trajectory_id", "precision", "level", "step", "stage", "relation_index",
+    "first_id", "second_id", "length_bits", "conjugate_bits",
+    "causal_offset_raw_hash", "exact_stored_offset_raw_hash",
+    "ideal_impulse_raw_hash", "first_actual_impulse_raw_hash",
+    "second_actual_impulse_raw_hash",
+    *raw_vector_fields((
+        "pair_momentum_residual", "stored_impulse_centrality_residual",
+        "first_actual_centrality_residual", "second_actual_centrality_residual",
+        "relation_angular_residual",
+    )),
+)
+REPRESENTATION_ERROR_FIELDS = (
+    "scenario_id", "scope", "path", "precision", "level", "dt_raw", "sample",
+    "candidate_state_hash", "control_state_hash", "exact_errors_sha256",
+    "position_raw_error_display", "momentum_raw_error_display", "energy_error_display",
+)
+
+
 def invoke(
     command: list[str], cwd: Path, timeout: int = 14_400
 ) -> subprocess.CompletedProcess[str]:
@@ -149,6 +180,15 @@ def read_metadata(path: Path) -> dict[str, str]:
     return result
 
 
+def csv_header(path: Path) -> tuple[str, ...]:
+    with path.open(newline="", encoding="utf-8") as stream:
+        reader = csv.reader(stream)
+        try:
+            return tuple(next(reader))
+        except StopIteration as error:
+            raise RuntimeError(f"empty raw CSV: {path.name}") from error
+
+
 def tree_inventory(root: Path) -> list[dict[str, object]]:
     require(root.is_dir() and not root.is_symlink(), f"real directory required: {root}")
     entries: list[dict[str, object]] = []
@@ -203,7 +243,7 @@ def validate_raw_identity(bundle: Path, source_sha: str) -> None:
     compare_directories(bundle / "raw-a", bundle / "raw-b", "raw twins")
     metadata = read_metadata(bundle / "raw-a" / "metadata.csv")
     expected = {
-        "schema": "mls.bounded-fractional-phase-state.raw.v1",
+        "schema": "mls.bounded-fractional-phase-state.raw.v2",
         "accepted_parent_sha": PARENT_SHA,
         "accepted_parent_tag": PARENT_TAG,
         "accepted_parent_tag_object": PARENT_TAG_OBJECT,
@@ -223,12 +263,47 @@ def validate_raw_identity(bundle: Path, source_sha: str) -> None:
         "subnormalization": "false",
         "adaptive_precision": "false",
         "hidden_residual_or_history": "false",
+        "causal_state_shape": (
+            "State(precision,time_raw,packets);"
+            "Packet(identifier,mass_raw,x[3],p[3]);slots_only_v1"
+        ),
+        "causal_state_shape_sha256": hashlib.sha256(
+            (
+                "State(precision,time_raw,packets);"
+                "Packet(identifier,mass_raw,x[3],p[3]);slots_only_v1"
+            ).encode("utf-8")
+        ).hexdigest(),
+        "causal_state_slots_only": "true",
         "force_geometry": "cancellation_resistant_binary64",
         "safe_domain": "2^-24",
+        "exact_comparator_maximum_component_bits": "262144",
+        "exact_comparator_median_component_bits": "131072",
+        "exact_comparator_maximum_checkpoint_bytes": "8388608",
+        "domain_scratch_bit_limit_formula": (
+            "4*(B+(leading_exponent_max-leading_exponent_min))+64"
+        ),
+        "observer_event_encoding": "length_framed_utf8_fields_then_sha256_v2",
+        "observer_stream_encoding": "step_framed_ordered_event_sha256_v2",
+        "representation_error_commitment_encoding": (
+            "identified_exact_fraction_triplet_sha256_v2"
+        ),
+        "representation_error_display": (
+            "nonauthoritative_rn_even_binary64_significand_max_32_bytes"
+        ),
         "promotion": "NO_PROMOTION",
     }
+    require(set(metadata) == set(expected), "raw metadata key inventory differs")
     for key, value in expected.items():
         require(metadata.get(key) == value, f"raw metadata differs: {key}")
+    for raw_name in ("raw-a", "raw-b"):
+        raw = bundle / raw_name
+        for filename, fields in (
+            ("invariants.csv", INVARIANT_FIELDS),
+            ("force_audit.csv", FORCE_FIELDS),
+            ("representation_error.csv", REPRESENTATION_ERROR_FIELDS),
+        ):
+            require(csv_header(raw / filename) == fields,
+                    f"{raw_name}/{filename}: compact-v2 header differs")
     with (bundle / "raw-a" / "precisions.csv").open(newline="", encoding="utf-8") as stream:
         rows = list(csv.DictReader(stream))
     require([int(row["precision"]) for row in rows] == list(PRECISIONS), "precision inventory differs")
