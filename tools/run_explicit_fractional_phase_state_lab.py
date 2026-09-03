@@ -539,6 +539,10 @@ def record_invariant(rows: list[dict[str, object]], trajectory: str, level: int,
         "momentum_equal_initial": str(current[0] == initial[0]).lower(),
         "angular_equal_initial": str(current[1] == initial[1]).lower(),
     })
+    for name, vector in (("p", current[0]), ("l", current[1])):
+        for axis, value in zip("xyz", vector):
+            rows[-1][f"{name}_{axis}_num"] = value.numerator
+            rows[-1][f"{name}_{axis}_den"] = value.denominator
     require(current == initial, "fractional exact invariant changed")
 
 
@@ -847,6 +851,8 @@ def materialize(parent_raw: Path, output: Path, source: Path) -> None:
     reversibility_rows: list[dict[str, object]] = []
     covariance_rows: list[dict[str, object]] = []
     checkpoint_rows: list[dict[str, object]] = []
+    checkpoint_state_rows: list[dict[str, object]] = []
+    recovery_state_rows: list[dict[str, object]] = []
     domain_rows: list[dict[str, object]] = []
     long_energy_rows: list[dict[str, object]] = []
 
@@ -899,6 +905,16 @@ def materialize(parent_raw: Path, output: Path, source: Path) -> None:
                 "initial_hash": state_hash(initial), "recovered_hash": state_hash(backward.final),
                 "complete_state_identical": str(recovered).lower(),
             })
+            recovery_prefix = {
+                "scenario_id": scenario, "model_id": model.identifier,
+                "path": "signed_time_recovery", "level": level,
+                "dt_raw": dt_raw, "steps": steps, "status": backward.status,
+                "completed_steps": backward.completed_steps,
+                "time_raw": backward.final.time_raw,
+                "state_hash": state_hash(backward.final),
+            }
+            for packet in canonical_packets(backward.final):
+                recovery_state_rows.append(full_state_row(recovery_prefix, packet))
 
         baseline = primary_results[("k4_internal", KDK, level)]
         for kind, scenario, transform in (
@@ -954,6 +970,15 @@ def materialize(parent_raw: Path, output: Path, source: Path) -> None:
             "event_suffix_identical": str(suffix_identical).lower(),
             "canonical_round_trip": str(encode_state(decoded) == encoded).lower(),
         })
+        checkpoint_prefix = {
+            "scenario_id": "k4_internal", "model_id": "k4",
+            "path": "interior_checkpoint", "level": level,
+            "dt_raw": dt_raw, "steps": steps, "status": first.status,
+            "completed_steps": first.completed_steps,
+            "time_raw": decoded.time_raw, "state_hash": state_hash(decoded),
+        }
+        for packet in canonical_packets(decoded):
+            checkpoint_state_rows.append(full_state_row(checkpoint_prefix, packet))
 
         crossing = states["domain_crossing"]
         status, rejected = one_step(
@@ -1037,8 +1062,15 @@ def materialize(parent_raw: Path, output: Path, source: Path) -> None:
         shutil.copyfile(parent_raw / filename, output / filename)
     write_rows(output / "initial_states.csv", STATE_FIELDS, initial_rows)
     write_rows(output / "endpoints.csv", STATE_FIELDS, endpoint_rows)
+    write_rows(output / "checkpoint_states.csv", STATE_FIELDS, checkpoint_state_rows)
+    write_rows(output / "recovery_states.csv", STATE_FIELDS, recovery_state_rows)
     write_rows(output / "energies.csv", ("scenario_id", "path", "level", "sample", "dt_raw", "mechanical_energy_bits"), energy_rows)
-    write_rows(output / "invariants.csv", ("trajectory_id", "level", "step", "stage", "momentum_hash", "angular_hash", "momentum_equal_initial", "angular_equal_initial"), invariant_rows)
+    write_rows(output / "invariants.csv", (
+        "trajectory_id", "level", "step", "stage", "momentum_hash", "angular_hash",
+        "momentum_equal_initial", "angular_equal_initial",
+        "p_x_num", "p_x_den", "p_y_num", "p_y_den", "p_z_num", "p_z_den",
+        "l_x_num", "l_x_den", "l_y_num", "l_y_den", "l_z_num", "l_z_den",
+    ), invariant_rows)
     write_rows(output / "force_audit.csv", ("trajectory_id", "level", "step", "stage", "relation_index", "first_id", "second_id", "length_bits", "conjugate_bits", "coefficient_hash", "coefficient_bits", "impulse_hash", "impulse_bits", "central_cross_zero"), force_rows)
     write_rows(output / "state_complexity.csv", ("trajectory_id", "level", "step", "time_raw", "packet_id", "phase", "axis", "residual_hash", "numerator_bits", "denominator_bits", "checkpoint_bytes"), phase_rows)
     write_rows(output / "reversibility.csv", ("scenario_id", "level", "dt_raw", "steps", "forward_status", "backward_status", "initial_hash", "recovered_hash", "complete_state_identical"), reversibility_rows)

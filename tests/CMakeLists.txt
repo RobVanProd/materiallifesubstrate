@@ -12,6 +12,7 @@ add_executable(
   compound_identity_tests.cpp
   conservative_force_consistency_tests.cpp
   constitutive_expressivity_tests.cpp
+  explicit_fractional_phase_state_tests.cpp
   physical_support_tests.cpp
   phase_space_time_corefinement_tests.cpp
   affine_advection_tests.cpp
