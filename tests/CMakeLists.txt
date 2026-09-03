@@ -9,6 +9,7 @@ add_executable(
   authoritative_drift_state_bridge_tests.cpp
   authoritative_mechanics_state_bridge_tests.cpp
   authoritative_api_tests.cpp
+  bounded_fractional_phase_state_tests.cpp
   compound_identity_tests.cpp
   conservative_force_consistency_tests.cpp
   constitutive_expressivity_tests.cpp

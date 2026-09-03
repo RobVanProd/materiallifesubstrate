@@ -20,6 +20,7 @@ import MLSFormal.AuthoritativeDriftStateBridge
 import MLSFormal.TimeIntegrationFoundation
 import MLSFormal.PhaseSpaceTimeCorefinement
 import MLSFormal.ExplicitFractionalPhaseState
+import MLSFormal.BoundedFractionalPhaseState
 
 /-!
 Complete kernel axiom report for every theorem exported by the MLSFormal
@@ -193,3 +194,11 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.minimumDriftSquared_physical
 #print axioms MLSFormal.reciprocalKickDriftResolution_squared
 #print axioms MLSFormal.primitiveReciprocalKickDriftResolution_squared
+#print axioms MLSFormal.approximatePairKick_totalMomentum_delta
+#print axioms MLSFormal.approximatePairKick_orbitalAngular_delta
+#print axioms MLSFormal.centralIdealApproximatePairKick_orbitalAngular_delta
+#print axioms MLSFormal.oppositeEndpointErrors_preserve_totalMomentum
+#print axioms MLSFormal.centralIdealOppositeEndpointErrors_orbitalAngular_delta
+#print axioms MLSFormal.centralIdealEqualOppositeApproximateImpulse_accounting
+#print axioms MLSFormal.approximateDrift_orbitalAngular_delta
+#print axioms MLSFormal.parallelIdealApproximateDrift_orbitalAngular_delta
