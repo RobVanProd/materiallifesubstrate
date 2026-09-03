@@ -275,6 +275,19 @@ bound replaces each error component on the right by the sum of the
 corresponding registered half-ULPs and applies the triangle inequality.  Bounds
 are accumulated in stage order and must contain every measured component.
 
+Raw evidence may omit only values that the independent implementation derives
+exactly from retained canonical data.  The compact registered form keeps every
+accepted invocation and causal row; stores current raw total-momentum and
+orbital-angular-momentum components; stores all five raw relation-residual
+vectors plus the causal geometry/impulse hashes; and derives physical scaling,
+norms, vector hashes, and initial-state deltas independently.  Sampled
+bounded-versus-exact errors may be stored as a versioned SHA-256 commitment to
+the row identity and three canonical exact fractions, accompanied by a fixed
+bounded diagnostic display, provided the verifier reconstructs and checks the
+fractions independently.  A display is never authoritative and never enters a
+gate.  This is an evidence-encoding change only; row inventory, operation
+order, arithmetic, budgets, and scientific gates are unchanged.
+
 As a separate sanity envelope, every registered run must remain within
 `abs(x_raw)<2^48`, `abs(p_raw)<2^40`, `abs(r_raw)<2^49`, and
 `abs(J_raw)<2^40`.  These are evidence bounds, not clamps.  Crossing one fails

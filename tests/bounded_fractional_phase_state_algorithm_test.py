@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import struct
 import sys
 from pathlib import Path
 
@@ -36,6 +37,108 @@ def main() -> int:
         len(lab.accepted_trajectory_ids()) == 425,
         "accepted invariant/force/operation trajectory inventory differs",
     )
+    expected_invariant_fields = (
+        "trajectory_id", "precision", "level", "step", "stage", "state_hash",
+        "momentum_raw_x_dyadic", "momentum_raw_y_dyadic",
+        "momentum_raw_z_dyadic", "angular_raw_x_dyadic",
+        "angular_raw_y_dyadic", "angular_raw_z_dyadic",
+    )
+    expected_force_prefixes = (
+        "pair_momentum_residual", "stored_impulse_centrality_residual",
+        "first_actual_centrality_residual", "second_actual_centrality_residual",
+        "relation_angular_residual",
+    )
+    expected_force_fields = (
+        "trajectory_id", "precision", "level", "step", "stage", "relation_index",
+        "first_id", "second_id", "length_bits", "conjugate_bits",
+        "causal_offset_raw_hash", "exact_stored_offset_raw_hash",
+        "ideal_impulse_raw_hash", "first_actual_impulse_raw_hash",
+        "second_actual_impulse_raw_hash",
+        *(f"{prefix}_raw_{axis}_dyadic"
+          for prefix in expected_force_prefixes for axis in "xyz"),
+    )
+    expected_representation_fields = (
+        "scenario_id", "scope", "path", "precision", "level", "dt_raw", "sample",
+        "candidate_state_hash", "control_state_hash", "exact_errors_sha256",
+        "position_raw_error_display", "momentum_raw_error_display",
+        "energy_error_display",
+    )
+    require(lab.RAW_SCHEMA == "mls.bounded-fractional-phase-state.raw.v2",
+            "raw schema discriminator differs")
+    require(lab.OBSERVER_EVENT_MAGIC.endswith(b"-v2\x00") and
+            lab.OBSERVER_STREAM_MAGIC.endswith(b"-v2\x00") and
+            lab.REPRESENTATION_ERROR_COMMITMENT_MAGIC.endswith(b"-v2\x00"),
+            "compact evidence discriminator version differs")
+    require(lab.INVARIANT_FIELDS == expected_invariant_fields,
+            "compact invariant field inventory differs")
+    require(lab.FORCE_FIELDS == expected_force_fields,
+            "compact force-audit field inventory differs")
+    require(lab.REPRESENTATION_ERROR_FIELDS == expected_representation_fields,
+            "compact representation-error field inventory differs")
+
+    # Displays are bounded diagnostics only.  Exact commitments must distinguish
+    # exact values that alias at the display precision and bind row identity.
+    require(lab.bounded_fraction_display(lab.Fraction()) == "0",
+            "bounded zero display differs")
+    require(lab.bounded_fraction_display(lab.Fraction(1)) ==
+            "0x8000000000000000@-63", "bounded unit display differs")
+    require(lab.bounded_fraction_display(lab.Fraction(-1)) ==
+            "-0x8000000000000000@-63", "bounded negative display differs")
+    require(lab.bounded_fraction_display(
+        lab.Fraction(1) + lab.Fraction(1, 2**64)) ==
+        "0x8000000000000000@-63", "bounded display lower tie differs")
+    require(lab.bounded_fraction_display(
+        lab.Fraction(1) + lab.Fraction(3, 2**64)) ==
+        "0x8000000000000002@-63", "bounded display upper tie differs")
+    require(lab.bounded_fraction_display(
+        lab.Fraction(2) - lab.Fraction(1, 2**65)) ==
+        "0x8000000000000000@-62", "bounded display carry differs")
+    display_first = lab.Fraction(1)
+    display_alias = display_first + lab.Fraction(1, 2**100)
+    require(lab.bounded_fraction_display(display_first) ==
+            lab.bounded_fraction_display(display_alias),
+            "display-alias positive control did not alias")
+    identity: dict[str, object] = {
+        "scenario_id": "alias", "scope": "test", "path": lab.KDK,
+        "precision": 64, "level": 0, "dt_raw": 1, "sample": 2,
+        "candidate_state_hash": "1" * 64, "control_state_hash": "2" * 64,
+    }
+    first_commitment = lab.representation_error_commitment(
+        identity, display_first, lab.Fraction(2), lab.Fraction(-3, 5))
+    def frame(payload: bytes) -> bytes:
+        return struct.pack("<Q", len(payload)) + payload
+
+    commitment_preimage = bytearray(lab.REPRESENTATION_ERROR_COMMITMENT_MAGIC)
+    commitment_preimage.extend(struct.pack(
+        "<Q", len(lab.REPRESENTATION_ERROR_IDENTITY_FIELDS)))
+    for field_name in lab.REPRESENTATION_ERROR_IDENTITY_FIELDS:
+        commitment_preimage.extend(frame(field_name.encode("utf-8")))
+        commitment_preimage.extend(frame(str(identity[field_name]).encode("utf-8")))
+    exact_triplet = (display_first, lab.Fraction(2), lab.Fraction(-3, 5))
+    commitment_preimage.extend(struct.pack(
+        "<Q", len(lab.REPRESENTATION_ERROR_METRICS)))
+    for metric, exact in zip(lab.REPRESENTATION_ERROR_METRICS, exact_triplet):
+        commitment_preimage.extend(frame(metric.encode("utf-8")))
+        commitment_preimage.extend(frame(lab.exact_lab.encode_fraction(exact)))
+    require(first_commitment == hashlib.sha256(commitment_preimage).hexdigest(),
+            "exact representation-error commitment preimage differs")
+    alias_commitment = lab.representation_error_commitment(
+        identity, display_alias, lab.Fraction(2), lab.Fraction(-3, 5))
+    require(first_commitment != alias_commitment,
+            "exact commitment aliased distinct exact fractions")
+    changed_identity = {**identity, "sample": 3}
+    require(first_commitment != lab.representation_error_commitment(
+        changed_identity, display_first, lab.Fraction(2), lab.Fraction(-3, 5)),
+        "exact commitment did not bind row identity")
+    require(all(
+        len(lab.bounded_fraction_display(value).encode("ascii")) <=
+        lab.REPRESENTATION_ERROR_DISPLAY_MAX_BYTES
+        for value in (
+            lab.Fraction(1, 2**lab.EXACT_MAX_COMPONENT_BITS),
+            lab.Fraction(2**lab.EXACT_MAX_COMPONENT_BITS),
+            lab.Fraction(-7, 13),
+        )
+    ), "bounded representation display exceeded its byte contract")
 
     # Hashes bind the exact inherited binary preimage, including the empty
     # magnitude encoding of zero and the fixed x/y/z vector cardinality.
@@ -232,10 +335,13 @@ def main() -> int:
     kicked = lab.kick(model, dynamic, 31_250_000, profile,
                       force_rows=force_rows, counter=count)
     require(count.total == 18, "one-relation kick operation count differs")
-    require(force_rows and force_rows[0]["stored_impulse_centrality_residual_hash"] and
-            force_rows[0]["first_actual_centrality_residual_hash"] and
-            force_rows[0]["second_actual_centrality_residual_hash"],
-            "exact-dyadic centrality observation missing")
+    require(force_rows and tuple(force_rows[0]) == lab.FORCE_FIELDS,
+            "compact exact-dyadic force observation field order differs")
+    require(all(force_rows[0][name] for name in (
+        "causal_offset_raw_hash", "exact_stored_offset_raw_hash",
+        "ideal_impulse_raw_hash", "first_actual_impulse_raw_hash",
+        "second_actual_impulse_raw_hash",
+    )), "geometry or impulse commitment missing")
     require(lab.state_hash(kicked) != lab.state_hash(dynamic), "bounded kick vanished")
     long_force_rows: list[dict[str, object]] = []
     lab.kick(model, dynamic, 31_250_000, profile, trajectory="long:test",
@@ -243,8 +349,10 @@ def main() -> int:
     for prefix in lab.VECTOR_PREFIXES_FORCE:
         require(all(f"{prefix}_raw_{axis}_dyadic" in long_force_rows[0] for axis in "xyz"),
                 f"long force row omitted signed raw {prefix} components")
-        require(f"{prefix}_x_num" not in long_force_rows[0],
-                f"long force row unexpectedly expanded physical {prefix} components")
+        require(f"{prefix}_hash" not in long_force_rows[0] and
+                f"{prefix}_raw_max_dyadic" not in long_force_rows[0] and
+                f"{prefix}_x_num" not in long_force_rows[0],
+                f"force row retained derived {prefix} fields")
 
     drift_count = lab.OperationCounter()
     drifted = lab.drift(model, kicked, 62_500_000, profile, drift_count)
@@ -321,6 +429,9 @@ def main() -> int:
             == {resumed_trajectory},
         "checkpoint halves lack uniquely identified invariant/force audit rows",
     )
+    require(tuple(first_invariants[0]) == lab.INVARIANT_FIELDS and
+            tuple(first_forces[0]) == lab.FORCE_FIELDS,
+            "checkpoint observer used a noncompact audit schema")
     require(
         int(first_invariants[0]["step"]) == 0
         and int(resumed_invariants[0]["step"]) == 1

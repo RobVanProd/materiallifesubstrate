@@ -174,6 +174,27 @@ order. It also enforces the preregistered magnitude envelopes
 `|x_raw|<2^48`, `|p_raw|<2^40`, `|r_raw|<2^49`, and `|J_raw|<2^40`; these are
 fail-closed evidence bounds, not clamps.
 
+The high-cardinality audit schema is deliberately nonredundant. Every one of
+the 425 accepted invocation IDs and every causal row remains present.
+`invariants.csv` stores the canonical state hash plus exact raw dyadic `x,y,z`
+components of current total momentum and orbital angular momentum; the verifier
+derives initial-state deltas, physical scaling, hashes, and infinity norms.
+`force_audit.csv` stores the five geometry/impulse hashes plus exact raw dyadic
+`x,y,z` components of all five registered residual vectors; the verifier
+derives residual hashes, norms, and physical components. Short and long rows
+use identical complete field inventories with no conditional omissions.
+
+Sampled representation error uses a versioned row commitment rather than
+serializing growing exact numerator/denominator text twice in raw and physical
+units. The commitment binds the nine row-identity/state-hash fields and the
+canonical exact fractions for raw position error, raw momentum error, and
+signed mechanical-energy error. The verifier independently reconstructs those
+fractions and derives physical errors. Each fraction also has a
+nonauthoritative, at-most-32-byte RN-even 64-bit dyadic display; displayed
+aliases never satisfy exact commitment equality. The raw schema, observer
+event/stream frames, and representation-error commitment use their registered
+`v2` discriminators.
+
 Checkpoint-resumed audit rows retain their unique
 `checkpoint:resumed:B<precision>:L<level>` identity and absolute checkpoint
 step. The replay observer projection alone uses the uninterrupted primary

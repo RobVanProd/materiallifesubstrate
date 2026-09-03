@@ -25,7 +25,7 @@ versions; exponent contract; safe domain; physical budgets; and
 
 ## Raw inventory
 
-The raw schema is `mls.bounded-fractional-phase-state.raw.v1`. Each raw twin
+The raw schema is `mls.bounded-fractional-phase-state.raw.v2`. Each raw twin
 contains exactly 25 UTF-8 CSV files:
 
 | file | role |
@@ -43,7 +43,7 @@ contains exactly 25 UTF-8 CSV files:
 | `checkpoint_states.csv` | complete canonical interior checkpoint states |
 | `recovery_states.csv` | complete canonical signed-time recovery states |
 | `long_endpoints.csv` | complete canonical 16-second bounded K4 internal and common-boost endpoints |
-| `representation_error.csv` | sampled bounded-versus-exact-control position, momentum, and energy errors; the oracle derives scaling and smooth-reference comparisons |
+| `representation_error.csv` | sampled bounded-versus-exact-control error commitments and bounded diagnostic displays; the oracle reconstructs exact errors and derives scaling and smooth-reference comparisons |
 | `rational_comparator.csv` | independently measured exact-rational comparator coverage and first complexity crossing for each long scenario and timestep level |
 | `energies.csv` | registered short exact-rational kinetic, Path-B potential, and mechanical-energy samples |
 | `long_energy.csv` | every registered 16-second bounded kinetic, potential, and mechanical-energy sample |
@@ -66,9 +66,10 @@ substituted for zero or false.
 The compact notation `component_fields(xx,xy,xz,px,py,pz)` expands each prefix
 in the displayed order by suffixes
 `sign,E,significand_hex,wire_hex,exact_num,exact_den`. The notation
-`vector_fields(prefixes)` expands each prefix in order to
-`hash,raw_max_dyadic,raw_x_dyadic,raw_y_dyadic,raw_z_dyadic,max_num,max_den,`
-`x_num,x_den,y_num,y_den,z_num,z_den` (13 fields exactly).
+`raw_vector_fields(prefixes)` expands each prefix in order to
+`raw_x_dyadic,raw_y_dyadic,raw_z_dyadic` (three fields exactly). Hashes,
+infinity norms, physical scaling, and initial-state deltas are derived by the
+independent oracle and are not duplicated in these high-cardinality tables.
 
 | file | ordered header |
 |---|---|
@@ -81,11 +82,11 @@ in the displayed order by suffixes
 | `relations.csv` | `model_id,relation_index,first_id,second_id,rest_length_bits` |
 | `force_operator.csv` | `model_id,row,column,h_bits` |
 | five state tables | `precision,scenario_id,model_id,scope,path,level,dt_raw,steps,status,completed_steps,time_raw,state_hash,packet_id,mass_raw,component_fields(xx,xy,xz,px,py,pz)` |
-| `representation_error.csv` | `scenario_id,scope,path,precision,level,dt_raw,sample,candidate_state_hash,control_state_hash,position_raw_error_num,position_raw_error_den,position_physical_error_num,position_physical_error_den,momentum_raw_error_num,momentum_raw_error_den,momentum_physical_error_num,momentum_physical_error_den,energy_error_num,energy_error_den` |
+| `representation_error.csv` | `scenario_id,scope,path,precision,level,dt_raw,sample,candidate_state_hash,control_state_hash,exact_errors_sha256,position_raw_error_display,momentum_raw_error_display,energy_error_display` |
 | `rational_comparator.csv` | `scenario_id,scope,path,level,dt_raw,requested_steps,completed_steps,comparison_samples,status,first_crossing_step,last_within_ceiling_step,last_comparator_sample,first_comparator_free_sample,last_comparator_time_raw,last_comparator_state_hash,maximum_component_bits,maximum_state_median_bits_num,maximum_state_median_bits_den,maximum_checkpoint_bytes,crossing_component_bits,crossing_state_median_bits_num,crossing_state_median_bits_den,crossing_checkpoint_bytes,maximum_component_bits_limit,median_component_bits_limit,maximum_checkpoint_bytes_limit,crossing_state_included` |
 | two energy tables | `scenario_id,scope,path,precision,level,dt_raw,sample,potential_binary64_bits,kinetic_num,kinetic_den,kinetic_hash,potential_num,potential_den,potential_hash,mechanical_num,mechanical_den,mechanical_hash` |
-| `invariants.csv` | `trajectory_id,precision,level,step,stage,state_hash,vector_fields(momentum,angular,delta_momentum,delta_angular)` |
-| `force_audit.csv` | `trajectory_id,precision,level,step,stage,relation_index,first_id,second_id,length_bits,conjugate_bits,causal_offset_raw_hash,exact_stored_offset_raw_hash,ideal_impulse_raw_hash,first_actual_impulse_raw_hash,second_actual_impulse_raw_hash,vector_fields(pair_momentum_residual,stored_impulse_centrality_residual,first_actual_centrality_residual,second_actual_centrality_residual,relation_angular_residual)` |
+| `invariants.csv` | `trajectory_id,precision,level,step,stage,state_hash,raw_vector_fields(momentum,angular)` |
+| `force_audit.csv` | `trajectory_id,precision,level,step,stage,relation_index,first_id,second_id,length_bits,conjugate_bits,causal_offset_raw_hash,exact_stored_offset_raw_hash,ideal_impulse_raw_hash,first_actual_impulse_raw_hash,second_actual_impulse_raw_hash,raw_vector_fields(pair_momentum_residual,stored_impulse_centrality_residual,first_actual_centrality_residual,second_actual_centrality_residual,relation_angular_residual)` |
 | `reversibility.csv` | `scenario_id,precision,level,dt_raw,steps,forward_status,backward_status,initial_hash,recovered_hash,complete_state_identical,position_raw_error_num,position_raw_error_den,position_physical_error_num,position_physical_error_den,momentum_raw_error_num,momentum_raw_error_den,momentum_physical_error_num,momentum_physical_error_den` |
 | `covariance.csv` | `kind,scope,precision,level,dt_raw,sample,baseline_hash,transformed_hash,bit_identical,relative_position_raw_num,relative_position_raw_den,relative_position_physical_num,relative_position_physical_den,relative_momentum_raw_num,relative_momentum_raw_den,relative_momentum_physical_num,relative_momentum_physical_den` |
 | `checkpoint.csv` | `scenario_id,precision,level,dt_raw,steps,checkpoint_step,checkpoint_hash,checkpoint_bytes,decoded_hash,whole_final_hash,resumed_final_hash,whole_suffix_event_count,resumed_event_count,whole_suffix_event_sha256,resumed_event_sha256,event_suffix_identical,canonical_round_trip` |
@@ -105,7 +106,9 @@ In addition to the previously frozen identity fields, `metadata.csv` includes
 `exact_comparator_median_component_bits=131072`, and
 `exact_comparator_maximum_checkpoint_bytes=8388608`. `precisions.csv` binds the
 canonical `Lq_B` component and conversion audit separately for every registered
-precision as specified below.
+precision as specified below. It also identifies the `v2` observer-event and
+observer-stream encodings, the identified exact-fraction-triplet representation
+error commitment, and the bounded diagnostic display contract.
 
 ## Scalar encodings
 
@@ -200,49 +203,64 @@ bound, and digest to agree.
 ## Relational and error-accounting rows
 
 `representation_error.csv` identifies scenario, path, precision, level,
-sample, scope, and comparator hashes. It carries exact rational maximum
-component errors for raw and physical position and momentum, plus signed
-bounded-minus-control mechanical-energy error. Complete state tables let the
-oracle independently reconstruct scaled norms, endpoint/through-time maxima,
-temporal truncation, budgets, adjacent-precision ratios, and pass/fail results;
-those derived classifications belong to the oracle result, not extra raw CSV
-columns.
+sample, scope, and both comparator state hashes. The raw row does not duplicate
+the potentially enormous exact numerator/denominator spelling. Instead,
+`exact_errors_sha256` commits to the exact raw-position infinity error, raw-
+momentum infinity error, and signed bounded-minus-control mechanical-energy
+error. The independent oracle reconstructs all three fractions, verifies the
+commitment, derives physical position and momentum errors using exact `Lq` and
+`Pq`, and performs every scaling, temporal, budget, and pass/fail calculation
+from those reconstructed fractions.
 
-`invariants.csv` identifies trajectory, precision, level, step, and map stage.
-Its four exact physical vectors are current total `P`, current total orbital
-`L`, and their signed deltas from the trajectory's initial values. Each vector
-has a canonical hash, infinity-norm rational, and three signed rational
-components. The verifier derives local half-ULP bounds and bound/budget
-decisions independently. Rows are in causal stage order: initial, first kick,
-drift, second kick, committed step. Diagnostic reads never affect state.
+The commitment preimage begins with ASCII
+`MLS-BOUNDED-REPRESENTATION-ERROR-v2\0`, then `u64le(9)`. Each of the nine
+identity columns is appended in header order as a length-framed UTF-8 field
+name followed by its length-framed canonical UTF-8 value. Next comes
+`u64le(3)`, followed in order by `position_raw_error`,
+`momentum_raw_error`, and `energy_error`; each metric name is length-framed
+UTF-8 and each exact value is a length-framed canonical `encode_fraction`
+record. `exact_errors_sha256` is lowercase SHA-256 of precisely those bytes.
+Thus neither a displayed-value alias nor moving an exact triplet to another
+sample can preserve the commitment.
+
+The three `*_display` values are nonauthoritative bounded diagnostics. Zero is
+`0`. A nonzero exact fraction is rounded directly, ties to even, to a 64-bit
+normalized unsigned significand `M` and formatted
+`[-]0x<16-lowercase-hex-digits>@<signed-base-two-exponent>`, denoting
+`M*2^exponent`. A carry is renormalized. The ASCII encoding is at most 32
+bytes. The display is independently reproduced but never substitutes for the
+exact commitment or participates in a scientific gate.
+
+`invariants.csv` identifies trajectory, precision, level, step, and map stage,
+binds the complete canonical state hash, and retains the three exact raw dyadic
+components of current total momentum and current total orbital angular
+momentum. The verifier independently reconstructs the invocation's initial
+state, derives signed initial-state deltas, physical `P` and `L`, hashes,
+infinity norms, local half-ULP bounds, and bound/budget decisions. Rows are in
+causal stage order: initial, first kick, drift, second kick, committed step.
+Diagnostic reads never affect state.
 The trajectory-ID inventory is exactly the same 425 accepted invocations as
 `operation_counts.csv`. A KDK invocation with `N` completed steps has exactly
 `1+4N` invariant rows; a first-order-control invocation has exactly `1+3N`.
 This includes every reverse, transformed, packet-permuted, checkpoint-first,
 checkpoint-resumed, and long trajectory, not only the primary short runs.
 
-For short trajectories every one of the 13 fields per invariant vector is
-present. For long trajectories, absolute `momentum` and `angular` retain only
-`hash` and `raw_max_dyadic`; their signed raw components and physical rational
-fields are empty. Long `delta_momentum` and `delta_angular` retain `hash`,
-`raw_max_dyadic`, and all three signed `raw_*_dyadic` fields; only their physical
-`max_num/max_den` and component numerator/denominator fields are empty. These
-are the only permitted invariant-vector omissions.
+The same twelve-column invariant schema is used for every short, long,
+reverse, transformed, permuted, and checkpoint invocation. No invariant field
+is conditionally omitted.
 
 `force_audit.csv` adds relation index and oriented endpoint IDs. It records the
 accepted binary64 length/conjugate bits; hashes of the causal rounded offset,
 exact difference of stored endpoint positions, component-rounded relation
-impulse, and two actual endpoint momentum deltas; and pair momentum,
-stored-impulse centrality, first-actual centrality, second-actual centrality, and
-complete relation angular residuals. Short rows fill all 13
-fields for each residual vector. Long rows retain `hash`, `raw_max_dyadic`, and
-all three signed `raw_*_dyadic` fields; only physical `max_num/max_den` and
-physical component numerator/denominator fields are empty. The compact physical
-omission keeps all relation kicks and signed raw residuals present without
-duplicating roughly a million scaled exact component vectors. The verifier
-reconstructs every omitted physical vector from the raw dyadics and exact unit
-scale, then derives endpoint
-rounding errors, local half-ULP bounds, and centrality classifications.
+impulse, and two actual endpoint momentum deltas; and all three signed exact
+raw dyadic components of pair momentum, stored-impulse centrality,
+first-actual centrality, second-actual centrality, and complete relation angular
+residuals. The verifier reconstructs each hashed geometry/impulse vector and
+each emitted residual independently. From the raw residuals and exact units it
+derives vector hashes, raw infinity norms, physical components and norms,
+endpoint rounding errors, local half-ULP bounds, and centrality
+classifications. The same thirty-column schema is complete for both short and
+long rows; no force-audit field is conditionally omitted.
 Relation rows follow frozen relation-index order inside each force stage.
 For `m` relations and `N` completed steps, a KDK invocation has exactly
 `2mN` force rows and a first-order-control invocation has exactly `mN`.
@@ -382,7 +400,7 @@ this order: each first-kick relation audit in relation order, the first-kick
 invariant, the drift invariant, each second-kick relation audit in relation
 order, the second-kick invariant, the committed-state invariant, and the
 post-commit mechanical-energy observation. Each event
-starts with ASCII `MLS-BOUNDED-OBSERVER-EVENT-v1\0`, followed by its kind and
+starts with ASCII `MLS-BOUNDED-OBSERVER-EVENT-v2\0`, followed by its kind and
 the complete corresponding `INVARIANT_FIELDS`, `FORCE_FIELDS`, or energy-event
 record. The energy event binds the trajectory, precision, level, absolute
 step, canonical state hash, potential binary64 bits, and exact
@@ -391,9 +409,11 @@ The
 kind, field count, and every field name and UTF-8 value are framed by an
 unsigned 64-bit little-endian byte count before the event is SHA-256 hashed.
 Thus invocation identity, absolute step, state hashes, geometry/force bits, and
-all exact residual fields participate in replay identity.
+all retained exact raw components participate in replay identity. Derived
+hash, maximum, physical-scaling, and invariant-delta fields are recomputed by
+the verifier rather than duplicated in the event.
 
-The stream starts with ASCII `MLS-BOUNDED-OBSERVER-STREAM-v1\0`, followed by
+The stream starts with ASCII `MLS-BOUNDED-OBSERVER-STREAM-v2\0`, followed by
 unsigned 64-bit little-endian step-group and event counts. Each step group has
 its own unsigned 64-bit event count followed by the ordered 32-byte event
 digests. `whole_suffix_event_sha256` and `resumed_event_sha256` hash those

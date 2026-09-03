@@ -61,6 +61,7 @@ LEADING_EXPONENT_MAX = 16_383
 MPFR_EMIN = -16_381
 MPFR_EMAX = 16_384
 ROUNDING_NAME = "round_to_nearest_ties_to_even"
+RAW_SCHEMA = "mls.bounded-fractional-phase-state.raw.v2"
 
 KDK = "bounded_binary_kick_drift_kick"
 CONTROL = "bounded_binary_symplectic_euler_control"
@@ -95,8 +96,13 @@ ENERGY_SLOPE_BUDGET = ENERGY_BUDGET / 16
 
 MAGIC = b"MLS-BOUNDED-BINARY-PHASE-v1\x00"
 WIRE_VERSION = 1
-OBSERVER_EVENT_MAGIC = b"MLS-BOUNDED-OBSERVER-EVENT-v1\x00"
-OBSERVER_STREAM_MAGIC = b"MLS-BOUNDED-OBSERVER-STREAM-v1\x00"
+OBSERVER_EVENT_MAGIC = b"MLS-BOUNDED-OBSERVER-EVENT-v2\x00"
+OBSERVER_STREAM_MAGIC = b"MLS-BOUNDED-OBSERVER-STREAM-v2\x00"
+REPRESENTATION_ERROR_COMMITMENT_MAGIC = (
+    b"MLS-BOUNDED-REPRESENTATION-ERROR-v2\x00"
+)
+REPRESENTATION_ERROR_DISPLAY_BITS = 64
+REPRESENTATION_ERROR_DISPLAY_MAX_BYTES = 32
 ROUNDING_AUDIT_MAGIC = b"MLS-BOUNDED-ROUNDING-AUDIT-v1\x00"
 ROUNDING_AUDIT_MERGE_MAGIC = b"MLS-BOUNDED-ROUNDING-AUDIT-MERGE-v1\x00"
 CAUSAL_STATE_SHAPE = (
@@ -1045,30 +1051,19 @@ def validate_state(state: State) -> None:
             require(abs(exact_dyadic(value)) < RAW_P_LIMIT, "raw_momentum_evidence_bound_exceeded")
 
 
-def _add_vector_fields(row: dict[str, object], prefix: str,
-                       value: list[Fraction], scale: Fraction = Fraction(1),
-                       include_components: bool = True,
-                       include_raw_components: bool = True) -> None:
-    physical = vector_scale(scale, value)
-    row[f"{prefix}_hash"] = vector_hash(physical)
-    raw_maximum = max((abs(item) for item in value), default=Fraction())
-    row[f"{prefix}_raw_max_dyadic"] = canonical_dyadic_text(raw_maximum)
-    if include_raw_components:
-        for axis, component in zip("xyz", value):
-            row[f"{prefix}_raw_{axis}_dyadic"] = canonical_dyadic_text(component)
-    if include_components:
-        maximum = max((abs(item) for item in physical), default=Fraction())
-        row[f"{prefix}_max_num"] = maximum.numerator
-        row[f"{prefix}_max_den"] = maximum.denominator
-        for axis, component in zip("xyz", physical):
-            row[f"{prefix}_{axis}_num"] = component.numerator
-            row[f"{prefix}_{axis}_den"] = component.denominator
+def _add_raw_vector_fields(
+    row: dict[str, object], prefix: str, value: Iterable[Fraction]
+) -> None:
+    components = tuple(value)
+    require(len(components) == 3, "evidence raw vector dimension differs")
+    for axis, component in zip("xyz", components):
+        row[f"{prefix}_raw_{axis}_dyadic"] = canonical_dyadic_text(component)
 
 
 def record_invariant(
     rows: list[dict[str, object]], trajectory: str, precision: int, level: int,
     step: int, stage: str, state: State,
-    initial: tuple[list[Fraction], list[Fraction]],
+    _initial: tuple[list[Fraction], list[Fraction]],
     observer_events: list[str] | None = None,
     observer_trajectory: str | None = None,
 ) -> None:
@@ -1081,17 +1076,8 @@ def record_invariant(
         "stage": stage,
         "state_hash": state_hash(state),
     }
-    compact = trajectory.startswith("long:")
-    _add_vector_fields(row, "momentum", current[0], PQ,
-                       include_components=not compact,
-                       include_raw_components=not compact)
-    _add_vector_fields(row, "angular", current[1], LQ * PQ,
-                       include_components=not compact,
-                       include_raw_components=not compact)
-    _add_vector_fields(row, "delta_momentum", vector_sub(current[0], initial[0]), PQ,
-                       include_components=not compact, include_raw_components=True)
-    _add_vector_fields(row, "delta_angular", vector_sub(current[1], initial[1]), LQ * PQ,
-                       include_components=not compact, include_raw_components=True)
+    _add_raw_vector_fields(row, "momentum", current[0])
+    _add_raw_vector_fields(row, "angular", current[1])
     rows.append(row)
     if observer_events is not None:
         event_row = row
@@ -1191,17 +1177,15 @@ def kick(
                     "first_actual_impulse_raw_hash": vector_hash(first_delta),
                     "second_actual_impulse_raw_hash": vector_hash(second_delta),
                 }
-                full_components = not trajectory.startswith("long:")
-                _add_vector_fields(row, "pair_momentum_residual", pair_momentum, PQ,
-                                   full_components, True)
-                _add_vector_fields(row, "stored_impulse_centrality_residual",
-                                   stored_centrality, LQ * PQ, full_components, True)
-                _add_vector_fields(row, "first_actual_centrality_residual",
-                                   first_centrality, LQ * PQ, full_components, True)
-                _add_vector_fields(row, "second_actual_centrality_residual",
-                                   second_centrality, LQ * PQ, full_components, True)
-                _add_vector_fields(row, "relation_angular_residual", relation_angular,
-                                   LQ * PQ, full_components, True)
+                _add_raw_vector_fields(row, "pair_momentum_residual", pair_momentum)
+                _add_raw_vector_fields(
+                    row, "stored_impulse_centrality_residual", stored_centrality)
+                _add_raw_vector_fields(
+                    row, "first_actual_centrality_residual", first_centrality)
+                _add_raw_vector_fields(
+                    row, "second_actual_centrality_residual", second_centrality)
+                _add_raw_vector_fields(
+                    row, "relation_angular_residual", relation_angular)
                 if force_rows is not None:
                     force_rows.append(row)
                 if observer_events is not None:
@@ -1780,7 +1764,7 @@ STATE_FIELDS = STATE_BASE_FIELDS + tuple(
 )
 
 
-VECTOR_PREFIXES_INVARIANT = ("momentum", "angular", "delta_momentum", "delta_angular")
+VECTOR_PREFIXES_INVARIANT = ("momentum", "angular")
 VECTOR_PREFIXES_FORCE = (
     "pair_momentum_residual", "stored_impulse_centrality_residual",
     "first_actual_centrality_residual", "second_actual_centrality_residual",
@@ -1788,29 +1772,36 @@ VECTOR_PREFIXES_FORCE = (
 )
 
 
-def vector_fields(prefixes: Iterable[str]) -> tuple[str, ...]:
+def raw_vector_fields(prefixes: Iterable[str]) -> tuple[str, ...]:
     return tuple(
         field_name
         for prefix in prefixes
-        for field_name in (
-            f"{prefix}_hash", f"{prefix}_raw_max_dyadic",
-            *(f"{prefix}_raw_{axis}_dyadic" for axis in "xyz"),
-            f"{prefix}_max_num", f"{prefix}_max_den",
-            *(f"{prefix}_{axis}_{part}" for axis in "xyz" for part in ("num", "den")),
-        )
+        for field_name in (f"{prefix}_raw_{axis}_dyadic" for axis in "xyz")
     )
 
 
 INVARIANT_FIELDS = (
     "trajectory_id", "precision", "level", "step", "stage", "state_hash",
-    *vector_fields(VECTOR_PREFIXES_INVARIANT),
+    *raw_vector_fields(VECTOR_PREFIXES_INVARIANT),
 )
 FORCE_FIELDS = (
     "trajectory_id", "precision", "level", "step", "stage", "relation_index",
     "first_id", "second_id", "length_bits", "conjugate_bits",
     "causal_offset_raw_hash", "exact_stored_offset_raw_hash", "ideal_impulse_raw_hash",
     "first_actual_impulse_raw_hash", "second_actual_impulse_raw_hash",
-    *vector_fields(VECTOR_PREFIXES_FORCE),
+    *raw_vector_fields(VECTOR_PREFIXES_FORCE),
+)
+REPRESENTATION_ERROR_IDENTITY_FIELDS = (
+    "scenario_id", "scope", "path", "precision", "level", "dt_raw", "sample",
+    "candidate_state_hash", "control_state_hash",
+)
+REPRESENTATION_ERROR_METRICS = (
+    "position_raw_error", "momentum_raw_error", "energy_error",
+)
+REPRESENTATION_ERROR_FIELDS = (
+    *REPRESENTATION_ERROR_IDENTITY_FIELDS,
+    "exact_errors_sha256",
+    *(f"{metric}_display" for metric in REPRESENTATION_ERROR_METRICS),
 )
 ENERGY_EVENT_FIELDS = (
     "trajectory_id", "precision", "level", "step", "state_hash",
@@ -1820,9 +1811,87 @@ ENERGY_EVENT_FIELDS = (
 )
 
 
+def _length_frame(value: bytes) -> bytes:
+    return struct.pack("<Q", len(value)) + value
+
+
 def _observer_frame(value: str) -> bytes:
-    encoded = value.encode("utf-8")
-    return struct.pack("<Q", len(encoded)) + encoded
+    return _length_frame(value.encode("utf-8"))
+
+
+def _floor_log2_fraction(value: Fraction) -> int:
+    require(value > 0, "binary display logarithm requires positive input")
+    numerator = int(value.numerator)
+    denominator = int(value.denominator)
+    exponent = numerator.bit_length() - denominator.bit_length()
+    if exponent >= 0:
+        if numerator < denominator << exponent:
+            exponent -= 1
+    elif numerator << -exponent < denominator:
+        exponent -= 1
+    return exponent
+
+
+def _round_ratio_ties_even(numerator: int, denominator: int) -> int:
+    require(numerator >= 0 and denominator > 0, "invalid binary display ratio")
+    quotient, remainder = divmod(numerator, denominator)
+    doubled = 2 * remainder
+    if doubled > denominator or (doubled == denominator and quotient % 2 == 1):
+        quotient += 1
+    return quotient
+
+
+def bounded_fraction_display(value: Fraction) -> str:
+    """Return a bounded, nonauthoritative RN-even 64-bit dyadic display."""
+    if value == 0:
+        return "0"
+    magnitude = abs(value)
+    leading_exponent = _floor_log2_fraction(magnitude)
+    display_exponent = leading_exponent - (REPRESENTATION_ERROR_DISPLAY_BITS - 1)
+    numerator = int(magnitude.numerator)
+    denominator = int(magnitude.denominator)
+    if display_exponent >= 0:
+        denominator <<= display_exponent
+    else:
+        numerator <<= -display_exponent
+    significand = _round_ratio_ties_even(numerator, denominator)
+    if significand == 1 << REPRESENTATION_ERROR_DISPLAY_BITS:
+        significand >>= 1
+        display_exponent += 1
+    require(
+        1 << (REPRESENTATION_ERROR_DISPLAY_BITS - 1)
+        <= significand < 1 << REPRESENTATION_ERROR_DISPLAY_BITS,
+        "binary display normalization failed",
+    )
+    result = (
+        f"{'-' if value < 0 else ''}0x{significand:016x}@{display_exponent:+d}"
+    )
+    require(
+        len(result.encode("ascii")) <= REPRESENTATION_ERROR_DISPLAY_MAX_BYTES,
+        "representation error display bound exceeded",
+    )
+    return result
+
+
+def representation_error_commitment(
+    identity: dict[str, object], position_raw_error: Fraction,
+    momentum_raw_error: Fraction, energy_error: Fraction,
+) -> str:
+    """Bind one identified row to all three exact comparator errors."""
+    require(position_raw_error >= 0 and momentum_raw_error >= 0,
+            "state-error maxima must be nonnegative")
+    result = bytearray(REPRESENTATION_ERROR_COMMITMENT_MAGIC)
+    result.extend(struct.pack("<Q", len(REPRESENTATION_ERROR_IDENTITY_FIELDS)))
+    for field_name in REPRESENTATION_ERROR_IDENTITY_FIELDS:
+        require(field_name in identity, f"representation identity omits {field_name}")
+        result.extend(_observer_frame(field_name))
+        result.extend(_observer_frame(str(identity[field_name])))
+    values = (position_raw_error, momentum_raw_error, energy_error)
+    result.extend(struct.pack("<Q", len(REPRESENTATION_ERROR_METRICS)))
+    for metric, exact in zip(REPRESENTATION_ERROR_METRICS, values):
+        result.extend(_observer_frame(metric))
+        result.extend(_length_frame(exact_lab.encode_fraction(exact)))
+    return hashlib.sha256(result).hexdigest()
 
 
 def observer_event_bytes(kind: str, row: dict[str, object]) -> bytes:
@@ -1988,11 +2057,13 @@ def append_representation_rows(
             "sample": sample, "candidate_state_hash": state_hash(bounded),
             "control_state_hash": exact_lab.state_hash(exact),
         }
-        _ratio_columns(row, "position_raw_error", x_raw)
-        _ratio_columns(row, "position_physical_error", x_raw * LQ)
-        _ratio_columns(row, "momentum_raw_error", p_raw)
-        _ratio_columns(row, "momentum_physical_error", p_raw * PQ)
-        _ratio_columns(row, "energy_error", bounded_energy - control_energy)
+        energy_error = bounded_energy - control_energy
+        row["exact_errors_sha256"] = representation_error_commitment(
+            row, x_raw, p_raw, energy_error)
+        for metric, exact in zip(
+            REPRESENTATION_ERROR_METRICS, (x_raw, p_raw, energy_error)
+        ):
+            row[f"{metric}_display"] = bounded_fraction_display(exact)
         rows.append(row)
 
 
@@ -2336,7 +2407,7 @@ def materialize(parent_raw: Path, output: Path, source: Path) -> None:
         print(f"bounded phase level {level}: complete", flush=True)
 
     metadata_rows = [
-        {"key": "schema", "value": "mls.bounded-fractional-phase-state.raw.v1"},
+        {"key": "schema", "value": RAW_SCHEMA},
         {"key": "accepted_parent_sha", "value": PARENT_SHA},
         {"key": "accepted_parent_tag", "value": PARENT_TAG},
         {"key": "accepted_parent_tag_object", "value": PARENT_TAG_OBJECT},
@@ -2371,9 +2442,13 @@ def materialize(parent_raw: Path, output: Path, source: Path) -> None:
         {"key": "domain_scratch_bit_limit_formula",
          "value": "4*(B+(leading_exponent_max-leading_exponent_min))+64"},
         {"key": "observer_event_encoding",
-         "value": "length_framed_utf8_fields_then_sha256_v1"},
+         "value": "length_framed_utf8_fields_then_sha256_v2"},
         {"key": "observer_stream_encoding",
-         "value": "step_framed_ordered_event_sha256_v1"},
+         "value": "step_framed_ordered_event_sha256_v2"},
+        {"key": "representation_error_commitment_encoding",
+         "value": "identified_exact_fraction_triplet_sha256_v2"},
+        {"key": "representation_error_display",
+         "value": "nonauthoritative_rn_even_binary64_significand_max_32_bytes"},
         {"key": "promotion", "value": "NO_PROMOTION"},
     ]
     precision_rows: list[dict[str, object]] = []
@@ -2417,15 +2492,8 @@ def materialize(parent_raw: Path, output: Path, source: Path) -> None:
     write_rows(output / "long_endpoints.csv", STATE_FIELDS, long_endpoint_rows)
     write_rows(output / "checkpoint_states.csv", STATE_FIELDS, checkpoint_state_rows)
     write_rows(output / "recovery_states.csv", STATE_FIELDS, recovery_state_rows)
-    write_rows(output / "representation_error.csv", (
-        "scenario_id", "scope", "path", "precision", "level", "dt_raw", "sample",
-        "candidate_state_hash", "control_state_hash",
-        "position_raw_error_num", "position_raw_error_den",
-        "position_physical_error_num", "position_physical_error_den",
-        "momentum_raw_error_num", "momentum_raw_error_den",
-        "momentum_physical_error_num", "momentum_physical_error_den",
-        "energy_error_num", "energy_error_den",
-    ), representation_rows)
+    write_rows(output / "representation_error.csv",
+               REPRESENTATION_ERROR_FIELDS, representation_rows)
     energy_fields = (
         "scenario_id", "scope", "path", "precision", "level", "dt_raw", "sample",
         "potential_binary64_bits", "kinetic_num", "kinetic_den", "kinetic_hash",
