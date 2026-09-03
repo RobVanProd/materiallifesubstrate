@@ -176,12 +176,17 @@ class CsvSink:
 
     def __init__(self, path: Path, fields: tuple[str, ...]):
         self.fields = fields
+        self.rows_by_trajectory: dict[str, int] = {}
         self.stream = path.open("w", encoding="utf-8", newline="")
         self.writer = csv.DictWriter(self.stream, fieldnames=fields, lineterminator="\n")
         self.writer.writeheader()
 
     def append(self, row: dict[str, object]) -> None:
         self.writer.writerow({key: str(row.get(key, "")) for key in self.fields})
+        trajectory = row.get("trajectory_id")
+        if trajectory is not None:
+            key = str(trajectory)
+            self.rows_by_trajectory[key] = self.rows_by_trajectory.get(key, 0) + 1
 
     def extend(self, rows: Iterable[dict[str, object]]) -> None:
         for row in rows:
@@ -189,6 +194,34 @@ class CsvSink:
 
     def close(self) -> None:
         self.stream.close()
+
+
+def accepted_trajectory_ids() -> set[str]:
+    """Return the frozen 425 accepted invocation identities."""
+    return {
+        f"short:{scenario}:{path}:B{precision}:L{level}"
+        for scenario in SCENARIOS for path in (CONTROL, KDK)
+        for precision in PRECISIONS for level in LEVELS
+    } | {
+        f"reverse:{scenario}:B{precision}:L{level}"
+        for scenario in SCENARIOS
+        for precision in PRECISIONS for level in LEVELS
+    } | {
+        f"covariance:{kind}:B{precision}:L{level}"
+        for kind in ("translation", "galilean_boost", "proper_lattice_rotation")
+        for precision in PRECISIONS for level in LEVELS
+    } | {
+        f"covariance:packet_permutation:B{precision}:L{level}"
+        for precision in PRECISIONS for level in LEVELS
+    } | {
+        f"checkpoint:{kind}:B{precision}:L{level}"
+        for kind in ("first", "resumed")
+        for precision in PRECISIONS for level in LEVELS
+    } | {
+        f"long:{scenario}:B{precision}:L{level}"
+        for scenario in ("k4_internal", "k4_boosted")
+        for precision in PRECISIONS for level in LEVELS
+    }
 
 
 def make_context(precision: int) -> gmpy2.context:
@@ -1037,6 +1070,7 @@ def record_invariant(
     step: int, stage: str, state: State,
     initial: tuple[list[Fraction], list[Fraction]],
     observer_events: list[str] | None = None,
+    observer_trajectory: str | None = None,
 ) -> None:
     current = exact_state_invariants(state)
     row: dict[str, object] = {
@@ -1060,7 +1094,10 @@ def record_invariant(
                        include_components=not compact, include_raw_components=True)
     rows.append(row)
     if observer_events is not None:
-        observer_events.append(observer_event_digest("invariant", row))
+        event_row = row
+        if observer_trajectory is not None and observer_trajectory != trajectory:
+            event_row = {**row, "trajectory_id": observer_trajectory}
+        observer_events.append(observer_event_digest("invariant", event_row))
 
 
 def _actual_packet_delta(before: list[mpfr], after: list[mpfr]) -> list[Fraction]:
@@ -1079,6 +1116,7 @@ def kick(
     force_rows: list[dict[str, object]] | None = None,
     counter: OperationCounter | None = None,
     observer_events: list[str] | None = None,
+    observer_trajectory: str | None = None,
 ) -> State:
     result = state.clone()
     evaluated, _potential = force_and_energy(model, state, profile, counter)
@@ -1167,7 +1205,10 @@ def kick(
                 if force_rows is not None:
                     force_rows.append(row)
                 if observer_events is not None:
-                    observer_events.append(observer_event_digest("force_audit", row))
+                    event_row = row
+                    if observer_trajectory is not None and observer_trajectory != trajectory:
+                        event_row = {**row, "trajectory_id": observer_trajectory}
+                    observer_events.append(observer_event_digest("force_audit", event_row))
     validate_state(result)
     return result
 
@@ -1235,6 +1276,7 @@ def one_step(
     counter: OperationCounter | None = None,
     failure_details: list[dict[str, object]] | None = None,
     observer_events: list[str] | None = None,
+    observer_trajectory: str | None = None,
 ) -> tuple[str, State]:
     prior = state.clone()
     local_invariants: list[dict[str, object]] = []
@@ -1249,38 +1291,44 @@ def one_step(
             require(interval_raw % 2 == 0, "bounded KDK half-step is not integral time")
             work = kick(model, prior, interval_raw // 2, profile, trajectory, level, step,
                         "first_kick", local_forces if force_rows is not None else None,
-                        local_counter, event_target)
+                        local_counter, event_target, observer_trajectory)
             if invariant_rows is not None or event_target is not None:
                 record_invariant(local_invariants, trajectory, state.precision, level, step,
-                                 "first_kick", work, baseline, event_target)
+                                 "first_kick", work, baseline, event_target,
+                                 observer_trajectory)
             work = drift(model, work, interval_raw, profile, local_counter, local_failures)
             if invariant_rows is not None or event_target is not None:
                 record_invariant(local_invariants, trajectory, state.precision, level, step,
-                                 "drift", work, baseline, event_target)
+                                 "drift", work, baseline, event_target,
+                                 observer_trajectory)
             work = kick(model, work, interval_raw // 2, profile, trajectory, level, step,
                         "second_kick", local_forces if force_rows is not None else None,
-                        local_counter, event_target)
+                        local_counter, event_target, observer_trajectory)
             if invariant_rows is not None or event_target is not None:
                 record_invariant(local_invariants, trajectory, state.precision, level, step,
-                                 "second_kick", work, baseline, event_target)
+                                 "second_kick", work, baseline, event_target,
+                                 observer_trajectory)
         elif path == CONTROL:
             work = kick(model, prior, interval_raw, profile, trajectory, level, step,
                         "full_kick", local_forces if force_rows is not None else None,
-                        local_counter, event_target)
+                        local_counter, event_target, observer_trajectory)
             if invariant_rows is not None or event_target is not None:
                 record_invariant(local_invariants, trajectory, state.precision, level, step,
-                                 "full_kick", work, baseline, event_target)
+                                 "full_kick", work, baseline, event_target,
+                                 observer_trajectory)
             work = drift(model, work, interval_raw, profile, local_counter, local_failures)
             if invariant_rows is not None or event_target is not None:
                 record_invariant(local_invariants, trajectory, state.precision, level, step,
-                                 "drift", work, baseline, event_target)
+                                 "drift", work, baseline, event_target,
+                                 observer_trajectory)
         else:
             raise LabError("unknown bounded integrator path")
         work.time_raw += interval_raw
         validate_state(work)
         if invariant_rows is not None or event_target is not None:
             record_invariant(local_invariants, trajectory, state.precision, level, step,
-                             "committed", work, baseline, event_target)
+                             "committed", work, baseline, event_target,
+                             observer_trajectory)
         if invariant_rows is not None:
             invariant_rows.extend(local_invariants)
         if force_rows is not None:
@@ -1405,6 +1453,7 @@ def run_trajectory(
     collect_observer_events: bool = False,
     step_offset: int = 0,
     initial_invariants: tuple[list[Fraction], list[Fraction]] | None = None,
+    observer_trajectory: str | None = None,
 ) -> RunResult:
     state = initial.clone()
     baseline = (initial_invariants if initial_invariants is not None
@@ -1414,7 +1463,7 @@ def run_trajectory(
     events: list[list[str]] = []
     operations = OperationCounter()
     if invariant_rows is not None:
-        record_invariant(invariant_rows, trajectory, state.precision, level, 0,
+        record_invariant(invariant_rows, trajectory, state.precision, level, step_offset,
                          "initial", state, baseline)
     if size_rows is not None:
         size_rows.append(_size_row(trajectory, level, 0, "initial", state, profile))
@@ -1426,7 +1475,8 @@ def run_trajectory(
         status, candidate = one_step(
             model, state, interval_raw, path, profile, trajectory, level, step,
             invariant_rows, force_rows, baseline, operations,
-            observer_events=step_events if collect_observer_events else None)
+            observer_events=step_events if collect_observer_events else None,
+            observer_trajectory=observer_trajectory)
         if status != "accepted":
             break
         state = candidate
@@ -1435,9 +1485,10 @@ def run_trajectory(
         energy = observed_energy(model, state, profile)
         energies.append(energy)
         if collect_observer_events:
+            event_trajectory = observer_trajectory or trajectory
             step_events.append(observer_event_digest(
                 "energy", energy_observer_row(
-                    trajectory, state.precision, level, step, state, energy)))
+                    event_trajectory, state.precision, level, step, state, energy)))
             events.append(step_events)
         if size_rows is not None and local_step in {1, 400, steps}:
             label = ("step_1" if local_step == 1
@@ -2069,12 +2120,12 @@ def materialize(parent_raw: Path, output: Path, source: Path) -> None:
             for scenario in SCENARIOS:
                 model = models[scenario_models[scenario]]
                 forward = primary[(precision, level, scenario, KDK)]
+                trajectory = f"reverse:{scenario}:B{precision}:L{level}"
                 backward = run_trajectory(
                     model, forward.final, -dt_raw, steps, KDK, profile,
-                    f"reverse:{scenario}:B{precision}:L{level}", level)
+                    trajectory, level, invariant_rows, force_rows)
                 operation_rows.append(operation_count_row(
-                    f"reverse:{scenario}:B{precision}:L{level}", precision, level,
-                    KDK, model, backward))
+                    trajectory, precision, level, KDK, model, backward))
                 x_error = max_state_error(backward.final, exact_states[scenario])
                 p_error = max_state_error(backward.final, exact_states[scenario], True)
                 row: dict[str, object] = {
@@ -2102,46 +2153,58 @@ def materialize(parent_raw: Path, output: Path, source: Path) -> None:
                 ("galilean_boost", "k4_boosted", lambda value: value),
                 ("proper_lattice_rotation", "k4_rotated", inverse_rotate_state),
             ):
+                trajectory = f"covariance:{kind}:B{precision}:L{level}"
                 candidate = run_trajectory(
                     models[scenario_models[scenario]], bounded_state(exact_states[scenario], profile),
-                    dt_raw, steps, KDK, profile,
-                    f"covariance:{kind}:B{precision}:L{level}", level)
+                    dt_raw, steps, KDK, profile, trajectory, level,
+                    invariant_rows, force_rows)
                 operation_rows.append(operation_count_row(
-                    f"covariance:{kind}:B{precision}:L{level}", precision, level,
+                    trajectory, precision, level,
                     KDK, models[scenario_models[scenario]], candidate))
                 transformed = [transform(value) for value in candidate.samples]
                 append_covariance_rows(covariance_rows, kind, "short", precision, level,
                                        dt_raw, baseline.samples, transformed)
             permuted = bounded_state(exact_states["k4_internal"], profile)
             permuted.packets.reverse()
+            permutation_trajectory = (
+                f"covariance:packet_permutation:B{precision}:L{level}"
+            )
             permutation = run_trajectory(
                 models["k4"], permuted, dt_raw, steps, KDK, profile,
-                f"covariance:packet_permutation:B{precision}:L{level}", level)
+                permutation_trajectory, level, invariant_rows, force_rows)
             operation_rows.append(operation_count_row(
-                f"covariance:packet_permutation:B{precision}:L{level}",
+                permutation_trajectory,
                 precision, level, KDK, models["k4"], permutation))
             append_covariance_rows(covariance_rows, "packet_permutation", "short",
                                    precision, level, dt_raw, baseline.samples,
                                    permutation.samples)
 
             half = steps // 2
+            checkpoint_first_trajectory = f"checkpoint:first:B{precision}:L{level}"
             first = run_trajectory(
                 models["k4"], bounded_state(exact_states["k4_internal"], profile),
-                dt_raw, half, KDK, profile,
-                f"checkpoint:first:B{precision}:L{level}", level)
+                dt_raw, half, KDK, profile, checkpoint_first_trajectory, level,
+                invariant_rows, force_rows)
             operation_rows.append(operation_count_row(
-                f"checkpoint:first:B{precision}:L{level}", precision, level,
+                checkpoint_first_trajectory, precision, level,
                 KDK, models["k4"], first))
             encoded = encode_state(first.final)
             decoded = decode_state(encoded)
+            checkpoint_resumed_trajectory = (
+                f"checkpoint:resumed:B{precision}:L{level}"
+            )
+            observer_trajectory = (
+                f"short:k4_internal:{KDK}:B{precision}:L{level}"
+            )
             second = run_trajectory(
                 models["k4"], decoded, dt_raw, half, KDK, profile,
-                f"short:k4_internal:{KDK}:B{precision}:L{level}", level,
+                checkpoint_resumed_trajectory, level, invariant_rows, force_rows,
                 collect_observer_events=True, step_offset=half,
                 initial_invariants=exact_state_invariants(
-                    bounded_state(exact_states["k4_internal"], profile)))
+                    bounded_state(exact_states["k4_internal"], profile)),
+                observer_trajectory=observer_trajectory)
             operation_rows.append(operation_count_row(
-                f"checkpoint:resumed:B{precision}:L{level}", precision, level,
+                checkpoint_resumed_trajectory, precision, level,
                 KDK, models["k4"], second))
             suffix = baseline.events[half:]
             suffix_count = observer_event_count(suffix)
@@ -2371,6 +2434,35 @@ def materialize(parent_raw: Path, output: Path, source: Path) -> None:
     )
     write_rows(output / "energies.csv", energy_fields, energy_rows)
     write_rows(output / "long_energy.csv", energy_fields, long_energy_rows)
+    expected_audit_ids = accepted_trajectory_ids()
+    operation_by_trajectory = {
+        str(row["trajectory_id"]): row for row in operation_rows
+    }
+    require(
+        len(expected_audit_ids) == len(operation_rows) == len(operation_by_trajectory) == 425
+        and set(operation_by_trajectory) == expected_audit_ids,
+        "accepted operation-audit trajectory inventory differs",
+    )
+    require(
+        set(invariant_rows.rows_by_trajectory) == expected_audit_ids
+        and set(force_rows.rows_by_trajectory) == expected_audit_ids,
+        "accepted invariant/force trajectory inventory differs",
+    )
+    for trajectory, operation in operation_by_trajectory.items():
+        path = str(operation["path"])
+        completed_steps = int(operation["completed_steps"])
+        relation_count = int(operation["relation_count"])
+        require(path in {KDK, CONTROL}, "accepted audit path differs")
+        expected_invariants = 1 + (4 if path == KDK else 3) * completed_steps
+        expected_forces = (2 if path == KDK else 1) * relation_count * completed_steps
+        require(
+            invariant_rows.rows_by_trajectory[trajectory] == expected_invariants,
+            f"{trajectory}: invariant audit row count differs",
+        )
+        require(
+            force_rows.rows_by_trajectory[trajectory] == expected_forces,
+            f"{trajectory}: force audit row count differs",
+        )
     invariant_rows.close()
     force_rows.close()
     write_rows(output / "reversibility.csv", (

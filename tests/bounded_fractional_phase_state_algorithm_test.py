@@ -32,6 +32,10 @@ def main() -> int:
     require(lab.gmpy2.version() == "2.3.1", "gmpy2 version differs")
     require(lab.gmpy2.mpfr_version() == "MPFR 4.2.2", "MPFR version differs")
     require(lab.PRECISIONS == (64, 96, 128, 192, 256), "precision inventory differs")
+    require(
+        len(lab.accepted_trajectory_ids()) == 425,
+        "accepted invariant/force/operation trajectory inventory differs",
+    )
 
     # Hashes bind the exact inherited binary preimage, including the empty
     # magnitude encoding of zero and the fixed x/y/z vector cardinality.
@@ -284,14 +288,22 @@ def main() -> int:
         model, dynamic, 62_500_000, 2, lab.KDK, profile,
         observer_trajectory, 0, collect_observer_events=True,
         initial_invariants=original_invariants)
+    first_invariants: list[dict[str, object]] = []
+    first_forces: list[dict[str, object]] = []
+    first_trajectory = "checkpoint:first:B64:L0"
     first = lab.run_trajectory(
         model, dynamic, 62_500_000, 1, lab.KDK, profile,
-        observer_trajectory, 0)
+        first_trajectory, 0, first_invariants, first_forces)
+    resumed_invariants: list[dict[str, object]] = []
+    resumed_forces: list[dict[str, object]] = []
+    resumed_trajectory = "checkpoint:resumed:B64:L0"
     resumed = lab.run_trajectory(
         model, lab.decode_state(lab.encode_state(first.final)), 62_500_000, 1,
-        lab.KDK, profile, observer_trajectory, 0,
+        lab.KDK, profile, resumed_trajectory, 0,
+        resumed_invariants, resumed_forces,
         collect_observer_events=True, step_offset=1,
-        initial_invariants=original_invariants)
+        initial_invariants=original_invariants,
+        observer_trajectory=observer_trajectory)
     require(len(whole.events) == 2 and all(len(events) == 7 for events in whole.events),
             "complete KDK observer-event inventory differs")
     require(resumed.events == whole.events[1:],
@@ -300,6 +312,21 @@ def main() -> int:
             lab.observer_stream_sha256(resumed.events) ==
             lab.observer_stream_sha256(whole.events[1:]),
             "checkpoint observer-event count or digest differs")
+    require(
+        len(first_invariants) == len(resumed_invariants) == 5
+        and len(first_forces) == len(resumed_forces) == 2
+        and {str(row["trajectory_id"]) for row in first_invariants + first_forces}
+            == {first_trajectory}
+        and {str(row["trajectory_id"]) for row in resumed_invariants + resumed_forces}
+            == {resumed_trajectory},
+        "checkpoint halves lack uniquely identified invariant/force audit rows",
+    )
+    require(
+        int(first_invariants[0]["step"]) == 0
+        and int(resumed_invariants[0]["step"]) == 1
+        and resumed.events == whole.events[1:],
+        "checkpoint audit IDs leaked into the canonical observer suffix",
+    )
 
     # The complete crossing chord must reject with no state or event mutation.
     crossing_model = lab.exact_lab.Model(

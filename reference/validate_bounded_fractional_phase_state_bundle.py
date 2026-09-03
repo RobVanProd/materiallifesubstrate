@@ -62,7 +62,7 @@ REQUIRED_JOBS = {
     "C++ / Linux GCC",
     "C++ / Linux Clang",
     "C++ / Windows MSVC",
-    "Python bounded experiment and independent oracle",
+    "Python exact oracle",
     "Pinned Lean build and axiom output",
 }
 ORACLE_FIELDS = {

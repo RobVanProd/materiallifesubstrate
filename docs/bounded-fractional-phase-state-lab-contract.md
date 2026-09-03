@@ -120,6 +120,13 @@ rotation), 25 packet permutation, 50 checkpoint (first and resumed halves), and
 is noncommitted arithmetic and is excluded from this accepted-run inventory;
 its atomicity is recorded separately in the domain receipt.
 
+`invariants.csv` and `force_audit.csv` cover that same complete 425-ID
+accepted inventory. Each KDK invocation with `N` completed steps emits
+`1+4N` invariant rows and `2mN` relation-force rows; the first-order control
+emits `1+3N` and `mN`, respectively. Thus every operation-audited reverse,
+covariance, permutation, checkpoint-half, and long invocation carries exact
+`P`, `L`, pair-momentum, centrality, and relation-angular evidence.
+
 ## Exact-rational comparator coverage
 
 The ineligible exact-rational control has the same frozen complexity ceilings
@@ -166,6 +173,13 @@ sums local bounds in operation
 order. It also enforces the preregistered magnitude envelopes
 `|x_raw|<2^48`, `|p_raw|<2^40`, `|r_raw|<2^49`, and `|J_raw|<2^40`; these are
 fail-closed evidence bounds, not clamps.
+
+Checkpoint-resumed audit rows retain their unique
+`checkpoint:resumed:B<precision>:L<level>` identity and absolute checkpoint
+step. The replay observer projection alone uses the uninterrupted primary
+`short:k4_internal:...` identity, original invariant baseline, and absolute
+step labels so its suffix hashes remain directly comparable. The arithmetic is
+executed only once.
 
 The exact observer measures total momentum, orbital angular momentum, relation
 centrality, signed-time recovery, and covariance without feeding those values

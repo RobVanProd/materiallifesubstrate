@@ -47,8 +47,8 @@ contains exactly 25 UTF-8 CSV files:
 | `rational_comparator.csv` | independently measured exact-rational comparator coverage and first complexity crossing for each long scenario and timestep level |
 | `energies.csv` | registered short exact-rational kinetic, Path-B potential, and mechanical-energy samples |
 | `long_energy.csv` | every registered 16-second bounded kinetic, potential, and mechanical-energy sample |
-| `invariants.csv` | exact-dyadic total momentum and orbital-angular-momentum values and signed initial-state residuals |
-| `force_audit.csv` | relation geometry/force bits, causal/exact offsets, stored and applied impulses, pair momentum, three centrality measures, and angular residuals |
+| `invariants.csv` | exact-dyadic total momentum and orbital-angular-momentum values and signed initial-state residuals for every accepted invocation |
+| `force_audit.csv` | relation geometry/force bits, causal/exact offsets, stored and applied impulses, pair momentum, three centrality measures, and angular residuals for every accepted invocation |
 | `reversibility.csv` | signed-time stored-state recovery errors and byte-identity observation |
 | `covariance.csv` | translation, boost, proper lattice rotation, and packet-permutation relative-state discrepancies |
 | `checkpoint.csv` | canonical round trip, resumed/uninterrupted final hashes, and event-suffix identity |
@@ -215,6 +215,11 @@ has a canonical hash, infinity-norm rational, and three signed rational
 components. The verifier derives local half-ULP bounds and bound/budget
 decisions independently. Rows are in causal stage order: initial, first kick,
 drift, second kick, committed step. Diagnostic reads never affect state.
+The trajectory-ID inventory is exactly the same 425 accepted invocations as
+`operation_counts.csv`. A KDK invocation with `N` completed steps has exactly
+`1+4N` invariant rows; a first-order-control invocation has exactly `1+3N`.
+This includes every reverse, transformed, packet-permuted, checkpoint-first,
+checkpoint-resumed, and long trajectory, not only the primary short runs.
 
 For short trajectories every one of the 13 fields per invariant vector is
 present. For long trajectories, absolute `momentum` and `angular` retain only
@@ -239,6 +244,9 @@ reconstructs every omitted physical vector from the raw dyadics and exact unit
 scale, then derives endpoint
 rounding errors, local half-ULP bounds, and centrality classifications.
 Relation rows follow frozen relation-index order inside each force stage.
+For `m` relations and `N` completed steps, a KDK invocation has exactly
+`2mN` force rows and a first-order-control invocation has exactly `mN`.
+Its trajectory IDs must again equal the complete 425-ID operation inventory.
 
 `operation_counts.csv` records packet and relation counts, integration path,
 expected and observed rounded primitives, exact and inexact totals, a rounding
@@ -394,6 +402,12 @@ absolute step numbers, precision/level, and original-trajectory invariant
 baseline; equality therefore covers every framed field rather than a
 context-free state-only projection. Counts, digests, ordered event lists,
 post-step energy observations, and final canonical state must all agree.
+The separately emitted audit rows for that same resumed arithmetic use the
+unique `checkpoint:resumed:B<precision>:L<level>` identity and label their
+initial checkpoint at the absolute checkpoint step. Only the observer-event
+projection substitutes the uninterrupted `short:k4_internal:...` trajectory
+identity required for suffix comparison. This explicit projection does not
+duplicate arithmetic or alter any numerical field.
 
 `state_size.csv` records precision, trajectory, lifecycle point, expected
 component/phase/packet bytes, actual complete state bytes and hash, and derived
