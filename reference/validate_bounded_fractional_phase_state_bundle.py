@@ -56,6 +56,10 @@ DECISIONS = {
     "retain_bounded_variable_exponent_phase_state_for_research",
 }
 RETAIN_DECISION = "retain_bounded_variable_exponent_phase_state_for_research"
+FINAL_DECISION = (
+    "bounded_phase_state_restores_dynamics_but_structure_residuals_unresolved"
+)
+FINAL_SELECTED_PRECISION = None
 SHA1 = re.compile(r"[0-9a-f]{40}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 REQUIRED_JOBS = {
@@ -65,6 +69,168 @@ REQUIRED_JOBS = {
     "Python exact oracle",
     "Pinned Lean build and axiom output",
 }
+# Explicit subprocess budgets keep fresh verification diagnosable and below the
+# six-hour GitHub-hosted job ceiling.  The exact oracle is intentionally given
+# most of that budget; mutations and seal checks have independent bounds.
+GIT_OBJECT_TIMEOUT_SECONDS = 30
+SHORT_COMMAND_TIMEOUT_SECONDS = 120
+SOURCE_ARCHIVE_TIMEOUT_SECONDS = 300
+SEAL_VERIFY_TIMEOUT_SECONDS = 600
+ORACLE_REPLAY_TIMEOUT_SECONDS = 16_200
+SEMANTIC_MUTATION_TIMEOUT_SECONDS = 1_800
+SEAL_MUTATION_TIMEOUT_SECONDS = 600
+PUBLIC_DOWNLOAD_TIMEOUT_SECONDS = 1_800
+CI_SOURCE_FIELDS = frozenset(
+    {
+        "attempt",
+        "conclusion",
+        "databaseId",
+        "event",
+        "headBranch",
+        "headSha",
+        "jobs",
+        "status",
+        "workflowName",
+    }
+)
+CI_JOB_FIELDS = frozenset(
+    {
+        "completedAt",
+        "conclusion",
+        "databaseId",
+        "name",
+        "startedAt",
+        "status",
+        "steps",
+        "url",
+    }
+)
+CI_STEP_FIELDS = frozenset(
+    {"completedAt", "conclusion", "name", "number", "startedAt", "status"}
+)
+CI_SCHEMA = "mls.bounded-fractional-phase-state.ci.v1"
+TAG_CI_SCHEMA = "mls.bounded-fractional-phase-state.tag-ci.v1"
+RELEASE_SOURCE_SCHEMA = "mls.bounded-fractional-phase-state.release-source.v1"
+FRESH_PUBLIC_SCHEMA = "mls.bounded-fractional-phase-state.fresh-public-validation.v1"
+PUBLICATION_RECEIPT_FILES = frozenset(
+    {
+        "tag-ci-run-source.json",
+        "tag-ci-run.json",
+        "release-source.json",
+        "public-archive-sha256.log",
+        "fresh-public-validation.log",
+    }
+)
+RELEASE_SOURCE_FIELDS = frozenset(
+    {"schema", "repository", "tag_name", "name", "draft", "prerelease", "assets"}
+)
+RELEASE_ASSET_FIELDS = frozenset({"id", "name", "size", "state", "digest"})
+FRESH_PUBLIC_FIELDS = frozenset(
+    {
+        "schema",
+        "repository",
+        "source_sha",
+        "tag",
+        "tag_object",
+        "tag_ci_run_id",
+        "tag_ci_run_attempt",
+        "release_name",
+        "asset_id",
+        "asset_name",
+        "archive_bytes",
+        "archive_sha256",
+        "outer_pre_hash",
+        "decision",
+        "selected_precision",
+        "promotion",
+        "fresh_download",
+        "fresh_archive_digest",
+        "fresh_bundle_identity",
+        "fresh_outer_seal",
+        "fresh_full_validation",
+    }
+)
+RAW_FILES = frozenset(
+    {
+        "metadata.csv",
+        "precisions.csv",
+        "units.csv",
+        "parent_fingerprint.csv",
+        "positive_control.csv",
+        "reference_packets.csv",
+        "relations.csv",
+        "force_operator.csv",
+        "initial_states.csv",
+        "endpoints.csv",
+        "long_endpoints.csv",
+        "checkpoint_states.csv",
+        "recovery_states.csv",
+        "representation_error.csv",
+        "energies.csv",
+        "long_energy.csv",
+        "invariants.csv",
+        "force_audit.csv",
+        "reversibility.csv",
+        "covariance.csv",
+        "checkpoint.csv",
+        "domain.csv",
+        "state_size.csv",
+        "operation_counts.csv",
+        "rational_comparator.csv",
+    }
+)
+DOCUMENT_FILES = frozenset(
+    {
+        "bounded-fractional-phase-state-preregistration.md",
+        "bounded-fractional-phase-state-lab-contract.md",
+        "bounded-fractional-phase-state-evidence-schema.md",
+        "bounded-fractional-phase-state-result.md",
+    }
+)
+ORACLE_FILES = frozenset(
+    {"oracle-summary.json", "oracle.log", "mutation-regression.log"}
+)
+RECEIPT_FILES = frozenset(
+    {
+        "algorithm-contracts.log",
+        "build.log",
+        "ci-run-source.json",
+        "ci-run.json",
+        "configure.log",
+        "ctest.log",
+        "failed-attempts.json",
+        "lean-axioms.log",
+        "lean-build.log",
+        "lean-trust.log",
+        "mls-validation.log",
+        "raw-a.log",
+        "raw-b.log",
+        "raw-files-sha256.log",
+        "raw-twin.log",
+        "seal-mutation-regression.log",
+        "source-archive.log",
+        "tool-versions.log",
+    }
+)
+FAILED_ATTEMPTS_SCHEMA = "mls.bounded-fractional-phase-state.failed-attempts.v1"
+FAILED_ATTEMPTS = (
+    (
+        "oversized-v1-public-archive",
+        "f891c248c414a5a705e60c13b865a722d24b305b",
+    ),
+    (
+        "compact-v2-row-order-verifier",
+        "be6f95a8dac47153616d398a079b30830d7213da",
+    ),
+    (
+        "overstrict-anchor-interpretation-verifier",
+        "be6f95a8dac47153616d398a079b30830d7213da",
+    ),
+    (
+        "incomplete-compositional-bound-verifier-precheck",
+        "be6f95a8dac47153616d398a079b30830d7213da",
+    ),
+)
 ORACLE_FIELDS = {
     "schema",
     "precision_decimal_digits",
@@ -121,17 +287,54 @@ REPRESENTATION_ERROR_FIELDS = (
 
 
 def invoke(
-    command: list[str], cwd: Path, timeout: int = 14_400
+    command: list[str], cwd: Path, *, timeout_seconds: int, label: str,
+    stream_output: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command,
-        cwd=cwd,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    require(timeout_seconds > 0, f"{label} timeout must be positive")
+    print(
+        f"[bounded-phase validator] START {label} "
+        f"(timeout={timeout_seconds}s)",
+        flush=True,
     )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=cwd,
+            check=False,
+            capture_output=not stream_output,
+            text=True,
+            timeout=timeout_seconds,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            f"{label} timed out after {timeout_seconds} seconds"
+        ) from error
+    print(
+        f"[bounded-phase validator] COMPLETE {label} "
+        f"(returncode={completed.returncode})",
+        flush=True,
+    )
+    return completed
+
+
+def read_git_blob(repository: Path, object_specification: str) -> bytes:
+    label = f"tagged source document: {object_specification}"
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(repository), "cat-file", "blob", object_specification],
+            cwd=repository,
+            check=False,
+            capture_output=True,
+            timeout=GIT_OBJECT_TIMEOUT_SECONDS,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            f"{label} timed out after {GIT_OBJECT_TIMEOUT_SECONDS} seconds"
+        ) from error
+    require_success(completed, label)
+    return completed.stdout
 
 
 def require(condition: bool, message: str) -> None:
@@ -166,6 +369,17 @@ def read_json(path: Path) -> dict[str, object]:
     value = json.loads(path.read_text(encoding="utf-8"))
     require(isinstance(value, dict), f"JSON object required: {path}")
     return value
+
+
+def read_key_value_log(path: Path) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        require(line and "=" in line, f"malformed key/value receipt line: {path.name}")
+        key, value = line.split("=", 1)
+        require(key and value and key not in result, f"malformed key/value receipt: {path.name}")
+        result[key] = value
+    require(result, f"empty key/value receipt: {path.name}")
+    return result
 
 
 def read_metadata(path: Path) -> dict[str, str]:
@@ -228,6 +442,95 @@ def tree_hash(entries: list[dict[str, object]]) -> str:
 
 def compare_directories(first: Path, second: Path, label: str) -> None:
     require(tree_inventory(first) == tree_inventory(second), f"{label} differs")
+
+
+def require_flat_inventory(
+    directory: Path, expected: frozenset[str], label: str
+) -> None:
+    entries = list(directory.iterdir())
+    require(
+        all(path.is_file() and not path.is_symlink() for path in entries),
+        f"{label} must contain only regular files",
+    )
+    actual = {path.name for path in entries}
+    require(
+        actual == expected,
+        f"{label} file inventory differs: {sorted(actual ^ expected)}",
+    )
+    empty = sorted(path.name for path in entries if path.stat().st_size == 0)
+    require(not empty, f"{label} files must be nonempty: {empty}")
+
+
+def validate_failed_attempts(path: Path) -> None:
+    value = read_json(path)
+    require(
+        set(value) == {"schema", "attempts"}
+        and value["schema"] == FAILED_ATTEMPTS_SCHEMA,
+        "failed-attempt receipt schema differs",
+    )
+    attempts = value["attempts"]
+    require(
+        isinstance(attempts, list) and len(attempts) == len(FAILED_ATTEMPTS),
+        "failed-attempt receipt inventory differs",
+    )
+    fields = {
+        "id",
+        "source_sha",
+        "stage",
+        "outcome",
+        "scientific_disposition",
+        "preservation",
+    }
+    for item, (expected_id, expected_sha) in zip(attempts, FAILED_ATTEMPTS):
+        require(isinstance(item, dict) and set(item) == fields,
+                "failed-attempt item schema differs")
+        require(
+            item["id"] == expected_id and item["source_sha"] == expected_sha,
+            "failed-attempt identity or order differs",
+        )
+        require(item["scientific_disposition"] is None,
+                "failed attempt has a scientific disposition")
+        require(
+            all(
+                isinstance(item[field], str) and bool(item[field])
+                for field in ("stage", "outcome", "preservation")
+            ),
+            "failed-attempt descriptive field is empty",
+        )
+
+
+def validate_inner_payload_inventory(
+    bundle: Path, source: Path, source_sha: str
+) -> None:
+    """Validate the complete closed pre-publication payload inventory.
+
+    Tag-CI, release, public-archive, and fresh-download receipts necessarily
+    postdate the seal and therefore remain external to this closed inventory.
+    """
+
+    require_flat_inventory(bundle / "raw-a", RAW_FILES, "raw-a")
+    require_flat_inventory(bundle / "raw-b", RAW_FILES, "raw-b")
+    require_flat_inventory(bundle / "docs", DOCUMENT_FILES, "document")
+    require_flat_inventory(bundle / "oracle", ORACLE_FILES, "oracle")
+    require_flat_inventory(bundle / "receipts", RECEIPT_FILES, "receipt")
+    validate_failed_attempts(bundle / "receipts" / "failed-attempts.json")
+    require_flat_inventory(
+        bundle / "source",
+        frozenset(
+            {
+                "source-identity.json",
+                f"materiallifesubstrate-{source_sha}.tar.gz",
+            }
+        ),
+        "source",
+    )
+    for name in DOCUMENT_FILES:
+        bundled_document = bundle / "docs" / name
+        require(
+            bundled_document.read_bytes()
+            == read_git_blob(source, f"{source_sha}:docs/{name}"),
+            f"bundled document is not an exact source copy: {name}",
+        )
 
 
 def validate_decision(decision: object, selected: object) -> tuple[str, int | None]:
@@ -349,8 +652,16 @@ def validate_source_identity(bundle: Path, source: Path, seal: dict[str, object]
         and sha256(archive) == identity["archive_sha256"],
         "source archive identity differs",
     )
-    head = invoke(["git", "rev-parse", "HEAD"], source, timeout=30)
-    tree = invoke(["git", "rev-parse", "HEAD^{tree}"], source, timeout=30)
+    head = invoke(
+        ["git", "rev-parse", "HEAD"], source,
+        timeout_seconds=GIT_OBJECT_TIMEOUT_SECONDS,
+        label="source Git HEAD",
+    )
+    tree = invoke(
+        ["git", "rev-parse", "HEAD^{tree}"], source,
+        timeout_seconds=GIT_OBJECT_TIMEOUT_SECONDS,
+        label="source Git tree",
+    )
     require_success(head, "source Git HEAD")
     require_success(tree, "source Git tree")
     require(head.stdout.strip() == source_sha, "verifier source HEAD differs")
@@ -369,7 +680,8 @@ def validate_source_identity(bundle: Path, source: Path, seal: dict[str, object]
                 source_sha,
             ],
             source,
-            timeout=300,
+            timeout_seconds=SOURCE_ARCHIVE_TIMEOUT_SECONDS,
+            label="fresh source tree archive",
         )
         require_success(archived, "fresh source tree archive")
         expected_bytes = expected_tar.stat().st_size
@@ -389,44 +701,254 @@ def validate_source_identity(bundle: Path, source: Path, seal: dict[str, object]
         )
 
 
-def validate_ci_receipt(bundle: Path, source_sha: str, run_id: int) -> None:
-    receipt = read_json(bundle / "receipts" / "ci-run.json")
-    expected_fields = {
-        "schema",
-        "repository",
-        "workflow",
-        "run_id",
-        "run_attempt",
-        "head_sha",
-        "head_branch",
-        "event",
-        "conclusion",
-        "jobs",
-    }
-    require(set(receipt) == expected_fields, "CI receipt field inventory differs")
+def validate_ci_source(
+    source: dict[str, object], source_sha: str, run_id: int, branch: str,
+) -> list[dict[str, str]]:
+    require(set(source) == CI_SOURCE_FIELDS, "CI source field inventory differs")
     require(
-        receipt["schema"] == "mls.bounded-fractional-phase-state.ci.v1"
-        and receipt["repository"] == REPOSITORY
-        and receipt["workflow"] == WORKFLOW
-        and receipt["run_id"] == run_id
-        and type(receipt["run_attempt"]) is int
-        and receipt["run_attempt"] >= 1
-        and receipt["head_sha"] == source_sha
-        and receipt["head_branch"] == BRANCH
-        and receipt["event"] == "push"
-        and receipt["conclusion"] == "success"
-        and isinstance(receipt["jobs"], list),
-        "CI receipt identity differs",
+        type(source["attempt"]) is int
+        and source["attempt"] >= 1
+        and type(source["databaseId"]) is int
+        and source["databaseId"] == run_id
+        and source["event"] == "push"
+        and source["headBranch"] == branch
+        and source["headSha"] == source_sha
+        and source["status"] == "completed"
+        and source["conclusion"] == "success"
+        and source["workflowName"] == WORKFLOW
+        and isinstance(source["jobs"], list),
+        "CI source identity differs",
     )
-    jobs: dict[str, str] = {}
-    for item in receipt["jobs"]:
-        require(isinstance(item, dict) and set(item) == {"name", "conclusion"}, "CI job schema differs")
-        name = item["name"]
-        conclusion = item["conclusion"]
-        require(isinstance(name, str) and isinstance(conclusion, str) and name not in jobs, "CI job identity differs")
-        jobs[name] = conclusion
-    require(set(jobs) == REQUIRED_JOBS, "required CI job inventory differs")
-    require(all(value == "success" for value in jobs.values()), "required CI job did not succeed")
+    observed: dict[str, str] = {}
+    for job in source["jobs"]:
+        require(
+            isinstance(job, dict) and set(job) == CI_JOB_FIELDS,
+            "CI source job schema differs",
+        )
+        name = job["name"]
+        require(
+            isinstance(name, str)
+            and bool(name)
+            and name not in observed
+            and type(job["databaseId"]) is int
+            and job["databaseId"] > 0
+            and job["status"] == "completed"
+            and job["conclusion"] == "success"
+            and isinstance(job["startedAt"], str)
+            and bool(job["startedAt"])
+            and isinstance(job["completedAt"], str)
+            and bool(job["completedAt"])
+            and isinstance(job["url"], str)
+            and bool(job["url"])
+            and isinstance(job["steps"], list)
+            and bool(job["steps"]),
+            "CI source job identity differs",
+        )
+        step_numbers: set[int] = set()
+        for step in job["steps"]:
+            require(
+                isinstance(step, dict) and set(step) == CI_STEP_FIELDS,
+                "CI source step schema differs",
+            )
+            number = step["number"]
+            require(
+                type(number) is int
+                and number > 0
+                and number not in step_numbers
+                and isinstance(step["name"], str)
+                and bool(step["name"])
+                and isinstance(step["status"], str)
+                and bool(step["status"])
+                and isinstance(step["conclusion"], str)
+                and bool(step["conclusion"])
+                and isinstance(step["startedAt"], str)
+                and bool(step["startedAt"])
+                and isinstance(step["completedAt"], str)
+                and bool(step["completedAt"]),
+                "CI source step identity differs",
+            )
+            step_numbers.add(number)
+        observed[name] = str(job["conclusion"])
+    require(set(observed) == REQUIRED_JOBS, "CI source job inventory differs")
+    return [
+        {"name": name, "conclusion": observed[name]}
+        for name in sorted(observed)
+    ]
+
+
+def validate_ci_receipt(bundle: Path, source_sha: str, run_id: int) -> None:
+    source = read_json(bundle / "receipts" / "ci-run-source.json")
+    jobs = validate_ci_source(source, source_sha, run_id, BRANCH)
+    expected: dict[str, object] = {
+        "schema": CI_SCHEMA,
+        "repository": REPOSITORY,
+        "workflow": WORKFLOW,
+        "run_id": run_id,
+        "run_attempt": source["attempt"],
+        "head_sha": source_sha,
+        "head_branch": BRANCH,
+        "event": "push",
+        "conclusion": "success",
+        "jobs": jobs,
+    }
+    require(
+        read_json(bundle / "receipts" / "ci-run.json") == expected,
+        "normalized CI receipt differs from exact source",
+    )
+
+
+def validate_public_branch_ci(
+    public_source: dict[str, object], bundle: Path, source_sha: str, run_id: int
+) -> None:
+    validate_ci_source(public_source, source_sha, run_id, BRANCH)
+    require(
+        public_source == read_json(bundle / "receipts" / "ci-run-source.json"),
+        "public branch CI differs from sealed exact source receipt",
+    )
+
+
+def validate_publication_receipts(
+    directory: Path, bundle: Path, seal: dict[str, object]
+) -> dict[str, object]:
+    publication = directory.resolve(strict=True)
+    bundle_root = bundle.resolve(strict=True)
+    require(
+        not publication.is_relative_to(bundle_root),
+        "publication receipts must remain outside the sealed payload",
+    )
+    require_flat_inventory(
+        publication, PUBLICATION_RECEIPT_FILES, "external publication receipt"
+    )
+    source_sha = seal["source_sha"]
+    tag_object = seal["evidence_tag_object"]
+    require(
+        isinstance(source_sha, str)
+        and SHA1.fullmatch(source_sha) is not None
+        and isinstance(tag_object, str)
+        and SHA1.fullmatch(tag_object) is not None,
+        "sealed publication identity malformed",
+    )
+
+    tag_source = read_json(publication / "tag-ci-run-source.json")
+    tag_run_id = tag_source.get("databaseId")
+    require(type(tag_run_id) is int and tag_run_id > 0, "tag CI run ID malformed")
+    tag_jobs = validate_ci_source(tag_source, source_sha, tag_run_id, TAG)
+    expected_tag_ci: dict[str, object] = {
+        "schema": TAG_CI_SCHEMA,
+        "repository": REPOSITORY,
+        "workflow": WORKFLOW,
+        "run_id": tag_run_id,
+        "run_attempt": tag_source["attempt"],
+        "head_sha": source_sha,
+        "head_branch": TAG,
+        "event": "push",
+        "conclusion": "success",
+        "jobs": tag_jobs,
+        "tag": TAG,
+        "tag_object": tag_object,
+    }
+    require(
+        read_json(publication / "tag-ci-run.json") == expected_tag_ci,
+        "normalized tag CI receipt differs from exact source",
+    )
+
+    release = read_json(publication / "release-source.json")
+    require(set(release) == RELEASE_SOURCE_FIELDS, "release source field inventory differs")
+    assets = release.get("assets")
+    require(
+        release["schema"] == RELEASE_SOURCE_SCHEMA
+        and release["repository"] == REPOSITORY
+        and release["tag_name"] == TAG
+        and release["name"] == RELEASE_NAME
+        and release["draft"] is False
+        and release["prerelease"] is False
+        and isinstance(assets, list)
+        and len(assets) == 1,
+        "release source identity differs",
+    )
+    asset = assets[0]
+    require(
+        isinstance(asset, dict) and set(asset) == RELEASE_ASSET_FIELDS,
+        "release asset field inventory differs",
+    )
+    digest = asset["digest"]
+    require(
+        type(asset["id"]) is int
+        and asset["id"] > 0
+        and asset["name"] == ASSET_NAME
+        and type(asset["size"]) is int
+        and asset["size"] > 0
+        and asset["state"] == "uploaded"
+        and isinstance(digest, str)
+        and digest.startswith("sha256:")
+        and SHA256.fullmatch(digest.removeprefix("sha256:")) is not None,
+        "release asset identity differs",
+    )
+    archive_sha256 = digest.removeprefix("sha256:")
+    expected_digest_log = f"{archive_sha256}  {ASSET_NAME}\n".encode("utf-8")
+    require(
+        (publication / "public-archive-sha256.log").read_bytes()
+        == expected_digest_log,
+        "public archive digest receipt differs",
+    )
+
+    fresh = read_key_value_log(publication / "fresh-public-validation.log")
+    selected_precision = seal["selected_precision"]
+    expected_fresh = {
+        "schema": FRESH_PUBLIC_SCHEMA,
+        "repository": REPOSITORY,
+        "source_sha": source_sha,
+        "tag": TAG,
+        "tag_object": tag_object,
+        "tag_ci_run_id": str(tag_run_id),
+        "tag_ci_run_attempt": str(tag_source["attempt"]),
+        "release_name": RELEASE_NAME,
+        "asset_id": str(asset["id"]),
+        "asset_name": ASSET_NAME,
+        "archive_bytes": str(asset["size"]),
+        "archive_sha256": archive_sha256,
+        "outer_pre_hash": str(seal["outer_pre_hash"]),
+        "decision": str(seal["decision"]),
+        "selected_precision": (
+            "null" if selected_precision is None else str(selected_precision)
+        ),
+        "promotion": "NO_PROMOTION",
+        "fresh_download": "PASS",
+        "fresh_archive_digest": "PASS",
+        "fresh_bundle_identity": "PASS",
+        "fresh_outer_seal": "PASS",
+        "fresh_full_validation": "PASS",
+    }
+    require(set(fresh) == FRESH_PUBLIC_FIELDS, "fresh-public field inventory differs")
+    require(fresh == expected_fresh, "fresh-public receipt identity differs")
+    return {
+        "tag_ci_run_id": tag_run_id,
+        "tag_ci_run_attempt": tag_source["attempt"],
+        "tag_ci_source": tag_source,
+        "archive_bytes": asset["size"],
+        "archive_sha256": archive_sha256,
+        "asset_id": asset["id"],
+    }
+
+
+def validate_online_publication_match(
+    online: dict[str, object], publication: dict[str, object]
+) -> None:
+    for key in (
+        "tag_ci_run_id",
+        "tag_ci_run_attempt",
+        "asset_id",
+        "archive_bytes",
+        "archive_sha256",
+    ):
+        require(
+            online[key] == publication[key],
+            f"online/publication receipt mismatch: {key}",
+        )
+    require(
+        online["tag_ci_source"] == publication["tag_ci_source"],
+        "live tag CI differs from external exact source receipt",
+    )
 
 
 def validate_parent(bundle: Path, source: Path) -> None:
@@ -440,6 +962,8 @@ def validate_parent(bundle: Path, source: Path) -> None:
             str(parent),
         ],
         source,
+        timeout_seconds=SEAL_VERIFY_TIMEOUT_SECONDS,
+        label="nested parent outer seal",
     )
     require_success(completed, "nested parent outer seal")
     seal = read_json(parent / "outer-seal.json")
@@ -473,6 +997,27 @@ def validate_summary(summary: dict[str, object], seal: dict[str, object]) -> Non
     )
     highest = summary["highest_precision_dynamics_pass"]
     structure = summary["structure_residuals_resolved"]
+    eligibility = summary["precision_eligibility"]
+    require(
+        isinstance(eligibility, dict)
+        and set(eligibility) == {str(precision) for precision in PRECISIONS}
+        and all(type(value) is bool for value in eligibility.values()),
+        "oracle precision eligibility profile malformed",
+    )
+    composition = summary["composition_contracts"]
+    long_run = summary["long_run"]
+    require(
+        isinstance(composition, dict)
+        and composition.get("all_qualitative_gates_converge") is structure,
+        "oracle structure aggregate differs",
+    )
+    require(
+        isinstance(long_run, dict)
+        and type(long_run.get("all_required_full_tail_anchors_qualified")) is bool
+        and composition.get("all_required_full_tail_anchors_qualified")
+        is long_run["all_required_full_tail_anchors_qualified"],
+        "oracle full-tail anchor aggregate differs",
+    )
     if decision != "stop_inconclusive_or_wrong_parent":
         require(type(highest) is bool and type(structure) is bool, "oracle disposition gates malformed")
     if decision == "reject_bounded_binary_fractional_phase_state":
@@ -484,6 +1029,17 @@ def validate_summary(summary: dict[str, object], seal: dict[str, object]) -> Non
         RETAIN_DECISION,
     }:
         require(highest is True and structure is True, "converged disposition gates differ")
+    if decision == RETAIN_DECISION:
+        eligible = [
+            precision for precision in PRECISIONS if eligibility[str(precision)]
+        ]
+        require(bool(eligible) and selected == eligible[0], "retained precision is not the smallest eligible precision")
+    elif decision != "stop_inconclusive_or_wrong_parent":
+        require(not any(eligibility.values()), "negative disposition has an eligible precision")
+    require(
+        (decision, selected) == (FINAL_DECISION, FINAL_SELECTED_PRECISION),
+        "oracle disposition differs from the completed lab outcome",
+    )
 
 
 def validate_bundle(bundle: Path, source: Path, run_mutations: bool) -> dict[str, object]:
@@ -496,6 +1052,8 @@ def validate_bundle(bundle: Path, source: Path, run_mutations: bool) -> dict[str
             str(bundle),
         ],
         source,
+        timeout_seconds=SEAL_VERIFY_TIMEOUT_SECONDS,
+        label="outer seal",
     )
     require_success(seal_result, "outer seal")
     seal = read_json(bundle / "outer-seal.json")
@@ -506,6 +1064,7 @@ def validate_bundle(bundle: Path, source: Path, run_mutations: bool) -> dict[str
     validate_decision(seal.get("decision"), seal.get("selected_precision"))
     validate_raw_identity(bundle, source_sha)
     validate_source_identity(bundle, source, seal)
+    validate_inner_payload_inventory(bundle, source, source_sha)
     validate_ci_receipt(bundle, source_sha, run_id)
     validate_parent(bundle, source)
     with tempfile.TemporaryDirectory(prefix="mls-bounded-phase-verify-") as temporary:
@@ -522,6 +1081,9 @@ def validate_bundle(bundle: Path, source: Path, run_mutations: bool) -> dict[str
                 str(output),
             ],
             source,
+            timeout_seconds=ORACLE_REPLAY_TIMEOUT_SECONDS,
+            label="independent exact-dyadic and 110-digit oracle",
+            stream_output=True,
         )
         require_success(oracle, "independent exact-dyadic and 110-digit oracle")
         require(
@@ -540,6 +1102,9 @@ def validate_bundle(bundle: Path, source: Path, run_mutations: bool) -> dict[str
                 str(bundle / "parent-explicit-fractional" / "raw-a"),
             ],
             source,
+            timeout_seconds=SEMANTIC_MUTATION_TIMEOUT_SECONDS,
+            label="semantic mutation regression",
+            stream_output=True,
         )
         require_success(semantic, "semantic mutation regression")
         outer = invoke(
@@ -550,6 +1115,9 @@ def validate_bundle(bundle: Path, source: Path, run_mutations: bool) -> dict[str
                 str(source / "tools" / "seal_bounded_fractional_phase_state_evidence.py"),
             ],
             source,
+            timeout_seconds=SEAL_MUTATION_TIMEOUT_SECONDS,
+            label="outer-seal mutation regression",
+            stream_output=True,
         )
         require_success(outer, "outer-seal mutation regression")
     return seal
@@ -570,6 +1138,35 @@ def parse_remote_tag(output: str) -> tuple[str, str]:
     require(peeled is not None and SHA1.fullmatch(peeled) is not None, "public annotated tag peel missing")
     require(direct != peeled, "public evidence tag is not annotated")
     return direct, peeled
+
+
+def fetch_public_ci_run(
+    run_id: int,
+    source_sha: str,
+    branch: str,
+    source: Path,
+    label: str,
+) -> dict[str, object]:
+    completed = invoke(
+        [
+            "gh",
+            "run",
+            "view",
+            str(run_id),
+            "--repo",
+            REPOSITORY,
+            "--json",
+            "attempt,conclusion,databaseId,event,headBranch,headSha,jobs,status,workflowName",
+        ],
+        source,
+        timeout_seconds=SHORT_COMMAND_TIMEOUT_SECONDS,
+        label=label,
+    )
+    require_success(completed, label)
+    value = json.loads(completed.stdout)
+    require(isinstance(value, dict), f"{label} result malformed")
+    validate_ci_source(value, source_sha, run_id, branch)
+    return value
 
 
 def safe_extract_public_archive(archive_path: Path, destination: Path) -> Path:
@@ -623,7 +1220,11 @@ def safe_extract_public_archive(archive_path: Path, destination: Path) -> Path:
 
 
 def fresh_online_validation(
-    bundle: Path, source_sha: str, evidence_tag_object: str, source: Path
+    bundle: Path,
+    source_sha: str,
+    evidence_tag_object: str,
+    branch_run_id: int,
+    source: Path,
 ) -> dict[str, object]:
     remote = invoke(
         [
@@ -634,12 +1235,22 @@ def fresh_online_validation(
             f"refs/tags/{TAG}^{{}}",
         ],
         source,
-        timeout=120,
+        timeout_seconds=SHORT_COMMAND_TIMEOUT_SECONDS,
+        label="public tag lookup",
     )
     require_success(remote, "public tag lookup")
     tag_object, peeled = parse_remote_tag(remote.stdout)
     require(peeled == source_sha, "public evidence tag/source mismatch")
     require(tag_object == evidence_tag_object, "public evidence tag object mismatch")
+
+    branch_run = fetch_public_ci_run(
+        branch_run_id,
+        source_sha,
+        BRANCH,
+        source,
+        "sealed branch CI inspection",
+    )
+    validate_public_branch_ci(branch_run, bundle, source_sha, branch_run_id)
 
     listed = invoke(
         [
@@ -660,7 +1271,8 @@ def fresh_online_validation(
             "databaseId,event,headBranch,headSha,status,conclusion,workflowName",
         ],
         source,
-        timeout=120,
+        timeout_seconds=SHORT_COMMAND_TIMEOUT_SECONDS,
+        label="immutable-tag CI lookup",
     )
     require_success(listed, "immutable-tag CI lookup")
     runs = json.loads(listed.stdout)
@@ -679,47 +1291,19 @@ def fresh_online_validation(
     ]
     require(matching, "successful immutable-tag CI run missing")
     tag_run_id = max(int(run["databaseId"]) for run in matching)
-    viewed = invoke(
-        [
-            "gh",
-            "run",
-            "view",
-            str(tag_run_id),
-            "--repo",
-            REPOSITORY,
-            "--json",
-            "databaseId,event,headBranch,headSha,status,conclusion,workflowName,jobs",
-        ],
+    tag_run = fetch_public_ci_run(
+        tag_run_id,
+        source_sha,
+        TAG,
         source,
-        timeout=120,
+        "immutable-tag CI inspection",
     )
-    require_success(viewed, "immutable-tag CI inspection")
-    run = json.loads(viewed.stdout)
-    require(
-        isinstance(run, dict)
-        and run.get("databaseId") == tag_run_id
-        and run.get("event") == "push"
-        and run.get("headBranch") == TAG
-        and run.get("headSha") == source_sha
-        and run.get("status") == "completed"
-        and run.get("conclusion") == "success"
-        and run.get("workflowName") == WORKFLOW,
-        "immutable-tag CI identity differs",
-    )
-    jobs = run.get("jobs")
-    require(isinstance(jobs, list), "immutable-tag CI jobs malformed")
-    tag_jobs = {
-        item.get("name"): item.get("conclusion")
-        for item in jobs
-        if isinstance(item, dict) and isinstance(item.get("name"), str)
-    }
-    require(set(tag_jobs) == REQUIRED_JOBS, "immutable-tag CI job inventory differs")
-    require(all(value == "success" for value in tag_jobs.values()), "immutable-tag CI job failed")
 
     release_result = invoke(
         ["gh", "api", f"repos/{REPOSITORY}/releases/tags/{TAG}"],
         source,
-        timeout=120,
+        timeout_seconds=SHORT_COMMAND_TIMEOUT_SECONDS,
+        label="public release lookup",
     )
     require_success(release_result, "public release lookup")
     release = json.loads(release_result.stdout)
@@ -732,9 +1316,12 @@ def fresh_online_validation(
         and isinstance(release.get("assets"), list),
         "public release identity differs",
     )
-    assets = [asset for asset in release["assets"] if isinstance(asset, dict) and asset.get("name") == ASSET_NAME]
-    require(len(assets) == 1, "public evidence asset inventory differs")
-    asset = assets[0]
+    require(len(release["assets"]) == 1, "public release must contain exactly one asset")
+    asset = release["assets"][0]
+    require(
+        isinstance(asset, dict) and asset.get("name") == ASSET_NAME,
+        "public evidence asset inventory differs",
+    )
     digest = asset.get("digest")
     require(
         type(asset.get("id")) is int
@@ -750,23 +1337,29 @@ def fresh_online_validation(
         temporary_root = Path(temporary)
         archive_path = temporary_root / ASSET_NAME
         with archive_path.open("xb") as output_stream:
-            download = subprocess.run(
-                [
-                    "gh",
-                    "api",
-                    "--method",
-                    "GET",
-                    "-H",
-                    "Accept: application/octet-stream",
-                    f"repos/{REPOSITORY}/releases/assets/{asset['id']}",
-                ],
-                cwd=source,
-                check=False,
-                stdout=output_stream,
-                stderr=subprocess.PIPE,
-                timeout=1800,
-                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-            )
+            try:
+                download = subprocess.run(
+                    [
+                        "gh",
+                        "api",
+                        "--method",
+                        "GET",
+                        "-H",
+                        "Accept: application/octet-stream",
+                        f"repos/{REPOSITORY}/releases/assets/{asset['id']}",
+                    ],
+                    cwd=source,
+                    check=False,
+                    stdout=output_stream,
+                    stderr=subprocess.PIPE,
+                    timeout=PUBLIC_DOWNLOAD_TIMEOUT_SECONDS,
+                    env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                )
+            except subprocess.TimeoutExpired as error:
+                raise RuntimeError(
+                    "fresh public evidence download timed out after "
+                    f"{PUBLIC_DOWNLOAD_TIMEOUT_SECONDS} seconds"
+                ) from error
         if download.returncode != 0:
             raise RuntimeError(
                 "fresh public evidence download failed\nstderr:\n"
@@ -788,11 +1381,17 @@ def fresh_online_validation(
                 str(downloaded),
             ],
             source,
+            timeout_seconds=SEAL_VERIFY_TIMEOUT_SECONDS,
+            label="fresh public outer seal",
         )
         require_success(verified, "fresh public outer seal")
     return {
         "tag_object": tag_object,
+        "branch_ci_run_id": branch_run_id,
         "tag_ci_run_id": tag_run_id,
+        "tag_ci_run_attempt": tag_run["attempt"],
+        "tag_ci_source": tag_run,
+        "asset_id": asset["id"],
         "archive_bytes": asset["size"],
         "archive_sha256": archive_sha256,
     }
@@ -804,28 +1403,48 @@ def main() -> int:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--run-mutations", action="store_true")
     parser.add_argument(
+        "--publication-receipts",
+        type=Path,
+        help="also validate the exact five-file local post-seal receipt directory",
+    )
+    parser.add_argument(
         "--fresh-online",
         action="store_true",
-        help="also resolve the annotated tag, successful tag CI, and freshly download the public release asset",
+        help="also authenticate branch/tag CI, resolve the annotated tag, and freshly download the sole public release asset",
     )
     arguments = parser.parse_args()
     bundle = arguments.bundle.resolve()
     source = arguments.source.resolve()
     try:
         seal = validate_bundle(bundle, source, arguments.run_mutations)
+        publication: dict[str, object] | None = None
+        if arguments.publication_receipts is not None:
+            publication = validate_publication_receipts(
+                arguments.publication_receipts, bundle, seal
+            )
         online: dict[str, object] | None = None
         if arguments.fresh_online:
             online = fresh_online_validation(
                 bundle,
                 str(seal["source_sha"]),
                 str(seal["evidence_tag_object"]),
+                int(seal["ci_run_id"]),
                 source,
             )
+        if online is not None and publication is not None:
+            validate_online_publication_match(online, publication)
         suffix = ""
         if online is not None:
             suffix = (
-                f" tag_object={online['tag_object']} tag_ci_run={online['tag_ci_run_id']}"
+                f" tag_object={online['tag_object']} branch_ci_run={online['branch_ci_run_id']}"
+                f" tag_ci_run={online['tag_ci_run_id']}"
                 f" archive_bytes={online['archive_bytes']} archive_sha256={online['archive_sha256']}"
+            )
+        elif publication is not None:
+            suffix = (
+                f" publication_tag_ci_run={publication['tag_ci_run_id']}"
+                f" archive_bytes={publication['archive_bytes']}"
+                f" archive_sha256={publication['archive_sha256']}"
             )
         print(
             "BOUNDED FRACTIONAL PHASE STATE EVIDENCE VALID: "

@@ -237,7 +237,10 @@ The exact budgets use `q_budget=2^-20`:
 | representation-induced energy | `Eq*2^-20` |
 
 The 16-second slope budgets divide the corresponding quantity by 16 seconds.
-Meeting a budget does not waive precision scaling or analytic error bounds.
+Meeting a budget ends an ordinary adjacent-precision scaling obligation only
+where the rule above explicitly says it does. It does not waive any other
+applicable convergence gate, the independently derived analytic bounds, or
+the preregistered Section 10 full-tail-anchor qualification.
 
 The candidate reuses the three one-second scenarios, five timestep halvings,
 110-digit smooth ODE oracle, exact-rational KDK control, first-order control,
@@ -292,6 +295,17 @@ Apply the first matching disposition:
 4. `bounded_phase_state_converges_but_required_precision_unresolved`;
 5. `retain_bounded_variable_exponent_phase_state_for_research`.
 
+Post-result classification clarification (non-gating): for this result, the
+three Section 10 pair-scaling violations are out-of-bound long-run residual
+components under disposition 3.  This classification does not assert that a
+precision-independent floor or secular term was observed.  It changes no
+datum, budget, comparison, or gate.
+
 Twin evidence, GCC, Clang, MSVC, the independent Python verifier, pinned Lean,
-semantic and seal mutations, immutable-tag CI, and fresh public-download
-verification must all pass before sealing and stopping.
+and semantic and seal mutations must all pass before sealing.  The local
+annotated evidence tag is created before the seal so its immutable tag object
+can be bound without predicting later network state.  After sealing, that
+already-bound tag is pushed, immutable-tag CI is required to pass, the sealed
+archive is released, and a fresh public download is verified before the lab
+stops.  These post-seal publication receipts remain external to the payload
+whose identity they attest; this ordering changes no scientific gate.

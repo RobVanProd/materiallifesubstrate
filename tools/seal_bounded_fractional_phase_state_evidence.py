@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -31,6 +32,7 @@ PARENT_DECISION = (
 )
 BRANCH = "bounded-fractional-phase-state-lab"
 TAG = "bounded-fractional-phase-state-lab-evidence-v1"
+WORKFLOW = "Bounded Fractional Phase-State Lab"
 PRECISIONS = (64, 96, 128, 192, 256)
 DECISIONS = {
     "stop_inconclusive_or_wrong_parent",
@@ -40,6 +42,10 @@ DECISIONS = {
     "retain_bounded_variable_exponent_phase_state_for_research",
 }
 RETAIN_DECISION = "retain_bounded_variable_exponent_phase_state_for_research"
+FINAL_DECISION = (
+    "bounded_phase_state_restores_dynamics_but_structure_residuals_unresolved"
+)
+FINAL_SELECTED_PRECISION = None
 SHA1 = re.compile(r"[0-9a-f]{40}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 REQUIRED_GROUPS = {
@@ -51,6 +57,126 @@ REQUIRED_GROUPS = {
     "receipts",
     "docs",
 }
+REQUIRED_JOBS = frozenset(
+    {
+        "C++ / Linux GCC",
+        "C++ / Linux Clang",
+        "C++ / Windows MSVC",
+        "Python exact oracle",
+        "Pinned Lean build and axiom output",
+    }
+)
+CI_SOURCE_FIELDS = frozenset(
+    {
+        "attempt",
+        "conclusion",
+        "databaseId",
+        "event",
+        "headBranch",
+        "headSha",
+        "jobs",
+        "status",
+        "workflowName",
+    }
+)
+CI_JOB_FIELDS = frozenset(
+    {
+        "completedAt",
+        "conclusion",
+        "databaseId",
+        "name",
+        "startedAt",
+        "status",
+        "steps",
+        "url",
+    }
+)
+CI_STEP_FIELDS = frozenset(
+    {"completedAt", "conclusion", "name", "number", "startedAt", "status"}
+)
+CI_SCHEMA = "mls.bounded-fractional-phase-state.ci.v1"
+RAW_FILES = frozenset(
+    {
+        "metadata.csv",
+        "precisions.csv",
+        "units.csv",
+        "parent_fingerprint.csv",
+        "positive_control.csv",
+        "reference_packets.csv",
+        "relations.csv",
+        "force_operator.csv",
+        "initial_states.csv",
+        "endpoints.csv",
+        "long_endpoints.csv",
+        "checkpoint_states.csv",
+        "recovery_states.csv",
+        "representation_error.csv",
+        "energies.csv",
+        "long_energy.csv",
+        "invariants.csv",
+        "force_audit.csv",
+        "reversibility.csv",
+        "covariance.csv",
+        "checkpoint.csv",
+        "domain.csv",
+        "state_size.csv",
+        "operation_counts.csv",
+        "rational_comparator.csv",
+    }
+)
+DOCUMENT_FILES = frozenset(
+    {
+        "bounded-fractional-phase-state-preregistration.md",
+        "bounded-fractional-phase-state-lab-contract.md",
+        "bounded-fractional-phase-state-evidence-schema.md",
+        "bounded-fractional-phase-state-result.md",
+    }
+)
+ORACLE_FILES = frozenset(
+    {"oracle-summary.json", "oracle.log", "mutation-regression.log"}
+)
+RECEIPT_FILES = frozenset(
+    {
+        "algorithm-contracts.log",
+        "build.log",
+        "ci-run-source.json",
+        "ci-run.json",
+        "configure.log",
+        "ctest.log",
+        "failed-attempts.json",
+        "lean-axioms.log",
+        "lean-build.log",
+        "lean-trust.log",
+        "mls-validation.log",
+        "raw-a.log",
+        "raw-b.log",
+        "raw-files-sha256.log",
+        "raw-twin.log",
+        "seal-mutation-regression.log",
+        "source-archive.log",
+        "tool-versions.log",
+    }
+)
+FAILED_ATTEMPTS_SCHEMA = "mls.bounded-fractional-phase-state.failed-attempts.v1"
+FAILED_ATTEMPTS = (
+    (
+        "oversized-v1-public-archive",
+        "f891c248c414a5a705e60c13b865a722d24b305b",
+    ),
+    (
+        "compact-v2-row-order-verifier",
+        "be6f95a8dac47153616d398a079b30830d7213da",
+    ),
+    (
+        "overstrict-anchor-interpretation-verifier",
+        "be6f95a8dac47153616d398a079b30830d7213da",
+    ),
+    (
+        "incomplete-compositional-bound-verifier-precheck",
+        "be6f95a8dac47153616d398a079b30830d7213da",
+    ),
+)
+SOURCE_ROOT = Path(__file__).resolve().parents[1]
 
 
 class SealError(RuntimeError):
@@ -71,6 +197,60 @@ def sha256_bytes(payload: bytes) -> str:
 
 def canonical(value: Any) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def git_stdout(repository: Path, *arguments: str) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(repository), *arguments],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise SealError("local evidence tag cannot be resolved")
+    result = completed.stdout.strip()
+    if not result or "\n" in result:
+        raise SealError("local evidence tag query returned malformed output")
+    return result
+
+
+def git_blob(repository: Path, object_specification: str) -> bytes:
+    completed = subprocess.run(
+        ["git", "-C", str(repository), "cat-file", "blob", object_specification],
+        check=False,
+        capture_output=True,
+    )
+    if completed.returncode != 0:
+        raise SealError("tagged source document blob cannot be read")
+    return completed.stdout
+
+
+def validate_local_annotated_tag(
+    repository: Path, source_sha: str, evidence_tag_object: str,
+) -> None:
+    """Bind create-mode inputs to the exact named local annotated tag.
+
+    This is deliberately a create-only preflight.  Verification remains an
+    offline replay of the tag object and peeled source identity recorded in the
+    immutable outer seal.
+    """
+    try:
+        local_repository = repository.resolve(strict=True)
+    except OSError as error:
+        raise SealError("local source repository cannot be resolved") from error
+    tag_reference = f"refs/tags/{TAG}"
+    local_tag_object = git_stdout(
+        local_repository, "rev-parse", "--verify", tag_reference
+    )
+    if local_tag_object != evidence_tag_object:
+        raise SealError("local evidence tag object differs from create input")
+    if git_stdout(local_repository, "cat-file", "-t", local_tag_object) != "tag":
+        raise SealError("local evidence tag is not annotated")
+    peeled_source = git_stdout(
+        local_repository, "rev-parse", "--verify", f"{tag_reference}^{{commit}}"
+    )
+    if peeled_source != source_sha:
+        raise SealError("local evidence tag does not peel to source SHA")
 
 
 def _safe_relative(path: Path, root: Path) -> str:
@@ -164,7 +344,21 @@ def oracle_identity(bundle: Path, source_sha: str) -> tuple[str, int | None]:
         or summary.get("promotion") != "NO_PROMOTION"
     ):
         raise SealError("oracle identity or promotion boundary differs")
-    return validate_decision(summary.get("decision"), summary.get("selected_precision"))
+    decision = validate_decision(
+        summary.get("decision"), summary.get("selected_precision")
+    )
+    if decision != (FINAL_DECISION, FINAL_SELECTED_PRECISION):
+        raise SealError("oracle disposition differs from the completed lab outcome")
+    eligibility = summary.get("precision_eligibility")
+    if not (
+        summary.get("highest_precision_dynamics_pass") is True
+        and summary.get("structure_residuals_resolved") is False
+        and isinstance(eligibility, dict)
+        and set(eligibility) == {str(precision) for precision in PRECISIONS}
+        and all(value is False for value in eligibility.values())
+    ):
+        raise SealError("oracle completed-lab outcome gates differ")
+    return decision
 
 
 def source_tree_identity(bundle: Path, source_sha: str) -> str:
@@ -205,6 +399,179 @@ def validate_groups(bundle: Path, outer_present: bool) -> None:
         raise SealError("evidence payload group inventory differs")
     if outer_present and not (bundle / "outer-seal.json").is_file():
         raise SealError("outer seal is not a regular file")
+
+
+def validate_flat_inventory(
+    directory: Path, expected: frozenset[str], label: str
+) -> None:
+    entries = list(directory.iterdir())
+    if any(path.is_symlink() or not path.is_file() for path in entries):
+        raise SealError(f"{label} must contain only regular files")
+    actual = {path.name for path in entries}
+    if actual != expected:
+        difference = sorted(actual ^ expected)
+        raise SealError(f"{label} file inventory differs: {difference}")
+    empty = sorted(path.name for path in entries if path.stat().st_size == 0)
+    if empty:
+        raise SealError(f"{label} files must be nonempty: {empty}")
+
+
+def validate_failed_attempts(path: Path) -> None:
+    value = read_object(path, "failed-attempt receipt")
+    if set(value) != {"schema", "attempts"} or value["schema"] != FAILED_ATTEMPTS_SCHEMA:
+        raise SealError("failed-attempt receipt schema differs")
+    attempts = value["attempts"]
+    if not isinstance(attempts, list) or len(attempts) != len(FAILED_ATTEMPTS):
+        raise SealError("failed-attempt receipt inventory differs")
+    fields = {
+        "id",
+        "source_sha",
+        "stage",
+        "outcome",
+        "scientific_disposition",
+        "preservation",
+    }
+    for item, (expected_id, expected_sha) in zip(attempts, FAILED_ATTEMPTS):
+        if not isinstance(item, dict) or set(item) != fields:
+            raise SealError("failed-attempt item schema differs")
+        if item["id"] != expected_id or item["source_sha"] != expected_sha:
+            raise SealError("failed-attempt identity or order differs")
+        if item["scientific_disposition"] is not None:
+            raise SealError("failed attempt has a scientific disposition")
+        if any(
+            not isinstance(item[field], str) or not item[field]
+            for field in ("stage", "outcome", "preservation")
+        ):
+            raise SealError("failed-attempt descriptive field is empty")
+
+
+def validate_ci_source(
+    source: dict[str, object], source_sha: str, run_id: int, branch: str,
+) -> list[dict[str, str]]:
+    if set(source) != CI_SOURCE_FIELDS:
+        raise SealError("CI source field inventory differs")
+    if (
+        type(source["attempt"]) is not int
+        or source["attempt"] < 1
+        or type(source["databaseId"]) is not int
+        or source["databaseId"] != run_id
+        or source["event"] != "push"
+        or source["headBranch"] != branch
+        or source["headSha"] != source_sha
+        or source["status"] != "completed"
+        or source["conclusion"] != "success"
+        or source["workflowName"] != WORKFLOW
+        or not isinstance(source["jobs"], list)
+    ):
+        raise SealError("CI source identity differs")
+    observed: dict[str, str] = {}
+    for job in source["jobs"]:
+        if not isinstance(job, dict) or set(job) != CI_JOB_FIELDS:
+            raise SealError("CI source job schema differs")
+        name = job["name"]
+        if (
+            not isinstance(name, str)
+            or not name
+            or name in observed
+            or type(job["databaseId"]) is not int
+            or job["databaseId"] <= 0
+            or job["status"] != "completed"
+            or job["conclusion"] != "success"
+            or not isinstance(job["startedAt"], str)
+            or not job["startedAt"]
+            or not isinstance(job["completedAt"], str)
+            or not job["completedAt"]
+            or not isinstance(job["url"], str)
+            or not job["url"]
+            or not isinstance(job["steps"], list)
+            or not job["steps"]
+        ):
+            raise SealError("CI source job identity differs")
+        step_numbers: set[int] = set()
+        for step in job["steps"]:
+            if not isinstance(step, dict) or set(step) != CI_STEP_FIELDS:
+                raise SealError("CI source step schema differs")
+            number = step["number"]
+            if (
+                type(number) is not int
+                or number <= 0
+                or number in step_numbers
+                or not isinstance(step["name"], str)
+                or not step["name"]
+                or not isinstance(step["status"], str)
+                or not step["status"]
+                or not isinstance(step["conclusion"], str)
+                or not step["conclusion"]
+                or not isinstance(step["startedAt"], str)
+                or not step["startedAt"]
+                or not isinstance(step["completedAt"], str)
+                or not step["completedAt"]
+            ):
+                raise SealError("CI source step identity differs")
+            step_numbers.add(number)
+        observed[name] = str(job["conclusion"])
+    if set(observed) != REQUIRED_JOBS:
+        raise SealError("CI source job inventory differs")
+    return [
+        {"name": name, "conclusion": observed[name]}
+        for name in sorted(observed)
+    ]
+
+
+def validate_ci_receipts(bundle: Path, source_sha: str, run_id: int) -> None:
+    source = read_object(bundle / "receipts" / "ci-run-source.json", "CI source")
+    jobs = validate_ci_source(source, source_sha, run_id, BRANCH)
+    expected: dict[str, object] = {
+        "schema": CI_SCHEMA,
+        "repository": REPOSITORY,
+        "workflow": WORKFLOW,
+        "run_id": run_id,
+        "run_attempt": source["attempt"],
+        "head_sha": source_sha,
+        "head_branch": BRANCH,
+        "event": "push",
+        "conclusion": "success",
+        "jobs": jobs,
+    }
+    normalized = read_object(bundle / "receipts" / "ci-run.json", "CI receipt")
+    if normalized != expected:
+        raise SealError("normalized CI receipt differs from exact source")
+
+
+def validate_inner_payload_inventory(
+    bundle: Path, source_sha: str, repository: Path | None = None,
+) -> None:
+    """Freeze every closed inner payload group except the inherited parent.
+
+    Publication receipts that can only exist after the immutable seal (tag CI,
+    release, public archive, and fresh download) deliberately do not belong to
+    this inventory.
+    """
+
+    validate_flat_inventory(bundle / "raw-a", RAW_FILES, "raw-a")
+    validate_flat_inventory(bundle / "raw-b", RAW_FILES, "raw-b")
+    validate_flat_inventory(bundle / "docs", DOCUMENT_FILES, "document")
+    validate_flat_inventory(bundle / "oracle", ORACLE_FILES, "oracle")
+    validate_flat_inventory(bundle / "receipts", RECEIPT_FILES, "receipt")
+    validate_failed_attempts(bundle / "receipts" / "failed-attempts.json")
+    validate_flat_inventory(
+        bundle / "source",
+        frozenset(
+            {
+                "source-identity.json",
+                f"materiallifesubstrate-{source_sha}.tar.gz",
+            }
+        ),
+        "source",
+    )
+    if repository is not None:
+        for name in DOCUMENT_FILES:
+            bundled_document = bundle / "docs" / name
+            tagged_bytes = git_blob(repository, f"{source_sha}:docs/{name}")
+            if bundled_document.read_bytes() != tagged_bytes:
+                raise SealError(
+                    f"bundled document is not an exact tagged-source copy: {name}"
+                )
 
 
 def pre_hash(value: dict[str, object]) -> str:
@@ -254,17 +621,21 @@ def fixed_fields() -> dict[str, object]:
 
 
 def create(
-    bundle: Path, source_sha: str, evidence_tag_object: str, ci_run_id: int
+    bundle: Path, source_sha: str, evidence_tag_object: str, ci_run_id: int,
+    repository: Path = SOURCE_ROOT,
 ) -> dict[str, object]:
     if SHA1.fullmatch(source_sha) is None:
         raise SealError("source SHA must be an exact lowercase Git SHA-1")
     if type(ci_run_id) is not int or ci_run_id <= 0:
         raise SealError("CI run ID must be a positive integer")
-    if SHA1.fullmatch(evidence_tag_object) is None or evidence_tag_object == source_sha:
-        raise SealError("evidence tag object must identify an annotated tag")
+    if SHA1.fullmatch(evidence_tag_object) is None:
+        raise SealError("evidence tag object must be an exact lowercase Git SHA-1")
+    validate_local_annotated_tag(repository, source_sha, evidence_tag_object)
     validate_groups(bundle, False)
     # Walk before reading identities so symlinks and path collisions fail first.
     payload = inventory(bundle)
+    validate_inner_payload_inventory(bundle, source_sha, repository)
+    validate_ci_receipts(bundle, source_sha, ci_run_id)
     raw_a = directory_inventory(bundle / "raw-a")
     raw_b = directory_inventory(bundle / "raw-b")
     if raw_a != raw_b:
@@ -331,6 +702,8 @@ def verify(bundle: Path) -> dict[str, object]:
         raise SealError("outer seal evidence tag object malformed")
     if type(value["ci_run_id"]) is not int or value["ci_run_id"] <= 0:
         raise SealError("outer seal CI run ID malformed")
+    validate_inner_payload_inventory(bundle, source_sha)
+    validate_ci_receipts(bundle, source_sha, int(value["ci_run_id"]))
     decision, selected_precision = validate_decision(
         value["decision"], value["selected_precision"]
     )
@@ -370,6 +743,7 @@ def main() -> int:
     create_parser.add_argument("--source-sha", required=True)
     create_parser.add_argument("--tag-object", required=True)
     create_parser.add_argument("--ci-run-id", type=int, required=True)
+    create_parser.add_argument("--repo", type=Path, default=SOURCE_ROOT)
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--bundle", type=Path, required=True)
     arguments = parser.parse_args()
@@ -380,6 +754,7 @@ def main() -> int:
                 arguments.source_sha,
                 arguments.tag_object,
                 arguments.ci_run_id,
+                arguments.repo,
             )
             if arguments.command == "create"
             else verify(arguments.bundle.resolve())

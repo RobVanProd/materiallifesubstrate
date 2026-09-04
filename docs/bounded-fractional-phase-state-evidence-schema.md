@@ -11,9 +11,95 @@ sealed bundle contains exactly these payload groups plus `outer-seal.json`:
   receipt;
 - `parent-explicit-fractional/`: the complete immutable accepted parent bundle;
 - `source/`: deterministic source archive and source-identity receipt;
-- `receipts/`: dependency, build, compiler, Python, Lean, twin, CI, tag,
-  release, failed-attempt, and fresh-download receipts; and
+- `receipts/`: dependency, build, compiler, Python, Lean, twin, branch-CI,
+  failed-attempt, and pre-seal identity receipts; and
 - `docs/`: preregistration, lab contract, result, and this schema.
+
+The four support groups have closed, flat file inventories. `docs/` contains
+exactly:
+
+```text
+bounded-fractional-phase-state-preregistration.md
+bounded-fractional-phase-state-lab-contract.md
+bounded-fractional-phase-state-evidence-schema.md
+bounded-fractional-phase-state-result.md
+```
+
+Each of those four files is byte-for-byte equal to the correspondingly named
+file in the sealed source tree. `oracle/` contains exactly
+`oracle-summary.json`, `oracle.log`, and `mutation-regression.log`. `source/`
+contains exactly `source-identity.json` and
+`materiallifesubstrate-${source_sha}.tar.gz`. `receipts/` contains exactly:
+
+```text
+algorithm-contracts.log
+build.log
+ci-run-source.json
+ci-run.json
+configure.log
+ctest.log
+failed-attempts.json
+lean-axioms.log
+lean-build.log
+lean-trust.log
+mls-validation.log
+raw-a.log
+raw-b.log
+raw-files-sha256.log
+raw-twin.log
+seal-mutation-regression.log
+source-archive.log
+tool-versions.log
+```
+
+No nested directory, additional file, or empty file is permitted in those
+groups.
+`failed-attempts.json` preserves the oversized-v1 packaging attempt, the first
+compact-v2 comparator-order attempt, the superseded overstrict anchor
+interpretation, and the precheck stopped when final audit found missing
+compositional recovery/frame/energy bounds, without importing their
+multi-gigabyte raw trees.
+It is a JSON object with exactly `schema` and `attempts`; `schema` is
+`mls.bounded-fractional-phase-state.failed-attempts.v1`. `attempts` contains
+exactly these `(id, source_sha)` pairs in order:
+
+```text
+oversized-v1-public-archive                 f891c248c414a5a705e60c13b865a722d24b305b
+compact-v2-row-order-verifier               be6f95a8dac47153616d398a079b30830d7213da
+overstrict-anchor-interpretation-verifier   be6f95a8dac47153616d398a079b30830d7213da
+incomplete-compositional-bound-verifier-precheck be6f95a8dac47153616d398a079b30830d7213da
+```
+
+Every attempt has exactly `id`, `source_sha`, `stage`, `outcome`,
+`scientific_disposition`, and `preservation`. The latter disposition is JSON
+null because none of these attempts reached a scientific disposition;
+`stage`, `outcome`, and `preservation` are nonempty strings.
+
+`ci-run-source.json` is the unmodified JSON object emitted by this frozen
+query of the successful branch run bound by `outer-seal.json`:
+
+```text
+gh run view RUN_ID --repo RobVanProd/materiallifesubstrate --json attempt,conclusion,databaseId,event,headBranch,headSha,jobs,status,workflowName
+```
+
+Its exact top-level fields are the nine named query fields. Every `jobs` item
+has exactly `completedAt`, `conclusion`, `databaseId`, `name`, `startedAt`,
+`status`, `steps`, and `url`; every step has exactly `completedAt`,
+`conclusion`, `name`, `number`, `startedAt`, and `status`. The run is a
+successful completed `push` of the sealed source on
+`bounded-fractional-phase-state-lab`, and its jobs are exactly the three C++
+compiler jobs, `Python exact oracle`, and
+`Pinned Lean build and axiom output`, all successful and completed.
+
+`ci-run.json` is the deterministic projection of that source object. It has
+exactly `schema`, `repository`, `workflow`, `run_id`, `run_attempt`,
+`head_sha`, `head_branch`, `event`, `conclusion`, and `jobs`; its schema is
+`mls.bounded-fractional-phase-state.ci.v1`. Jobs are sorted by name and each
+has exactly `name` and `conclusion`. The sealer and independent validator
+reconstruct this projection from `ci-run-source.json` and require exact JSON
+value equality. During fresh-online verification, the validator queries the
+sealed branch run ID again and requires the public object to equal the sealed
+source receipt exactly.
 
 Every payload file is covered by relative path, byte count, and SHA-256.
 Symlinks, unsafe or case-colliding paths, unexpected top-level groups, missing
@@ -22,6 +108,92 @@ tag and tag object; exact candidate source and tree; branch and evidence tag;
 raw-twin aggregate; final decision; selected precision or null; MPFR/gmpy2
 versions; exponent contract; safe domain; physical budgets; and
 `NO_PROMOTION`.
+
+For this completed v1 lab source, the independently recomputed outcome is
+pinned to
+`bounded_phase_state_restores_dynamics_but_structure_residuals_unresolved`,
+with null selected precision and all five precision-eligibility entries
+false. The broader registered decision vocabulary remains test coverage for
+the preregistered decision function; it is not permission for this evidence
+identity to seal a different outcome.
+
+The annotated evidence-tag object is created locally before sealing, so its
+object identity can be bound by `outer-seal.json`. Tag-push CI, release,
+public-archive, and fresh-download outcomes necessarily occur after that seal;
+their receipts are external publication evidence and are never added to the
+sealed payload. Together, the immutable sealed bundle and those external
+receipts constitute the complete published evidence required by the
+preregistration.
+
+This is the operational clarification of preregistration Section 12's phrase
+"raw evidence" when it lists release and fresh-public-download receipts: those
+two inherently post-publication receipts belong to the complete evidence set,
+not to `raw-a/`, `raw-b/`, or the immutable pre-publication payload. Interpreting
+that phrase as requiring them inside the sealed bundle would create a circular
+artifact identity and is therefore impossible without weakening immutability.
+
+The local external publication-receipt directory, when preserved, is a real
+directory outside the sealed bundle with exactly five nonempty regular files
+and no nested or additional entry:
+
+```text
+tag-ci-run-source.json
+tag-ci-run.json
+release-source.json
+public-archive-sha256.log
+fresh-public-validation.log
+```
+
+It is optional input to the independent validator through
+`--publication-receipts DIR`; it is never an additional release asset and is
+never included in the primary archive. Offline validation establishes a
+closed, internally consistent post-publication receipt set, not live GitHub
+authentication. `--fresh-online` independently performs that authentication.
+When both options are supplied, the complete parsed
+`tag-ci-run-source.json` value—including job and step timestamps, URLs, and
+ordering—must equal the freshly queried public tag-run object; matching only
+the run ID or successful job projection is insufficient.
+
+`tag-ci-run-source.json` has the same exact `gh run view` shape defined above,
+but names the immutable evidence tag as `headBranch`. `tag-ci-run.json` is its
+deterministic projection with schema
+`mls.bounded-fractional-phase-state.tag-ci.v1`; it has the ten branch-CI
+projection fields plus exact `tag` and `tag_object` fields bound to the outer
+seal.
+
+`release-source.json` is a frozen selected projection of the public release.
+It has exactly `schema`, `repository`, `tag_name`, `name`, `draft`,
+`prerelease`, and `assets`, with schema
+`mls.bounded-fractional-phase-state.release-source.v1`. `assets` contains
+exactly one object with exactly `id`, `name`, `size`, `state`, and `digest`.
+That sole uploaded asset is
+`bounded-fractional-phase-state-evidence-v1.tar.gz`; no second release asset is
+permitted. It can be captured without retaining unrelated mutable API fields
+with the following exact selected query:
+
+```text
+gh api repos/RobVanProd/materiallifesubstrate/releases/tags/bounded-fractional-phase-state-lab-evidence-v1 --jq '{schema:"mls.bounded-fractional-phase-state.release-source.v1",repository:"RobVanProd/materiallifesubstrate",tag_name:.tag_name,name:.name,draft:.draft,prerelease:.prerelease,assets:[.assets[]|{id,name,size,state,digest}]}'
+```
+
+`public-archive-sha256.log` is exactly one `sha256sum`-format line containing
+the release asset's 64-lowercase-hex digest, two spaces, its filename, and LF.
+
+`fresh-public-validation.log` is a unique, nonempty `key=value` record with
+exactly these keys:
+
+```text
+schema repository source_sha tag tag_object
+tag_ci_run_id tag_ci_run_attempt release_name
+asset_id asset_name archive_bytes archive_sha256
+outer_pre_hash decision selected_precision promotion
+fresh_download fresh_archive_digest fresh_bundle_identity
+fresh_outer_seal fresh_full_validation
+```
+
+Its schema is
+`mls.bounded-fractional-phase-state.fresh-public-validation.v1`; all identity,
+run, release, asset, disposition, and archive values equal the sealed/tag-CI/
+release receipts, and all five `fresh_*` gates are literal `PASS`.
 
 ## Raw inventory
 
@@ -55,6 +227,9 @@ contains exactly 25 UTF-8 CSV files:
 | `domain.csv` | deterministic complete-chord status and atomic rejection receipt |
 | `state_size.csv` | fixed construction sizes and observed canonical state bytes at all registered lifecycle points |
 | `operation_counts.csv` | expected, observed, exact/inexact, and rounding-audit counts and digests for every accepted trajectory invocation |
+
+Each raw twin is a closed, flat inventory. Missing, additional, or empty files
+and nested directories, whether empty or nonempty, are forbidden.
 
 CSV headers are part of the schema. Files contain exactly one header, LF line
 endings, RFC 4180 quoting, and deterministic row order. Empty data is encoded

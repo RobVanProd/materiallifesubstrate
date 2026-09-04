@@ -59,9 +59,7 @@ def main() -> int:
                 f"content differs for {relative}: "
                 f"{first_digest} != {second_digest}")
 
-    print(
-        "Projection exactness/nullspace smoke byte comparison: PASS "
-        f"({len(first)} files)")
+    print(f"Evidence directory byte comparison: PASS ({len(first)} files)")
     return 0
 
 

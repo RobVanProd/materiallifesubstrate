@@ -1037,7 +1037,7 @@ if(Python3_Interpreter_FOUND)
     PROPERTIES
       DEPENDS "mls.kelvin_covariance.smoke.a;mls.kelvin_covariance.smoke.b"
       LABELS "deterministic;kelvin-covariance;smoke;independent"
-      PASS_REGULAR_EXPRESSION "smoke byte comparison: PASS"
+      PASS_REGULAR_EXPRESSION "Evidence directory byte comparison: PASS"
       TIMEOUT 30)
 
   add_test(
@@ -1109,7 +1109,7 @@ if(Python3_Interpreter_FOUND)
         "mls.projection_exactness_nullspace.smoke.a;mls.projection_exactness_nullspace.smoke.b"
       LABELS "deterministic;projection-nullspace;smoke;independent"
       PASS_REGULAR_EXPRESSION
-        "Projection exactness/nullspace smoke byte comparison: PASS"
+        "Evidence directory byte comparison: PASS"
       TIMEOUT 30)
 
   add_test(
@@ -1148,7 +1148,7 @@ if(Python3_Interpreter_FOUND)
         "mls.mechanical_observability.smoke.a;mls.mechanical_observability.smoke.b"
       LABELS "deterministic;mechanical-observability;smoke;independent"
       PASS_REGULAR_EXPRESSION
-        "Projection exactness/nullspace smoke byte comparison: PASS"
+        "Evidence directory byte comparison: PASS"
       TIMEOUT 30)
 
   add_test(

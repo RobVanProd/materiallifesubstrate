@@ -10,9 +10,12 @@ merely because a file digest changed.
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import importlib.util
+import io
 import os
+import random
 import shutil
 import sys
 import tempfile
@@ -23,6 +26,39 @@ from typing import Callable
 
 Detector = Callable[[Path, Path], None]
 Mutation = Callable[[Path, Path], None]
+
+
+class _RecordingCsvLines:
+    """Expose logical CSV input while retaining each record's source text."""
+
+    def __init__(self, stream) -> None:
+        self.stream = stream
+        self.consumed: list[str] = []
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> str:
+        line = self.stream.readline()
+        if line == "":
+            raise StopIteration
+        self.consumed.append(line)
+        return line
+
+    def take(self) -> str:
+        result = "".join(self.consumed)
+        self.consumed.clear()
+        return result
+
+
+def _copy_exact_prefix(source, destination, length: int) -> None:
+    remaining = length
+    while remaining:
+        block = source.read(min(remaining, 8 * 1024 * 1024))
+        if not block:
+            raise RuntimeError("mutation source ended inside the target prefix")
+        destination.write(block)
+        remaining -= len(block)
 
 
 def load_oracle(repository: Path) -> ModuleType:
@@ -50,25 +86,160 @@ def edit_cell(
     column: str, value: str | Callable[[str], str],
 ) -> None:
     path = root / filename
-    with path.open(newline="", encoding="utf-8") as stream:
-        reader = csv.DictReader(stream)
-        fields = list(reader.fieldnames or [])
-        content = list(reader)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.mutation-",
+        suffix=".tmp",
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
     changed = False
-    for row in content:
-        if not changed and predicate(row):
-            if column not in row:
-                raise RuntimeError(f"mutation column absent: {filename}/{column}")
-            row[column] = value(row[column]) if callable(value) else value
-            changed = True
-    if not changed:
-        raise RuntimeError(f"mutation target absent: {filename}/{column}")
-    if path.is_symlink():
-        path.unlink()
-    with path.open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=fields, lineterminator="\n")
-        writer.writeheader()
-        writer.writerows(content)
+    try:
+        # The mutation overlays are symlinks to immutable source evidence.  Read
+        # through the link and atomically replace only that link after a target
+        # is found.  Once the first matching logical RFC 4180 record has been
+        # parsed, preserve the complete untouched prefix and suffix byte for
+        # byte.  This avoids parsing and reserializing the remaining 1.4 GB
+        # force audit without weakening the mutation to a truncated fixture.
+        target_start = 0
+        target_end = 0
+        replacement = b""
+        with path.open(newline="", encoding="utf-8") as source:
+            lines = _RecordingCsvLines(source)
+            reader = csv.reader(lines)
+            fields = next(reader, None)
+            byte_offset = len(lines.take().encode("utf-8"))
+            if fields is not None:
+                for values in reader:
+                    original = lines.take()
+                    record_start = byte_offset
+                    byte_offset += len(original.encode("utf-8"))
+                    if len(values) != len(fields):
+                        raise RuntimeError(f"mutation row width differs: {filename}")
+                    row = dict(zip(fields, values, strict=True))
+                    if predicate(row):
+                        if column not in row:
+                            raise RuntimeError(
+                                f"mutation column absent: {filename}/{column}"
+                            )
+                        row[column] = value(row[column]) if callable(value) else value
+                        encoded = io.StringIO(newline="")
+                        csv.DictWriter(
+                            encoded, fieldnames=fields, lineterminator="\n"
+                        ).writerow(row)
+                        target_start = record_start
+                        target_end = byte_offset
+                        replacement = encoded.getvalue().encode("utf-8")
+                        changed = True
+                        break
+        if not changed:
+            raise RuntimeError(f"mutation target absent: {filename}/{column}")
+        with (
+            path.open("rb") as source,
+            temporary.open("wb") as destination,
+        ):
+            _copy_exact_prefix(source, destination, target_start)
+            destination.write(replacement)
+            source.seek(target_end)
+            shutil.copyfileobj(source, destination, length=8 * 1024 * 1024)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def streaming_edit_cell_positive() -> None:
+    """Exercise byte equivalence, symlink isolation, and atomic failure."""
+    with tempfile.TemporaryDirectory(prefix="mls-streaming-csv-positive-") as directory:
+        root = Path(directory)
+        source = root / "source.csv"
+        mutation = root / "mutation"
+        absent = root / "absent"
+        golden = root / "golden.csv"
+        mutation.mkdir()
+        absent.mkdir()
+        rows = [
+            {"key": "first", "value": "comma,value", "detail": "unchanged"},
+            {
+                "key": "second",
+                "value": "quoted \"value\"\ncontinued",
+                "detail": "target",
+            },
+            {"key": "third", "value": "3", "detail": "tail\nrecord"},
+        ]
+        with source.open("w", newline="", encoding="utf-8") as stream:
+            writer = csv.DictWriter(
+                stream, fieldnames=("key", "value", "detail"), lineterminator="\n"
+            )
+            writer.writeheader()
+            writer.writerows(rows)
+        original = source.read_bytes()
+        (mutation / "sample.csv").symlink_to(source)
+        (absent / "sample.csv").symlink_to(source)
+
+        # This is the former whole-file implementation retained locally as a
+        # golden byte oracle for the optimized record splice.
+        with (
+            source.open(newline="", encoding="utf-8") as input_stream,
+            golden.open("w", newline="", encoding="utf-8") as output_stream,
+        ):
+            reader = csv.DictReader(input_stream)
+            fields = list(reader.fieldnames or [])
+            writer = csv.DictWriter(
+                output_stream, fieldnames=fields, lineterminator="\n"
+            )
+            writer.writeheader()
+            changed = False
+            for row in reader:
+                if not changed and row["key"] == "second":
+                    row["value"] = f"{row['value']}-changed"
+                    changed = True
+                writer.writerow(row)
+        if not changed:
+            raise RuntimeError("golden streaming mutation target absent")
+
+        edit_cell(
+            mutation, "sample.csv", lambda row: row["key"] == "second",
+            "value", lambda current: f"{current}-changed",
+        )
+        if source.read_bytes() != original:
+            raise RuntimeError("streaming mutation changed its symlink source")
+        if (mutation / "sample.csv").is_symlink():
+            raise RuntimeError("streaming mutation did not replace its overlay link")
+        if (mutation / "sample.csv").read_bytes() != golden.read_bytes():
+            raise RuntimeError("streaming mutation differs from whole-file golden bytes")
+
+        before_failed_mutation = (mutation / "sample.csv").read_bytes()
+        try:
+            edit_cell(
+                mutation, "sample.csv", lambda row: row["key"] == "absent",
+                "value", "unreachable",
+            )
+        except RuntimeError as error:
+            if "mutation target absent" not in str(error):
+                raise
+        else:
+            raise RuntimeError("missing streaming mutation target was accepted")
+        if (mutation / "sample.csv").read_bytes() != before_failed_mutation:
+            raise RuntimeError("failed streaming mutation replaced its input")
+        if list(mutation.glob(".sample.csv.mutation-*.tmp")):
+            raise RuntimeError("streaming mutation left a temporary file")
+
+        try:
+            edit_cell(
+                absent, "sample.csv", lambda row: row["key"] == "absent",
+                "value", "unreachable",
+            )
+        except RuntimeError as error:
+            if "mutation target absent" not in str(error):
+                raise
+        else:
+            raise RuntimeError("missing symlink-overlay mutation target was accepted")
+        if not (absent / "sample.csv").is_symlink():
+            raise RuntimeError("failed mutation replaced its symlink overlay")
+        if source.read_bytes() != original:
+            raise RuntimeError("failed mutation changed its symlink source")
+        if list(absent.glob(".sample.csv.mutation-*.tmp")):
+            raise RuntimeError("failed symlink mutation left a temporary file")
 
 
 def perturb_compact_dyadic(value: str):
@@ -93,6 +264,41 @@ def rewrite_csv(root: Path, filename: str, content: list[dict[str, str]]) -> Non
         writer = csv.DictWriter(stream, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows(content)
+
+
+def duplicate_small_table_key(
+    root: Path, filename: str, key_fields: tuple[str, ...],
+) -> None:
+    content = oracle.rows(root / filename)
+    if len(content) < 2:
+        raise RuntimeError(f"{filename} row inventory is too small")
+    for field in key_fields:
+        content[1][field] = content[0][field]
+    rewrite_csv(root, filename, content)
+
+
+def reorder_small_table(root: Path, filename: str) -> None:
+    content = oracle.rows(root / filename)
+    if len(content) < 2:
+        raise RuntimeError(f"{filename} row inventory is too small")
+    content[0], content[1] = content[1], content[0]
+    rewrite_csv(root, filename, content)
+
+
+def delete_small_table_row(root: Path, filename: str) -> None:
+    content = oracle.rows(root / filename)
+    if not content:
+        raise RuntimeError(f"{filename} row inventory is empty")
+    del content[0]
+    rewrite_csv(root, filename, content)
+
+
+def reorder_comparator_rows(root: Path) -> None:
+    content = oracle.rows(root / "rational_comparator.csv")
+    if len(content) < 2:
+        raise RuntimeError("rational comparator row inventory is too small")
+    content[0], content[1] = content[1], content[0]
+    rewrite_csv(root, "rational_comparator.csv", content)
 
 
 def representation_scope_rows(root: Path, scope: str) -> tuple[list[dict[str, str]], list[int]]:
@@ -212,6 +418,113 @@ def replace_with_display_rounded_commitment(root: Path) -> None:
             rewrite_csv(root, "representation_error.csv", content)
             return
     raise RuntimeError("no lossy representation display found")
+
+
+def forge_zero_high_precision_representation_error(root: Path) -> None:
+    """Forge a self-consistent zero-error receipt at B256 to fake scaling."""
+    predicate = lambda row: (
+        row["scope"] == "short"
+        and row["scenario_id"] == "k4_breathing"
+        and row["path"] == oracle.CONTROL
+        and row["precision"] == "256"
+        and row["level"] == "0"
+        and row["sample"] == "1"
+    )
+    target = next(
+        (row for row in oracle.iter_rows(root / "representation_error.csv")
+         if predicate(row)),
+        None,
+    )
+    if target is None:
+        raise RuntimeError("high-precision representation mutation target absent")
+    if all(target[f"{metric}_display"] == "0"
+           for metric in oracle.REPRESENTATION_ERROR_METRICS):
+        raise RuntimeError("high-precision representation target is already exact")
+    false_commitment = oracle.representation_error_commitment(
+        target, oracle.Fraction(), oracle.Fraction(), oracle.Fraction()
+    )
+    edit_cell(
+        root, "representation_error.csv", predicate,
+        "exact_errors_sha256", false_commitment,
+    )
+    for metric in oracle.REPRESENTATION_ERROR_METRICS:
+        edit_cell(
+            root, "representation_error.csv", predicate,
+            f"{metric}_display", "0",
+        )
+
+
+def component_wire(sign: int, precision: int, exponent: int, significand: int) -> str:
+    return (
+        bytes((sign,))
+        + precision.to_bytes(2, "little")
+        + exponent.to_bytes(2, "little", signed=True)
+        + significand.to_bytes(precision // 8, "big")
+    ).hex()
+
+
+def mutate_underflow_range_wire_state(root: Path) -> None:
+    """Create a fully spelled out, normalized component below frozen emin."""
+    predicate = lambda row: (
+        row["precision"] == "64"
+        and row["scenario_id"] == "domain_crossing"
+        and row["packet_id"] == "1"
+    )
+    target = next(
+        (row for row in oracle.iter_rows(root / "initial_states.csv")
+         if predicate(row)),
+        None,
+    )
+    if target is None:
+        raise RuntimeError("underflow wire-state mutation target absent")
+    precision = int(target["precision"])
+    sign = int(target["xx_sign"])
+    significand = int(target["xx_significand_hex"], 16)
+    if not 2 ** (precision - 1) <= significand < 2**precision:
+        raise RuntimeError("underflow mutation target is not normalized")
+    exponent = oracle.MIN_EXPONENT - 1
+    exact = oracle.Fraction(significand) * oracle.power_of_two(
+        exponent - (precision - 1)
+    )
+    if sign:
+        exact = -exact
+    for column, value in (
+        ("xx_E", str(exponent)),
+        ("xx_wire_hex", component_wire(sign, precision, exponent, significand)),
+        ("xx_exact_num", str(exact.numerator)),
+        ("xx_exact_den", str(exact.denominator)),
+    ):
+        edit_cell(root, "initial_states.csv", predicate, column, value)
+
+
+def mutate_noncanonical_significand_wire_state(root: Path) -> None:
+    """Encode the same dyadic value with an unnormalized significand."""
+    predicate = lambda row: (
+        row["precision"] == "64"
+        and row["scenario_id"] == "domain_crossing"
+        and row["packet_id"] == "1"
+    )
+    target = next(
+        (row for row in oracle.iter_rows(root / "initial_states.csv")
+         if predicate(row)),
+        None,
+    )
+    if target is None:
+        raise RuntimeError("noncanonical wire-state mutation target absent")
+    precision = int(target["precision"])
+    sign = int(target["xx_sign"])
+    exponent = int(target["xx_E"])
+    significand = int(target["xx_significand_hex"], 16)
+    if significand == 0 or significand % 2:
+        raise RuntimeError("noncanonical significand target is not exactly shiftable")
+    exponent += 1
+    significand //= 2
+    for column, value in (
+        ("xx_E", str(exponent)),
+        ("xx_significand_hex", format(significand, f"0{precision // 4}x")),
+        ("xx_wire_hex", component_wire(sign, precision, exponent, significand)),
+    ):
+        edit_cell(root, "initial_states.csv", predicate, column, value)
 
 
 def add_hidden_column(root: Path) -> None:
@@ -398,9 +711,8 @@ def verify_cached_representation_rows(
 
 
 def first_short_representation(
-    raw: Path, parent_raw: Path, context: dict[str, object],
+    raw: Path, parent_raw: Path, context: dict[str, object], precision: int = 64,
 ) -> dict[tuple[str, ...], dict[str, str]]:
-    precision = 64
     level = 0
     scenario = "k4_breathing"
     path = oracle.CONTROL
@@ -479,6 +791,222 @@ def display_alias_positive() -> None:
         != oracle.representation_error_commitment(identity, second, first, first),
         "exact commitments failed to distinguish display aliases",
     )
+
+
+def preregistered_scaling_semantics_positive() -> None:
+    # Sections 7-8 require unit-roundoff scaling only until an envelope first
+    # enters budget.  A later below-budget pair is not a structural failure
+    # merely because it misses the unconditional B192/B256 diagnostic.
+    budget = oracle.Fraction(1)
+    below_budget = {
+        64: oracle.Fraction(1, 2),
+        96: oracle.Fraction(1, 3),
+        128: oracle.Fraction(1, 4),
+        192: oracle.Fraction(1, 5),
+        256: oracle.Fraction(1, 6),
+    }
+    oracle.require(
+        oracle.scaling_until_budget(below_budget, budget),
+        "post-budget scaling semantics rejected a bounded envelope",
+    )
+    oracle.require(
+        not oracle.unit_roundoff_pair_scales(
+            below_budget[192], below_budget[256], 64
+        ),
+        "post-budget control unexpectedly obeyed unconditional pair scaling",
+    )
+    pre_budget_plateau = {
+        64: oracle.Fraction(1),
+        96: oracle.Fraction(1, 2),
+        128: oracle.Fraction(1, 4),
+        192: oracle.Fraction(1, 8),
+        256: oracle.Fraction(1, 16),
+    }
+    oracle.require(
+        not oracle.scaling_until_budget(pre_budget_plateau, oracle.Fraction(1, 1000)),
+        "pre-budget precision plateau was accepted",
+    )
+    zero_reappears = dict(below_budget)
+    zero_reappears[64] = oracle.Fraction()
+    oracle.require(
+        not oracle.scaling_until_budget(zero_reappears, budget),
+        "exact-zero closure was not enforced",
+    )
+    qualitative, attained = oracle.timestep_contraction_profile(
+        [oracle.Fraction(10), oracle.Fraction(5), oracle.Fraction(5),
+         oracle.Fraction(5), oracle.Fraction(5)],
+        oracle.Fraction(6),
+    )
+    oracle.require(
+        qualitative and attained,
+        "post-floor timestep plateau was rejected",
+    )
+    qualitative, attained = oracle.timestep_contraction_profile(
+        [oracle.Fraction(10)] * len(oracle.LEVELS), oracle.Fraction(1),
+    )
+    oracle.require(
+        not qualitative and not attained,
+        "pre-floor timestep plateau was accepted",
+    )
+
+    anchor_good = {
+        "position_maximum": {
+            64: oracle.Fraction(1),
+            96: oracle.Fraction(1, 2),
+            128: oracle.Fraction(1, 4),
+            192: oracle.Fraction(1, 2**10),
+            256: oracle.Fraction(1, 2**75),
+        }
+    }
+    anchor_budget = {"position_maximum": oracle.Fraction(1)}
+    below_checks, pair_checks, qualified = oracle.qualify_exact_prefix_anchor(
+        anchor_good, anchor_budget, True
+    )
+    oracle.require(all(below_checks.values()) and all(pair_checks.values()) and qualified,
+                   "valid exact-prefix anchor failed")
+    good_contract = (True, all(below_checks.values()), all(pair_checks.values()))
+
+    anchor_bad_pair = {"position_maximum": dict(anchor_good["position_maximum"])}
+    anchor_bad_pair["position_maximum"][256] = oracle.Fraction(1, 32)
+    below_checks, pair_checks, qualified = oracle.qualify_exact_prefix_anchor(
+        anchor_bad_pair, anchor_budget, True
+    )
+    oracle.require(all(below_checks.values()) and not all(pair_checks.values())
+                   and not qualified, "bad anchor pair was accepted")
+    bad_pair_contract = (True, all(below_checks.values()), all(pair_checks.values()))
+    _below, _pair, not_applicable = oracle.qualify_exact_prefix_anchor(
+        anchor_bad_pair, anchor_budget, False
+    )
+    oracle.require(not_applicable, "comparator-complete prefix required an anchor")
+
+    anchor_bad_budget = {"position_maximum": dict(anchor_good["position_maximum"])}
+    anchor_bad_budget["position_maximum"][192] = oracle.Fraction(2**62)
+    anchor_bad_budget["position_maximum"][256] = oracle.Fraction(1, 8)
+    below_checks, pair_checks, qualified = oracle.qualify_exact_prefix_anchor(
+        anchor_bad_budget, anchor_budget, True
+    )
+    oracle.require(not all(below_checks.values()) and all(pair_checks.values())
+                   and not qualified, "over-budget anchor was accepted")
+    bad_budget_contract = (True, all(below_checks.values()), all(pair_checks.values()))
+
+    budget_pass, scaling_pass, aggregate_pass = (
+        oracle.aggregate_required_anchor_contracts(
+            [good_contract, bad_pair_contract, (False, False, False)]
+        )
+    )
+    oracle.require(budget_pass and not scaling_pass and not aggregate_pass,
+                   "one scenario masked another scenario's failed anchor")
+    decision, selected = oracle.scientific_disposition(
+        oracle.PARENT_DECISION, True, scaling_pass, None
+    )
+    oracle.require(
+        decision == "bounded_phase_state_restores_dynamics_but_structure_residuals_unresolved"
+        and selected is None,
+        "anchor-scaling failure routed to the wrong disposition",
+    )
+    budget_pass, scaling_pass, aggregate_pass = (
+        oracle.aggregate_required_anchor_contracts(
+            [good_contract, bad_budget_contract, (False, False, False)]
+        )
+    )
+    oracle.require(not budget_pass and scaling_pass and not aggregate_pass,
+                   "budget-only anchor failure was misclassified")
+    decision, selected = oracle.scientific_disposition(
+        oracle.PARENT_DECISION, True, scaling_pass, None
+    )
+    oracle.require(
+        decision == "bounded_phase_state_converges_but_required_precision_unresolved"
+        and selected is None,
+        "anchor-budget failure routed to the wrong disposition",
+    )
+
+    all_pass = {precision: True for precision in oracle.PRECISIONS}
+    scenario_controls = {
+        precision: {scenario: True for scenario in oracle.SCENARIOS}
+        for precision in oracle.PRECISIONS
+    }
+    scenario_controls[64][oracle.SCENARIOS[0]] = False
+    control_by_precision = oracle.aggregate_precision_scenario_gate(
+        scenario_controls
+    )
+    eligibility = oracle.combine_precision_eligibility(
+        (all_pass, control_by_precision), (True,),
+    )
+    oracle.require(
+        not eligibility[64]
+        and all(eligibility[precision] for precision in oracle.PRECISIONS[1:]),
+        "low-precision control failure leaked into higher-precision eligibility",
+    )
+    shared_failure = oracle.combine_precision_eligibility(
+        (all_pass, control_by_precision), (False,),
+    )
+    oracle.require(
+        not any(shared_failure.values()),
+        "shared precision gate did not disqualify every precision",
+    )
+
+    decision_cases = (
+        (
+            "wrong_parent", True, True, 96,
+            "stop_inconclusive_or_wrong_parent", None,
+        ),
+        (
+            oracle.PARENT_DECISION, False, True, 96,
+            "reject_bounded_binary_fractional_phase_state", None,
+        ),
+        (
+            oracle.PARENT_DECISION, True, False, 96,
+            "bounded_phase_state_restores_dynamics_but_structure_residuals_unresolved",
+            None,
+        ),
+        (
+            oracle.PARENT_DECISION, True, True, 96,
+            "retain_bounded_variable_exponent_phase_state_for_research", 96,
+        ),
+    )
+    for parent, dynamics, structure, candidate, expected_decision, expected_precision \
+            in decision_cases:
+        decision, selected = oracle.scientific_disposition(
+            parent, dynamics, structure, candidate
+        )
+        oracle.require(
+            decision == expected_decision and selected == expected_precision,
+            "scientific decision branch differs",
+        )
+
+    completed = {
+        "decision": oracle.FINAL_DECISION,
+        "selected_precision": oracle.FINAL_SELECTED_PRECISION,
+        "highest_precision_dynamics_pass": True,
+        "structure_residuals_resolved": False,
+        "precision_eligibility": {
+            str(precision): False for precision in oracle.PRECISIONS
+        },
+    }
+    oracle.require_final_outcome(completed)
+    final_outcome_mutations = (
+        ("decision", "bounded_phase_state_converges_but_required_precision_unresolved"),
+        ("selected_precision", 96),
+        ("highest_precision_dynamics_pass", False),
+        ("structure_residuals_resolved", True),
+    )
+    for field, value in final_outcome_mutations:
+        altered = copy.deepcopy(completed)
+        altered[field] = value
+        try:
+            oracle.require_final_outcome(altered)
+        except oracle.OracleError:
+            pass
+        else:
+            raise RuntimeError(f"completed outcome accepted changed {field}")
+    altered = copy.deepcopy(completed)
+    altered["precision_eligibility"]["256"] = True
+    try:
+        oracle.require_final_outcome(altered)
+    except oracle.OracleError:
+        pass
+    else:
+        raise RuntimeError("completed outcome accepted an eligible precision")
 
 
 def first_reversal(raw: Path, context: dict[str, object]) -> None:
@@ -654,6 +1182,34 @@ def mutate_canonical_endpoint(raw: Path, context: dict[str, object]) -> None:
         writer.writerows(content)
 
 
+def transplant_coarser_temporal_endpoint(root: Path) -> None:
+    """Replace the finest endpoint by the coarser result without breaking wire form."""
+    content = oracle.rows(root / "endpoints.csv")
+    common = lambda row: (
+        row["precision"] == "256"
+        and row["scenario_id"] == "k4_internal"
+        and row["path"] == oracle.KDK
+    )
+    targets = [row for row in content if common(row) and row["level"] == "4"]
+    donors = {
+        row["packet_id"]: row
+        for row in content if common(row) and row["level"] == "3"
+    }
+    if not targets or set(donors) != {row["packet_id"] for row in targets}:
+        raise RuntimeError("temporal endpoint transplant inventory differs")
+    component_fields = [
+        f"{prefix}_{suffix}"
+        for prefix in oracle.COMPONENT_PREFIXES
+        for suffix in ("sign", "E", "significand_hex", "wire_hex", "exact_num", "exact_den")
+    ]
+    for target in targets:
+        donor = donors[target["packet_id"]]
+        target["state_hash"] = donor["state_hash"]
+        for field in component_fields:
+            target[field] = donor[field]
+    rewrite_csv(root, "endpoints.csv", content)
+
+
 def half_ulp_bound_negative(raw: Path, context: dict[str, object]) -> None:
     """A value-correct force row must still fail an undersized derived bound."""
     model = context["models"]["k4"]
@@ -689,6 +1245,512 @@ def half_ulp_bound_negative(raw: Path, context: dict[str, object]) -> None:
     except oracle.OracleError:
         return
     raise RuntimeError("independent half-ULP bound negative was not detected")
+
+
+def analytic_phase_certificate_semantics(
+    raw: Path, context: dict[str, object], parent_raw: Path,
+) -> None:
+    """Exercise paired phase certificates and their fail-closed prerequisites."""
+    precision = 96
+    level = 0
+    steps = oracle.STEP_COUNTS[level]
+    interval = oracle.TIMESTEPS_RAW[level]
+    initial = context["state_report"]["initial"]
+    model = context["models"]["k4"]
+    baseline, baseline_stages, baseline_forces = oracle.run_trajectory(
+        model, initial[(precision, "k4_internal", "initial", 0)],
+        interval, steps, oracle.KDK, True,
+    )
+    boosted, boosted_stages, boosted_forces = oracle.run_trajectory(
+        model, initial[(precision, "k4_boosted", "initial", 0)],
+        interval, steps, oracle.KDK, True,
+    )
+    frame = oracle.paired_frame_bound_certificate(
+        baseline, baseline_stages, baseline_forces,
+        boosted, boosted_stages, boosted_forces, interval,
+    )
+    oracle.require(bool(frame["passed"]), "valid paired frame certificate failed")
+
+    compact_baseline_forces = oracle.compact_long_force_trace(baseline_forces)
+    compact_boosted_forces = oracle.compact_long_force_trace(boosted_forces)
+    oracle.require(
+        all(
+            tuple(audit) == oracle.LONG_FORCE_CERTIFICATE_FIELDS
+            for _step, _stage, audit in (
+                compact_baseline_forces + compact_boosted_forces
+            )
+        ),
+        "long force certificate compaction retained the wrong fields",
+    )
+    compact_frame = oracle.paired_frame_bound_certificate(
+        baseline, baseline_stages, compact_baseline_forces,
+        boosted, boosted_stages, compact_boosted_forces, interval,
+    )
+    oracle.require(
+        compact_frame == frame,
+        "compact/full paired frame certificates differ",
+    )
+
+    missing_source = copy.deepcopy(baseline_forces[:1])
+    del missing_source[0][2][oracle.LONG_FORCE_CERTIFICATE_FIELDS[-1]]
+    try:
+        oracle.compact_long_force_trace(missing_source)
+    except oracle.OracleError:
+        pass
+    else:
+        raise RuntimeError("long force compaction accepted a missing causal field")
+
+    backward, backward_stages, backward_forces = oracle.run_trajectory(
+        model, baseline.final, -interval, steps, oracle.KDK, True,
+    )
+    reversal = oracle.paired_reversal_bound_certificate(
+        baseline, baseline_stages, baseline_forces,
+        backward, backward_stages, backward_forces, interval,
+    )
+    oracle.require(bool(reversal["passed"]), "valid paired reversal certificate failed")
+
+    # The full verifier must reuse the already verified short and auxiliary
+    # traces for checkpoint/event comparison.  Exercise that path with a
+    # sentinel that rejects any accidental fourth trajectory replay.
+    half = steps // 2
+    checkpoint = context["state_report"]["checkpoint"][
+        (precision, "k4_internal", oracle.KDK, level)
+    ]
+    first, first_stages, first_forces = oracle.run_trajectory(
+        model, baseline.initial, interval, half, oracle.KDK, True,
+    )
+    resumed, resumed_stages, resumed_forces = oracle.run_trajectory(
+        model, checkpoint, interval, half, oracle.KDK, True,
+    )
+    first_id = f"checkpoint:first:B{precision}:L{level}"
+    resumed_id = f"checkpoint:resumed:B{precision}:L{level}"
+    auxiliary = {
+        first_id: (
+            first, first_stages, first_forces,
+        ),
+        resumed_id: (
+            resumed, resumed_stages, resumed_forces,
+        ),
+    }
+    operation_rows = {
+        row["trajectory_id"]: row for row in oracle.rows(raw / "operation_counts.csv")
+    }
+    checkpoint_row = next(
+        row for row in oracle.rows(raw / "checkpoint.csv")
+        if row["precision"] == str(precision) and row["level"] == str(level)
+    )
+    run_trajectory = oracle.run_trajectory
+
+    def unexpected_replay(*_arguments, **_keywords):
+        raise RuntimeError("cached checkpoint path replayed a trajectory")
+
+    oracle.run_trajectory = unexpected_replay
+    try:
+        oracle.verify_checkpoint_row(
+            checkpoint_row, precision, level, model, baseline.initial, checkpoint,
+            baseline, operation_rows, (baseline_stages, baseline_forces), auxiliary,
+        )
+
+        def require_corrupt_cache_rejected(
+            name: str, cached_whole, cached_auxiliary,
+        ) -> None:
+            try:
+                oracle.verify_checkpoint_row(
+                    checkpoint_row, precision, level, model,
+                    baseline.initial, checkpoint, cached_whole, operation_rows,
+                    (baseline_stages, baseline_forces), cached_auxiliary,
+                )
+            except oracle.OracleError:
+                return
+            raise RuntimeError(f"corrupt checkpoint cache was accepted: {name}")
+
+        corrupted = copy.deepcopy(auxiliary)
+        corrupted[first_id][0].initial.time_raw += 1
+        require_corrupt_cache_rejected("first initial", baseline, corrupted)
+
+        corrupted = copy.deepcopy(auxiliary)
+        corrupted[first_id][0].final.packets[0].x[0] += oracle.Fraction(1)
+        require_corrupt_cache_rejected("first final", baseline, corrupted)
+
+        corrupted = copy.deepcopy(auxiliary)
+        corrupted[resumed_id][0].initial.packets[0].p[0] += oracle.Fraction(1)
+        require_corrupt_cache_rejected("resumed initial", baseline, corrupted)
+
+        corrupted = copy.deepcopy(auxiliary)
+        corrupted[resumed_id][0].final.packets[0].x[0] += oracle.Fraction(1)
+        require_corrupt_cache_rejected("resumed final", baseline, corrupted)
+
+        # Preserve endpoint associations while corrupting the cached terminal
+        # time, so this negative reaches the explicit time-chain check rather
+        # than relying on a phase-state mismatch.
+        wrong_time_whole = copy.deepcopy(baseline)
+        wrong_time_auxiliary = copy.deepcopy(auxiliary)
+        wrong_time_whole.final.time_raw += 1
+        wrong_time_auxiliary[resumed_id][0].final.time_raw += 1
+        require_corrupt_cache_rejected(
+            "whole/resumed final time", wrong_time_whole, wrong_time_auxiliary,
+        )
+    finally:
+        oracle.run_trajectory = run_trajectory
+
+    parent_initial = oracle.grouped(
+        oracle.rows(parent_raw / "initial_states.csv"), ("scenario_id",)
+    )
+    exact_initial = oracle.rational_from_parent_rows(parent_initial[("k4_internal",)])
+    exact_samples, exact_traces, _exact_evaluations = (
+        oracle.run_rational_trajectory_with_traces(
+            model, exact_initial, interval, 1, oracle.KDK,
+        )
+    )
+    bounded_stage_map = oracle.indexed_stage_trace(baseline_stages)
+    bounded_force_map = oracle.grouped_force_trace(baseline_forces)
+    x_radius, p_radius = oracle.zero_phase_radii(baseline.initial)
+    initial_contained, _x_error, _p_error = oracle.bounded_rational_state_containment(
+        baseline.initial, exact_samples[0], x_radius, p_radius,
+    )
+    oracle.require(initial_contained, "B96/Q initial state certificate failed")
+    exact_stages, exact_forces = exact_traces[0]
+    x_radius, p_radius, step_passed, paired = (
+        oracle.advance_bounded_rational_step_bound(
+            bounded_stage_map, bounded_force_map, 1, exact_samples[0],
+            exact_stages, exact_forces, interval, oracle.KDK,
+            x_radius, p_radius,
+        )
+    )
+    oracle.require(step_passed and paired == 2 * len(model.relations),
+                   "B96/Q one-step phase recurrence failed")
+    compact_bounded_force_map = oracle.grouped_force_trace(
+        compact_baseline_forces
+    )
+    compact_recurrence = oracle.advance_bounded_rational_step_bound(
+        bounded_stage_map, compact_bounded_force_map, 1, exact_samples[0],
+        exact_stages, exact_forces, interval, oracle.KDK,
+        *oracle.zero_phase_radii(baseline.initial),
+    )
+    oracle.require(
+        compact_recurrence == (x_radius, p_radius, step_passed, paired),
+        "compact/full bounded-rational recurrence certificates differ",
+    )
+    bounded_energy = oracle.mechanical_energy(model, baseline.samples[1])[2]
+    exact_energy = oracle.rational_energy(model, exact_samples[1])
+    energy_radius = oracle.kinetic_difference_radius_bound(
+        baseline.samples[1], exact_samples[1], p_radius,
+    )
+    bounded_potential = oracle.mechanical_energy(model, baseline.samples[1])[1]
+    exact_potential = oracle.rational_force_and_energy(model, exact_samples[1])[1]
+    oracle.require(
+        bounded_potential == exact_potential
+        and abs(bounded_energy - exact_energy) <= energy_radius,
+        "B96/Q one-step representation-energy certificate failed",
+    )
+
+    scalar_mutation = copy.deepcopy(boosted_forces)
+    scalar_mutation[0][2]["conjugate_bits"] = (
+        int(scalar_mutation[0][2]["conjugate_bits"]) + 1
+    )
+    oracle.require(
+        not oracle.paired_frame_bound_certificate(
+            baseline, baseline_stages, baseline_forces,
+            boosted, boosted_stages, scalar_mutation, interval,
+        )["passed"],
+        "paired frame certificate accepted a force-scalar mismatch",
+    )
+
+    omitted_sources = copy.deepcopy(boosted_forces)
+    zero = (oracle.Fraction(), oracle.Fraction(), oracle.Fraction())
+    for _step, _stage, audit in omitted_sources:
+        for name in (
+            "relative_subtraction_bounds", "impulse_component_bounds",
+            "first_endpoint_bounds", "second_endpoint_bounds",
+        ):
+            audit[name] = zero
+    oracle.require(
+        not oracle.paired_frame_bound_certificate(
+            baseline, baseline_stages, baseline_forces,
+            boosted, boosted_stages, omitted_sources, interval,
+        )["passed"],
+        "paired frame certificate accepted omitted local half-ULP sources",
+    )
+
+    time_mutation = copy.deepcopy(backward_stages)
+    time_mutation[-1][2].time_raw += 1
+    oracle.require(
+        not oracle.paired_reversal_bound_certificate(
+            baseline, baseline_stages, baseline_forces,
+            backward, time_mutation, backward_forces, interval,
+        )["passed"],
+        "paired reversal certificate accepted an incorrect recovered time",
+    )
+
+    rotated, rotated_stages, rotated_forces = oracle.run_trajectory(
+        context["models"]["k4_rotated"],
+        initial[(precision, "k4_rotated", "initial", 0)],
+        interval, steps, oracle.KDK, True,
+    )
+    del rotated
+    rotation = oracle.exact_discrete_equivariance_certificate(
+        baseline_stages, baseline_forces, rotated_stages, rotated_forces, True,
+    )
+    oracle.require(bool(rotation["passed"]),
+                   "valid signed-lattice-rotation certificate failed")
+    primitive_mutation = copy.deepcopy(rotated_forces)
+    impulse = primitive_mutation[0][2]["rounded_impulse"]
+    primitive_mutation[0][2]["rounded_impulse"] = (
+        impulse[0] + oracle.Fraction(1, 2**96), impulse[1], impulse[2]
+    )
+    oracle.require(
+        not oracle.exact_discrete_equivariance_certificate(
+            baseline_stages, baseline_forces,
+            rotated_stages, primitive_mutation, True,
+        )["passed"],
+        "rotation certificate accepted a changed force primitive",
+    )
+
+    permuted_initial = initial[(precision, "k4_internal", "initial", 0)].clone()
+    permuted_initial.packets.reverse()
+    _permuted, permuted_stages, permuted_forces = oracle.run_trajectory(
+        model, permuted_initial, interval, steps, oracle.KDK, True,
+    )
+    permutation = oracle.exact_discrete_equivariance_certificate(
+        baseline_stages, baseline_forces,
+        permuted_stages, permuted_forces, False,
+    )
+    oracle.require(bool(permutation["passed"]),
+                   "valid packet-permutation certificate failed")
+
+    exact_radius = oracle.Fraction(2**300 + 1, 3)
+    inward = oracle.inward_certificate_witness(exact_radius)
+    oracle.require(
+        oracle.Fraction() < inward <= exact_radius,
+        "inward recurrence witness is not a lower witness",
+    )
+    residuals = [oracle.Fraction(), oracle.Fraction(1)]
+    bounds = [oracle.Fraction(), oracle.Fraction()]
+    oracle.require(
+        abs(oracle.least_squares_slope(residuals, oracle.Fraction(1)))
+        > oracle.least_squares_absolute_bound(bounds, oracle.Fraction(1)),
+        "undersized least-squares energy envelope was accepted",
+    )
+
+
+def optimization_equivalence_semantics(
+    context: dict[str, object], parent_raw: Path,
+) -> None:
+    """Keep verifier caches exact and hot comparisons threshold-neutral."""
+    def legacy_relation_is_safe(
+        offset: tuple[oracle.Fraction, ...],
+        reference: tuple[oracle.Fraction, ...],
+    ) -> bool:
+        reference_squared = oracle.dot(reference, reference)
+        return (
+            reference_squared > 0
+            and oracle.dot(offset, offset)
+                >= oracle.SAFE_SQUARED_RATIO * reference_squared
+        )
+
+    def legacy_chord_is_safe(
+        initial: tuple[oracle.Fraction, ...],
+        final: tuple[oracle.Fraction, ...],
+        reference: tuple[oracle.Fraction, ...],
+    ) -> bool:
+        delta = oracle.vector_sub(final, initial)
+        dd = oracle.dot(delta, delta)
+        aa = oracle.dot(initial, initial)
+        ad = oracle.dot(initial, delta)
+        reference_squared = oracle.dot(reference, reference)
+        oracle.require(reference_squared > 0, "zero reference relation")
+        threshold = oracle.SAFE_SQUARED_RATIO * reference_squared
+        if dd == 0 or ad >= 0:
+            return aa >= threshold
+        if ad <= -dd:
+            return oracle.dot(final, final) >= threshold
+        return aa * dd - ad * ad >= threshold * dd
+
+    boundary_reference = (
+        oracle.Fraction(2**24), oracle.Fraction(), oracle.Fraction(),
+    )
+    boundary = (oracle.Fraction(1), oracle.Fraction(), oracle.Fraction())
+    below = (
+        oracle.Fraction(2**80 - 1, 2**80),
+        oracle.Fraction(), oracle.Fraction(),
+    )
+    crossing_first = (
+        oracle.Fraction(-2), oracle.Fraction(), oracle.Fraction(),
+    )
+    crossing_last = (
+        oracle.Fraction(2), oracle.Fraction(), oracle.Fraction(),
+    )
+    oracle.require(
+        oracle._relation_component_safety_witness(
+            boundary,
+            oracle.SAFE_SQUARED_RATIO
+            * oracle.dot(boundary_reference, boundary_reference),
+        )
+        and oracle.relation_is_safe(boundary, boundary_reference)
+        and not oracle.relation_is_safe(below, boundary_reference)
+        and not oracle._chord_component_safety_witness(
+            crossing_first, crossing_last,
+            oracle.SAFE_SQUARED_RATIO
+            * oracle.dot(boundary_reference, boundary_reference),
+        )
+        and oracle._chord_component_safety_witness(
+            boundary, (oracle.Fraction(2),) + boundary[1:],
+            oracle.SAFE_SQUARED_RATIO
+            * oracle.dot(boundary_reference, boundary_reference),
+        )
+        and oracle.chord_is_safe(
+            boundary, (oracle.Fraction(2),) + boundary[1:],
+            boundary_reference,
+        )
+        and not oracle.chord_is_safe(
+            crossing_first, crossing_last, boundary_reference,
+        ),
+        "exact component witness changed a boundary or crossing chord",
+    )
+
+    generator = random.Random(0x4D4C535F51444F4D)
+    for _case in range(512):
+        def random_fraction() -> oracle.Fraction:
+            numerator = generator.randint(-(2**96), 2**96)
+            denominator = generator.randint(1, 2**48)
+            return oracle.Fraction(numerator, denominator)
+
+        reference = tuple(random_fraction() for _axis in range(3))
+        if reference == (oracle.Fraction(),) * 3:
+            reference = (oracle.Fraction(1),) + reference[1:]
+        initial = tuple(random_fraction() for _axis in range(3))
+        final = tuple(random_fraction() for _axis in range(3))
+        oracle.require(
+            oracle.relation_is_safe(initial, reference)
+                == legacy_relation_is_safe(initial, reference)
+            and oracle.chord_is_safe(initial, final, reference)
+                == legacy_chord_is_safe(initial, final, reference),
+            "exact component safety witness differs from the full predicate",
+        )
+
+    fractions = (
+        (oracle.Fraction(-7, 18), oracle.Fraction(5, 42)),
+        (
+            oracle.Fraction(2**4096 + 3, 3 * 2**2048),
+            oracle.Fraction(-(2**4095 - 7), 5 * 2**2047),
+        ),
+        (
+            oracle.Fraction(1, 2**8192),
+            oracle.Fraction(-1, 3 * 2**4096),
+        ),
+    )
+    expected_maximum = max(abs(first - second) for first, second in fractions)
+    maximum_pair = (0, 1)
+    for first, second in fractions:
+        pair = oracle._fraction_difference_pair(first, second)
+        if oracle._fraction_pair_greater(pair, maximum_pair):
+            maximum_pair = pair
+        exact = abs(first - second)
+        oracle.require(
+            oracle.fraction_difference_within(first, second, exact)
+            and not oracle.fraction_difference_within(
+                first, second,
+                exact - oracle.Fraction(1, exact.denominator * 2),
+            ),
+            "cross-product difference containment changed an exact boundary",
+        )
+    oracle.require(
+        oracle.Fraction(*maximum_pair) == expected_maximum,
+        "cross-product maximum differs from canonical Fraction arithmetic",
+    )
+
+    parent_initial = oracle.grouped(
+        oracle.rows(parent_raw / "initial_states.csv"), ("scenario_id",)
+    )
+    exact_initial = oracle.rational_from_parent_rows(parent_initial[("k4_internal",)])
+    encoded = oracle.encode_rational_state(exact_initial)
+    bit_lengths: list[int] = []
+    for packet in sorted(exact_initial.packets, key=lambda value: value.identifier):
+        for value in packet.x + packet.p:
+            _coarse, residual = oracle.split_rational_component(value)
+            bit_lengths.extend((
+                abs(residual.numerator).bit_length(),
+                residual.denominator.bit_length(),
+            ))
+    ordered = sorted(bit_lengths)
+    center = len(ordered) // 2
+    legacy_median = (
+        oracle.Fraction(ordered[center])
+        if len(ordered) % 2
+        else oracle.Fraction(ordered[center - 1] + ordered[center], 2)
+    )
+    metrics = oracle.rational_state_metrics(exact_initial)
+    oracle.require(
+        metrics.maximum_component_bits == max(bit_lengths)
+        and metrics.median_component_bits == legacy_median
+        and metrics.checkpoint_bytes == len(encoded)
+        and metrics.sha256 == oracle.hashlib.sha256(encoded).hexdigest(),
+        "single-pass rational state metrics differ",
+    )
+
+    model = context["models"]["k4"]
+    interval = oracle.TIMESTEPS_RAW[0]
+    for path in (oracle.CONTROL, oracle.KDK):
+        samples, traces, evaluations = oracle.run_rational_trajectory_with_traces(
+            model, exact_initial, interval, 2, path,
+        )
+        direct = oracle.run_rational_trajectory(
+            model, exact_initial, interval, 2, path,
+        )
+        oracle.require(
+            [oracle.encode_rational_state(state) for state in samples]
+            == [oracle.encode_rational_state(state) for state in direct],
+            "cached exact-force trajectory differs from direct replay",
+        )
+        oracle.require(
+            all(
+                trace[0]["committed"] == samples[index + 1]
+                for index, trace in enumerate(traces)
+            ),
+            "cached exact-force trace chain differs",
+        )
+        for state, cached in zip(samples, evaluations):
+            oracle.require(
+                cached == oracle.rational_force_and_energy(model, state),
+                "cached exact force/potential evaluation differs",
+            )
+
+    bounded = context["state_report"]["initial"][
+        (96, "k4_internal", "initial", 0)
+    ]
+    x_radii, p_radii = oracle.zero_phase_radii(bounded)
+    bounded_packets = sorted(bounded.packets, key=lambda value: value.identifier)
+    exact_packets = sorted(exact_initial.packets, key=lambda value: value.identifier)
+    legacy_contained = all(
+        abs(bounded_packet.x[axis] - exact_packet.x[axis])
+            <= x_radii[bounded_packet.identifier][axis]
+        and abs(bounded_packet.p[axis] - exact_packet.p[axis])
+            <= p_radii[bounded_packet.identifier][axis]
+        for bounded_packet, exact_packet in zip(bounded_packets, exact_packets)
+        for axis in range(3)
+    )
+    oracle.require(
+        oracle.bounded_rational_state_is_contained(
+            bounded, exact_initial, x_radii, p_radii,
+        ) == legacy_contained
+        and oracle.bounded_rational_error(bounded, exact_initial)
+            == max(
+                abs(left - right)
+                for bounded_packet, exact_packet in zip(
+                    bounded_packets, exact_packets
+                )
+                for left, right in zip(bounded_packet.x, exact_packet.x)
+            ),
+        "optimized bounded/rational state comparison differs",
+    )
+    wrong_time = exact_initial.clone()
+    wrong_time.time_raw += 1
+    oracle.require(
+        not oracle.bounded_rational_state_is_contained(
+            bounded, wrong_time, x_radii, p_radii,
+        ),
+        "optimized bounded/rational containment ignored time",
+    )
 
 
 def first_comparator_receipt(
@@ -798,6 +1860,8 @@ def main() -> int:
     global oracle
     oracle = load_oracle(Path(__file__).resolve().parents[1])
 
+    print("[bounded-phase mutations] baseline-positives:start", flush=True)
+    streaming_edit_cell_positive()
     context = baseline_context(arguments.raw, arguments.parent_raw)
     first = first_short_replay(arguments.raw, context)
     second = first_short_replay(arguments.raw, context)
@@ -808,6 +1872,8 @@ def main() -> int:
     first_auxiliary_audit(arguments.raw, context)
     first_checkpoint(arguments.raw, context)
     half_ulp_bound_negative(arguments.raw, context)
+    analytic_phase_certificate_semantics(arguments.raw, context, arguments.parent_raw)
+    optimization_equivalence_semantics(context, arguments.parent_raw)
     long_representation_expectations = first_comparator_receipt(
         arguments.raw, arguments.parent_raw, context
     )
@@ -815,12 +1881,18 @@ def main() -> int:
     short_representation_expectations = first_short_representation(
         arguments.raw, arguments.parent_raw, context
     )
+    high_precision_representation_expectations = first_short_representation(
+        arguments.raw, arguments.parent_raw, context, 256
+    )
     selected_representation_expectations = {
         **short_representation_expectations,
+        **high_precision_representation_expectations,
         **long_representation_expectations,
     }
     display_alias_positive()
+    preregistered_scaling_semantics_positive()
     oracle.verify_state_size(arguments.raw, context["state_report"])
+    print("[bounded-phase mutations] baseline-positives:complete", flush=True)
 
     schema = lambda raw, _parent: oracle.verify_schema_metadata_profiles(raw, True)
     parent_check = lambda raw, parent_raw: oracle.verify_parent_hashes(raw, parent_raw)
@@ -845,6 +1917,9 @@ def main() -> int:
     long_energy = lambda raw, _parent: first_long_energy(raw, context)
     checkpoint = lambda raw, _parent: first_checkpoint(raw, context)
     comparator = lambda raw, parent: first_comparator_receipt(raw, parent, context)
+    composition_inventory = (
+        lambda raw, _parent: oracle.verify_reversal_checkpoint_domain_inventory(raw)
+    )
 
     first_force = lambda row: row["trajectory_id"] == (
         f"short:k4_breathing:{oracle.CONTROL}:B64:L0"
@@ -921,12 +1996,19 @@ def main() -> int:
         ("noncanonical_zero_sign", lambda r, _p: edit_cell(
             r, "initial_states.csv", lambda row: int(row["pz_significand_hex"], 16) == 0,
             "pz_sign", "1"), state),
+        ("underflow_range_wire_state",
+         lambda r, _p: mutate_underflow_range_wire_state(r), state),
+        ("nonnormalized_significand_wire_state",
+         lambda r, _p: mutate_noncanonical_significand_wire_state(r), state),
         ("unreduced_state_exact_value", lambda r, _p: (
             edit_cell(r, "initial_states.csv", lambda row: True, "xx_exact_num",
                       lambda value: str(int(value) * 2)),
             edit_cell(r, "initial_states.csv", lambda row: True, "xx_exact_den",
                       lambda value: str(int(value) * 2))), state),
         ("false_temporal_endpoint", lambda r, _p: mutate_canonical_endpoint(r, context),
+         lambda r, _p: endpoint_replay(r, context)),
+        ("false_temporal_order_endpoint_transplant",
+         lambda r, _p: transplant_coarser_temporal_endpoint(r),
          lambda r, _p: endpoint_replay(r, context)),
         ("absolute_position_conversion_masquerade", lambda r, _p: edit_cell(
             r, "force_audit.csv", first_force, "causal_offset_raw_hash", "0" * 64), short),
@@ -972,6 +2054,9 @@ def main() -> int:
          lambda r, _p: alter_representation_display(r), representation),
         ("representation_rounded_commitment",
          lambda r, _p: replace_with_display_rounded_commitment(r), representation),
+        ("false_precision_scaling_evidence",
+         lambda r, _p: forge_zero_high_precision_representation_error(r),
+         cached_representation),
         ("representation_candidate_hash", lambda r, _p: edit_cell(
             r, "representation_error.csv", lambda row: row["scenario_id"] == "k4_breathing"
             and row["path"] == oracle.CONTROL and row["precision"] == "64"
@@ -1017,6 +2102,33 @@ def main() -> int:
         ("false_exact_comparator_receipt", lambda r, _p: edit_cell(
             r, "rational_comparator.csv", lambda row: row["scenario_id"] == "k4_internal"
             and row["level"] == "0", "last_comparator_state_hash", "0" * 64), comparator),
+        ("reordered_exact_comparator_receipts",
+         lambda r, _p: reorder_comparator_rows(r), representation_inventory),
+        ("duplicate_reversibility_key", lambda r, _p: duplicate_small_table_key(
+            r, "reversibility.csv", ("precision", "scenario_id", "level")),
+         composition_inventory),
+        ("missing_reversibility_row",
+         lambda r, _p: delete_small_table_row(r, "reversibility.csv"),
+         composition_inventory),
+        ("reordered_reversibility_rows",
+         lambda r, _p: reorder_small_table(r, "reversibility.csv"),
+         composition_inventory),
+        ("duplicate_checkpoint_key", lambda r, _p: duplicate_small_table_key(
+            r, "checkpoint.csv", ("precision", "level")), composition_inventory),
+        ("missing_checkpoint_row",
+         lambda r, _p: delete_small_table_row(r, "checkpoint.csv"),
+         composition_inventory),
+        ("reordered_checkpoint_rows",
+         lambda r, _p: reorder_small_table(r, "checkpoint.csv"),
+         composition_inventory),
+        ("duplicate_domain_key", lambda r, _p: duplicate_small_table_key(
+            r, "domain.csv", ("precision", "level")), composition_inventory),
+        ("missing_domain_row",
+         lambda r, _p: delete_small_table_row(r, "domain.csv"),
+         composition_inventory),
+        ("reordered_domain_rows",
+         lambda r, _p: reorder_small_table(r, "domain.csv"),
+         composition_inventory),
         ("hidden_state_column", lambda r, _p: add_hidden_column(r), schema),
     ]
 
@@ -1071,6 +2183,10 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="mls-bounded-phase-mutations-") as directory:
         root = Path(directory)
         for index, (name, mutation, detector) in enumerate(cases):
+            print(
+                f"[bounded-phase mutation {index + 1}/{len(cases)}] {name}",
+                flush=True,
+            )
             candidate = root / f"{index:02d}-{name}" / "raw"
             parent_candidate = root / f"{index:02d}-{name}" / "parent"
             overlay(arguments.raw, candidate)
@@ -1087,7 +2203,7 @@ def main() -> int:
     print(
         "BOUNDED FRACTIONAL PHASE STATE ORACLE MUTATIONS: "
         "PASS (2 deterministic replay positives, 1 display-alias positive, "
-        f"1 analytic-bound negative, {detected} mutations)"
+        f"paired analytic-certificate positives/negatives, {detected} mutations)"
     )
     return 0
 

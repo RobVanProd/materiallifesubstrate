@@ -43,6 +43,10 @@ PARENT_ARCHIVE_SIZE = 31_142_852
 PARENT_DECISION = (
     "fractional_phase_state_restores_dynamics_but_bounded_representation_unresolved"
 )
+FINAL_DECISION = (
+    "bounded_phase_state_restores_dynamics_but_structure_residuals_unresolved"
+)
+FINAL_SELECTED_PRECISION = None
 BRANCH = "bounded-fractional-phase-state-lab"
 CAUSAL_STATE_SHAPE = (
     "State(precision,time_raw,packets);"
@@ -295,6 +299,11 @@ def require(condition: bool, message: str) -> None:
         raise OracleError(message)
 
 
+def progress(stage: str) -> None:
+    """Emit deterministic, non-scientific liveness markers for long replays."""
+    print(f"[bounded-phase oracle] {stage}", flush=True)
+
+
 def boolean(value: str) -> bool:
     require(value in {"true", "false"}, f"invalid boolean {value!r}")
     return value == "true"
@@ -360,8 +369,29 @@ def representation_identity_key(row: dict[str, str]) -> tuple[str, ...]:
 def verify_representation_error_inventory(raw: Path) -> dict[str, int]:
     """Require the producer's complete, unique, global row sequence."""
     evidence = rows(raw / "representation_error.csv")
+    comparator_evidence = rows(raw / "rational_comparator.csv")
+    actual_comparators = [
+        (row["scenario_id"], row["level"]) for row in comparator_evidence
+    ]
+    expected_comparator_sequence = [
+        (scenario, str(level))
+        for level in LEVELS for scenario in ("k4_internal", "k4_boosted")
+    ]
+    require(actual_comparators == expected_comparator_sequence,
+            "representation comparator global order differs")
+    comparator_rows = {
+        (row["scenario_id"], row["level"]): row for row in comparator_evidence
+    }
+    require(len(comparator_rows) == len(comparator_evidence),
+            "duplicate rational-comparator identity")
+    require(set(comparator_rows) == set(expected_comparator_sequence),
+            "representation comparator inventory differs")
+
     expected: list[tuple[str, ...]] = []
     for level in LEVELS:
+        # The producer completes all short comparisons for one timestep level,
+        # then appends that level's exact-rational long prefixes before moving
+        # to the next level.  Bind that actual causal materialization order.
         for scenario in SCENARIOS:
             for path in (CONTROL, KDK):
                 for precision in PRECISIONS:
@@ -370,20 +400,6 @@ def verify_representation_error_inventory(raw: Path) -> dict[str, int]:
                             scenario, "short", path, str(precision), str(level),
                             str(TIMESTEPS_RAW[level]), str(sample),
                         ))
-
-    comparator_evidence = rows(raw / "rational_comparator.csv")
-    comparator_rows = {
-        (row["scenario_id"], row["level"]): row for row in comparator_evidence
-    }
-    require(len(comparator_rows) == len(comparator_evidence),
-            "duplicate rational-comparator identity")
-    expected_comparators = {
-        (scenario, str(level))
-        for level in LEVELS for scenario in ("k4_internal", "k4_boosted")
-    }
-    require(set(comparator_rows) == expected_comparators,
-            "representation comparator inventory differs")
-    for level in LEVELS:
         for precision in PRECISIONS:
             for scenario in ("k4_internal", "k4_boosted"):
                 completed = decimal_integer(
@@ -1282,6 +1298,15 @@ class RationalState:
         return RationalState(self.time_raw, [packet.clone() for packet in self.packets])
 
 
+@dataclass(frozen=True)
+class RationalStateMetrics:
+    maximum_component_bits: int
+    median_component_bits: Fraction
+    checkpoint_bytes: int
+    exceeded: bool
+    sha256: str
+
+
 def encode_phase_state(state: PhaseState) -> bytes:
     require(state.precision in PRECISIONS, "phase-state precision differs")
     packets = sorted(state.packets, key=lambda packet: packet.identifier)
@@ -1319,8 +1344,11 @@ def split_rational_component(value: Fraction) -> tuple[int, Fraction]:
     return coarse, residual
 
 
-def encode_rational_state(state: RationalState) -> bytes:
+def _encode_rational_state_with_bits(
+    state: RationalState,
+) -> tuple[bytes, list[int]]:
     output = bytearray(b"MLS-FRACTIONAL-PHASE-v1\x00")
+    bit_lengths: list[int] = []
     output.extend(encode_signed(state.time_raw))
     packets = sorted(state.packets, key=lambda packet: packet.identifier)
     output.extend(len(packets).to_bytes(8, "little"))
@@ -1329,24 +1357,26 @@ def encode_rational_state(state: RationalState) -> bytes:
         output.extend(packet.mass_raw.to_bytes(8, "little", signed=True))
         for value in packet.x + packet.p:
             coarse, residual = split_rational_component(value)
+            bit_lengths.extend((
+                abs(residual.numerator).bit_length(),
+                residual.denominator.bit_length(),
+            ))
             output.extend(coarse.to_bytes(8, "little", signed=True))
             output.extend(encode_fraction(residual))
-    return bytes(output)
+    return bytes(output), bit_lengths
+
+
+def encode_rational_state(state: RationalState) -> bytes:
+    return _encode_rational_state_with_bits(state)[0]
 
 
 def rational_hash(state: RationalState) -> str:
     return hashlib.sha256(encode_rational_state(state)).hexdigest()
 
 
-def rational_complexity(state: RationalState) -> tuple[int, Fraction, int, bool]:
-    """Independently measure the frozen exact-comparator complexity ceilings."""
-    bit_lengths: list[int] = []
-    for packet in sorted(state.packets, key=lambda packet: packet.identifier):
-        for value in packet.x + packet.p:
-            _coarse, residual = split_rational_component(value)
-            bit_lengths.extend((
-                abs(residual.numerator).bit_length(), residual.denominator.bit_length(),
-            ))
+def rational_state_metrics(state: RationalState) -> RationalStateMetrics:
+    """Measure all canonical exact-state commitments from one encoding pass."""
+    encoded, bit_lengths = _encode_rational_state_with_bits(state)
     maximum = max(bit_lengths, default=0)
     ordered = sorted(bit_lengths)
     if not ordered:
@@ -1356,13 +1386,30 @@ def rational_complexity(state: RationalState) -> tuple[int, Fraction, int, bool]
     else:
         center = len(ordered) // 2
         median = Fraction(ordered[center - 1] + ordered[center], 2)
-    checkpoint_bytes = len(encode_rational_state(state))
+    checkpoint_bytes = len(encoded)
     exceeded = (
         maximum > EXACT_MAX_COMPONENT_BITS
         or median > EXACT_MEDIAN_COMPONENT_BITS
         or checkpoint_bytes > EXACT_MAX_CHECKPOINT_BYTES
     )
-    return maximum, median, checkpoint_bytes, exceeded
+    return RationalStateMetrics(
+        maximum,
+        median,
+        checkpoint_bytes,
+        exceeded,
+        hashlib.sha256(encoded).hexdigest(),
+    )
+
+
+def rational_complexity(state: RationalState) -> tuple[int, Fraction, int, bool]:
+    """Independently measure the frozen exact-comparator complexity ceilings."""
+    metrics = rational_state_metrics(state)
+    return (
+        metrics.maximum_component_bits,
+        metrics.median_component_bits,
+        metrics.checkpoint_bytes,
+        metrics.exceeded,
+    )
 
 
 def phase_from_rows(state_rows_: Sequence[dict[str, str]]) -> PhaseState:
@@ -1544,6 +1591,46 @@ def scaled_integer_fraction(value: int, exponent: int) -> Fraction:
     return Fraction(value) * power_of_two(exponent)
 
 
+def _fraction_square_at_least(value: Fraction, threshold: Fraction) -> bool:
+    """Compare ``value^2 >= threshold`` without constructing ``value^2``.
+
+    Exact-Q comparator components can contain hundreds of thousands of bits.
+    Cross multiplication preserves the exact rational predicate while avoiding
+    a canonical ``Fraction`` square (and its otherwise unnecessary reduction).
+    """
+    require(threshold >= 0, "negative squared-magnitude threshold")
+    return (
+        value.numerator * value.numerator * threshold.denominator
+        >= threshold.numerator * value.denominator * value.denominator
+    )
+
+
+def _relation_component_safety_witness(
+    offset: Sequence[Fraction], threshold: Fraction,
+) -> bool:
+    """Prove a relation norm safe from one exact Cartesian component."""
+    return any(_fraction_square_at_least(component, threshold) for component in offset)
+
+
+def _chord_component_safety_witness(
+    initial: Sequence[Fraction], final: Sequence[Fraction], threshold: Fraction,
+) -> bool:
+    """Prove a complete affine chord safe from one non-sign-changing component.
+
+    If one component has the same sign at both endpoints, its magnitude along
+    the entire straight chord is at least the smaller endpoint magnitude.
+    This is only a sufficient witness; callers retain the full exact predicate
+    as a fallback whenever no component supplies the proof.
+    """
+    for first, last in zip(initial, final):
+        same_sign = (first >= 0 and last >= 0) or (first <= 0 and last <= 0)
+        if same_sign and _fraction_square_at_least(
+            min(abs(first), abs(last)), threshold
+        ):
+            return True
+    return False
+
+
 def bounded_chord_certificate(
     initial: Sequence[Fraction], final: Sequence[Fraction],
     reference: Sequence[Fraction], precision: int,
@@ -1602,7 +1689,12 @@ def relation_is_safe(
     if precision is not None:
         return bounded_chord_certificate(offset, offset, reference, precision).safe
     reference_squared = dot(reference, reference)
-    return reference_squared > 0 and dot(offset, offset) >= SAFE_SQUARED_RATIO * reference_squared
+    if reference_squared <= 0:
+        return False
+    threshold = SAFE_SQUARED_RATIO * reference_squared
+    if _relation_component_safety_witness(offset, threshold):
+        return True
+    return dot(offset, offset) >= threshold
 
 
 def chord_is_safe(
@@ -1611,18 +1703,21 @@ def chord_is_safe(
 ) -> bool:
     if precision is not None:
         return bounded_chord_certificate(initial, final, reference, precision).safe
+    reference_squared = dot(reference, reference)
+    require(reference_squared > 0, "zero reference relation")
+    threshold = SAFE_SQUARED_RATIO * reference_squared
+    if _chord_component_safety_witness(initial, final, threshold):
+        return True
     delta = vector_sub(final, initial)
     dd = dot(delta, delta)
     aa = dot(initial, initial)
     ad = dot(initial, delta)
-    reference_squared = dot(reference, reference)
-    require(reference_squared > 0, "zero reference relation")
     if dd == 0 or ad >= 0:
-        return aa >= SAFE_SQUARED_RATIO * reference_squared
+        return aa >= threshold
     if ad <= -dd:
         endpoint = vector_add(initial, delta)
-        return dot(endpoint, endpoint) >= SAFE_SQUARED_RATIO * reference_squared
-    return aa * dd - ad * ad >= SAFE_SQUARED_RATIO * reference_squared * dd
+        return dot(endpoint, endpoint) >= threshold
+    return aa * dd - ad * ad >= threshold * dd
 
 
 def _quick_two_sum(larger: float, smaller: float) -> tuple[float, float]:
@@ -1966,6 +2061,18 @@ def kick(
         )
         audits.append({
             "relation": relation,
+            # Verifier-only causal values.  These never enter the raw schema;
+            # they let paired trajectory certificates propagate each local
+            # RN-even source without replaying a third copy of the force map.
+            "alpha": alpha,
+            "causal_offset": offset,
+            "rounded_impulse": impulse,
+            "first_actual_impulse": first_delta,
+            "second_actual_impulse": second_delta,
+            "relative_subtraction_bounds": tuple(offset_bounds),
+            "impulse_component_bounds": tuple(impulse_bounds),
+            "first_endpoint_bounds": tuple(first_endpoint_bounds),
+            "second_endpoint_bounds": tuple(second_endpoint_bounds),
             "length_bits": struct.unpack(">Q", struct.pack(">d", relation_value.length))[0],
             "conjugate_bits": struct.unpack(">Q", struct.pack(">d", relation_value.conjugate))[0],
             "causal_offset_raw_hash": vector_hash(offset),
@@ -2046,6 +2153,985 @@ def kick_increment_bounds(
         momentum = vector_add(momentum, pair)
         angular = vector_add(angular, relation)
     return momentum, angular
+
+
+PhaseRadii = dict[int, list[Fraction]]
+PhaseShift = dict[int, tuple[Fraction, Fraction, Fraction]]
+StageTrace = list[tuple[
+    int, str, PhaseState, tuple[Fraction, Fraction, Fraction],
+    tuple[Fraction, Fraction, Fraction],
+]]
+ForceTrace = list[tuple[int, str, dict[str, object]]]
+AuditReplay = tuple[Trajectory, StageTrace, ForceTrace]
+
+# Once a long-run force row has been independently checked, only these causal
+# quantities are consumed by the later frame and bounded-vs-exact recurrence
+# certificates. Keeping the raw hashes, residual vectors, and reported bounds
+# for every relation would retain several gigabytes of already-verified data at
+# the finest registered level.
+LONG_FORCE_CERTIFICATE_FIELDS = (
+    "relation",
+    "alpha",
+    "length_bits",
+    "conjugate_bits",
+    "relative_subtraction_bounds",
+    "impulse_component_bounds",
+    "first_endpoint_bounds",
+    "second_endpoint_bounds",
+)
+
+
+def compact_long_force_trace(values: Sequence[
+    tuple[int, str, dict[str, object]]
+]) -> ForceTrace:
+    """Retain exactly the causal fields needed after long-row verification."""
+    result: ForceTrace = []
+    for step, stage, audit in values:
+        missing = [name for name in LONG_FORCE_CERTIFICATE_FIELDS if name not in audit]
+        require(
+            not missing,
+            f"long force certificate field missing: {missing[0] if missing else ''}",
+        )
+        compact = {name: audit[name] for name in LONG_FORCE_CERTIFICATE_FIELDS}
+        require(
+            tuple(compact) == LONG_FORCE_CERTIFICATE_FIELDS,
+            "long force certificate field inventory differs",
+        )
+        result.append((step, stage, compact))
+    return result
+
+
+def inward_certificate_witness(value: Fraction) -> Fraction:
+    """Round a nonnegative monotone recurrence downward to a B256 dyadic.
+
+    Every coefficient and source in the radius recurrence is nonnegative, so
+    the rounded witness is no greater than the corresponding literal exact
+    local-half-ULP recurrence.  It is deliberately *not* assumed to remain an
+    upper bound by rounding alone: every generated stage is checked against the
+    inward witness, re-establishing the induction hypothesis before the next
+    primitive.  Thus a passing check proves residual <= witness <= exact
+    recurrence while avoiding unbounded denominator growth.  B256 is the
+    frozen maximum registered candidate precision, not a fitted constant.
+    """
+    require(value >= 0, "negative paired-certificate radius")
+    if value == 0:
+        return value
+    precision = max(PRECISIONS)
+    exponent = leading_exponent(value)
+    quantum = power_of_two(exponent - (precision - 1))
+    scaled = value / quantum
+    significand = scaled.numerator // scaled.denominator
+    require(2 ** (precision - 1) <= significand < 2**precision,
+            "inward certificate significand is not normalized")
+    return Fraction(significand) * quantum
+
+
+def zero_phase_radii(state: PhaseState) -> tuple[PhaseRadii, PhaseRadii]:
+    identifiers = {packet.identifier for packet in state.packets}
+    require(len(identifiers) == len(state.packets), "duplicate paired-bound packet ID")
+    return (
+        {identifier: [Fraction(), Fraction(), Fraction()] for identifier in identifiers},
+        {identifier: [Fraction(), Fraction(), Fraction()] for identifier in identifiers},
+    )
+
+
+def constant_phase_shift(
+    left: PhaseState, right: PhaseState, momentum: bool,
+) -> PhaseShift:
+    """Recover an exact common affine shift from two registered initial states."""
+    left_packets = packet_lookup(left)
+    right_packets = packet_lookup(right)
+    require(set(left_packets) == set(right_packets), "paired-bound packet IDs differ")
+    name = "p" if momentum else "x"
+    anchor = min(left_packets)
+    shift = tuple(
+        getattr(right_packets[anchor], name)[axis]
+        - getattr(left_packets[anchor], name)[axis]
+        for axis in range(3)
+    )
+    result: PhaseShift = {}
+    for identifier in left_packets:
+        candidate = tuple(
+            getattr(right_packets[identifier], name)[axis]
+            - getattr(left_packets[identifier], name)[axis]
+            for axis in range(3)
+        )
+        require(candidate == shift, "registered frame shift is not common")
+        result[identifier] = shift  # type: ignore[assignment]
+    return result
+
+
+def zero_phase_shift(state: PhaseState) -> PhaseShift:
+    return {
+        packet.identifier: (Fraction(), Fraction(), Fraction())
+        for packet in state.packets
+    }
+
+
+def paired_state_containment(
+    left: PhaseState, right: PhaseState,
+    x_shift: PhaseShift, p_shift: PhaseShift,
+    x_radii: PhaseRadii, p_radii: PhaseRadii,
+) -> tuple[bool, Fraction, Fraction]:
+    """Check every aligned phase component, not only the exported infinity norm."""
+    left_packets = packet_lookup(left)
+    right_packets = packet_lookup(right)
+    require(
+        set(left_packets) == set(right_packets)
+        == set(x_shift) == set(p_shift) == set(x_radii) == set(p_radii),
+        "paired-state certificate inventory differs",
+    )
+    contained = True
+    x_maximum = Fraction()
+    p_maximum = Fraction()
+    for identifier in left_packets:
+        for axis in range(3):
+            x_error = abs(
+                right_packets[identifier].x[axis]
+                - left_packets[identifier].x[axis]
+                - x_shift[identifier][axis]
+            )
+            p_error = abs(
+                right_packets[identifier].p[axis]
+                - left_packets[identifier].p[axis]
+                - p_shift[identifier][axis]
+            )
+            x_maximum = max(x_maximum, x_error)
+            p_maximum = max(p_maximum, p_error)
+            contained = (
+                contained
+                and x_error <= x_radii[identifier][axis]
+                and p_error <= p_radii[identifier][axis]
+            )
+    return contained, x_maximum, p_maximum
+
+
+def relative_observer_radius(radii: PhaseRadii) -> Fraction:
+    """Bound the packet-zero-relative observer used by covariance.csv."""
+    anchor = min(radii)
+    return max(
+        (
+            radii[identifier][axis] + radii[anchor][axis]
+            for identifier in radii if identifier != anchor for axis in range(3)
+        ),
+        default=Fraction(),
+    )
+
+
+def grouped_force_trace(
+    values: Sequence[tuple[int, str, dict[str, object]]],
+) -> dict[tuple[int, str], list[dict[str, object]]]:
+    result: dict[tuple[int, str], list[dict[str, object]]] = defaultdict(list)
+    for step, stage, value in values:
+        result[(step, stage)].append(value)
+    return dict(result)
+
+
+def indexed_stage_trace(
+    values: Sequence[tuple[
+        int, str, PhaseState, tuple[Fraction, Fraction, Fraction],
+        tuple[Fraction, Fraction, Fraction],
+    ]],
+) -> dict[tuple[int, str], PhaseState]:
+    result: dict[tuple[int, str], PhaseState] = {}
+    for step, stage, state, _momentum, _angular in values:
+        key = (step, stage)
+        require(key not in result, "duplicate paired-bound stage")
+        result[key] = state
+    return result
+
+
+def propagate_paired_kick_bound(
+    left_audits: Sequence[dict[str, object]],
+    right_audits: Sequence[dict[str, object]],
+    x_radii: PhaseRadii,
+    p_radii: PhaseRadii,
+    inverse: bool,
+) -> tuple[PhaseRadii, bool, int]:
+    """Propagate a same-time or signed-inverse frozen-force kick enclosure."""
+    if len(left_audits) != len(right_audits):
+        return p_radii, False, 0
+    result = {identifier: list(value) for identifier, value in p_radii.items()}
+    paired = 0
+    scalar_sign = -1 if inverse else 1
+    for left, right in zip(left_audits, right_audits):
+        left_relation = left["relation"]
+        right_relation = right["relation"]
+        assert isinstance(left_relation, Relation) and isinstance(right_relation, Relation)
+        if (
+            left_relation != right_relation
+            or left["length_bits"] != right["length_bits"]
+            or left["conjugate_bits"] != right["conjugate_bits"]
+        ):
+            return p_radii, False, paired
+        left_alpha = left["alpha"]
+        right_alpha = right["alpha"]
+        assert isinstance(left_alpha, Fraction) and isinstance(right_alpha, Fraction)
+        if right_alpha != scalar_sign * left_alpha:
+            return p_radii, False, paired
+        left_offset = left["relative_subtraction_bounds"]
+        right_offset = right["relative_subtraction_bounds"]
+        left_impulse = left["impulse_component_bounds"]
+        right_impulse = right["impulse_component_bounds"]
+        left_first = left["first_endpoint_bounds"]
+        right_first = right["first_endpoint_bounds"]
+        left_second = left["second_endpoint_bounds"]
+        right_second = right["second_endpoint_bounds"]
+        assert all(
+            isinstance(value, tuple)
+            for value in (
+                left_offset, right_offset, left_impulse, right_impulse,
+                left_first, right_first, left_second, right_second,
+            )
+        )
+        for axis in range(3):
+            relation_radius = (
+                x_radii[left_relation.first_id][axis]
+                + x_radii[left_relation.second_id][axis]
+                + left_offset[axis] + right_offset[axis]
+            )
+            impulse_radius = (
+                abs(left_alpha) * relation_radius
+                + left_impulse[axis] + right_impulse[axis]
+            )
+            result[left_relation.first_id][axis] = inward_certificate_witness(
+                result[left_relation.first_id][axis]
+                + impulse_radius + left_first[axis] + right_first[axis]
+            )
+            result[left_relation.second_id][axis] = inward_certificate_witness(
+                result[left_relation.second_id][axis]
+                + impulse_radius + left_second[axis] + right_second[axis]
+            )
+        paired += 1
+    return result, True, paired
+
+
+def propagate_paired_drift_bound(
+    left_before: PhaseState, right_before: PhaseState,
+    left_interval_raw: int, right_interval_raw: int,
+    x_radii: PhaseRadii, p_radii: PhaseRadii,
+    x_shift: PhaseShift, p_shift: PhaseShift,
+    inverse: bool,
+) -> tuple[PhaseRadii, PhaseShift, bool]:
+    """Propagate the exact component recurrence through both RN drift primitives."""
+    left_packets = packet_lookup(left_before)
+    right_packets = packet_lookup(right_before)
+    require(set(left_packets) == set(right_packets), "paired drift packet IDs differ")
+    result = {identifier: list(value) for identifier, value in x_radii.items()}
+    next_shift: PhaseShift = {}
+    expected_sign = -1 if inverse else 1
+    for identifier in left_packets:
+        left_packet = left_packets[identifier]
+        right_packet = right_packets[identifier]
+        require(left_packet.mass_raw == right_packet.mass_raw,
+                "paired drift mass differs")
+        left_coefficient = rn(
+            Fraction(left_interval_raw, left_packet.mass_raw), left_before.precision
+        )
+        right_coefficient = rn(
+            Fraction(right_interval_raw, right_packet.mass_raw), right_before.precision
+        )
+        if right_coefficient != expected_sign * left_coefficient:
+            return x_radii, x_shift, False
+        if inverse:
+            require(
+                p_shift[identifier] == (Fraction(), Fraction(), Fraction()),
+                "inverse paired drift has a nonzero momentum shift",
+            )
+            next_shift[identifier] = x_shift[identifier]
+        else:
+            next_shift[identifier] = tuple(
+                x_shift[identifier][axis]
+                + left_coefficient * p_shift[identifier][axis]
+                for axis in range(3)
+            )  # type: ignore[assignment]
+        for axis in range(3):
+            left_exact_displacement = left_coefficient * left_packet.p[axis]
+            right_exact_displacement = right_coefficient * right_packet.p[axis]
+            left_displacement = rn(left_exact_displacement, left_before.precision)
+            right_displacement = rn(right_exact_displacement, right_before.precision)
+            left_exact_position = left_packet.x[axis] + left_displacement
+            right_exact_position = right_packet.x[axis] + right_displacement
+            result[identifier][axis] = inward_certificate_witness(
+                result[identifier][axis]
+                + abs(left_coefficient) * p_radii[identifier][axis]
+                + component_round_bound(left_exact_displacement, left_before.precision)
+                + component_round_bound(right_exact_displacement, right_before.precision)
+                + component_round_bound(left_exact_position, left_before.precision)
+                + component_round_bound(right_exact_position, right_before.precision)
+            )
+    return result, next_shift, True
+
+
+def paired_frame_bound_certificate(
+    baseline: Trajectory,
+    baseline_stages: Sequence[tuple[
+        int, str, PhaseState, tuple[Fraction, Fraction, Fraction],
+        tuple[Fraction, Fraction, Fraction],
+    ]],
+    baseline_forces: Sequence[tuple[int, str, dict[str, object]]],
+    transformed: Trajectory,
+    transformed_stages: Sequence[tuple[
+        int, str, PhaseState, tuple[Fraction, Fraction, Fraction],
+        tuple[Fraction, Fraction, Fraction],
+    ]],
+    transformed_forces: Sequence[tuple[int, str, dict[str, object]]],
+    interval_raw: int,
+) -> dict[str, object]:
+    """Certify translation/boost covariance from paired causal RN sources."""
+    require(
+        baseline.completed_steps == transformed.completed_steps
+        and baseline.initial.precision == transformed.initial.precision,
+        "paired frame trajectory profile differs",
+    )
+    require(baseline.initial.time_raw == transformed.initial.time_raw,
+            "paired frame initial time differs")
+    x_radii, p_radii = zero_phase_radii(baseline.initial)
+    x_shift = constant_phase_shift(baseline.initial, transformed.initial, False)
+    p_shift = constant_phase_shift(baseline.initial, transformed.initial, True)
+    left_stages = indexed_stage_trace(baseline_stages)
+    right_stages = indexed_stage_trace(transformed_stages)
+    left_forces = grouped_force_trace(baseline_forces)
+    right_forces = grouped_force_trace(transformed_forces)
+    contained, x_aligned, p_aligned = paired_state_containment(
+        baseline.initial, transformed.initial, x_shift, p_shift, x_radii, p_radii
+    )
+    x_relative = relative_state_error(baseline.initial, transformed.initial)
+    p_relative = relative_state_error(baseline.initial, transformed.initial, True)
+    x_bound = relative_observer_radius(x_radii)
+    p_bound = relative_observer_radius(p_radii)
+    contained = contained and x_relative <= x_bound and p_relative <= p_bound
+    scalar_bits_equal = True
+    paired_relations = 0
+    for step in range(1, baseline.completed_steps + 1):
+        for stage in ("first_kick", "drift", "second_kick"):
+            if stage == "first_kick":
+                left_before = (
+                    baseline.initial if step == 1 else left_stages[(step - 1, "committed")]
+                )
+                right_before = (
+                    transformed.initial if step == 1 else right_stages[(step - 1, "committed")]
+                )
+            elif stage == "drift":
+                left_before = left_stages[(step, "first_kick")]
+                right_before = right_stages[(step, "first_kick")]
+            else:
+                left_before = left_stages[(step, "drift")]
+                right_before = right_stages[(step, "drift")]
+            if stage in {"first_kick", "second_kick"}:
+                p_radii, matched, count = propagate_paired_kick_bound(
+                    left_forces[(step, stage)], right_forces[(step, stage)],
+                    x_radii, p_radii, False,
+                )
+                scalar_bits_equal = scalar_bits_equal and matched
+                paired_relations += count
+                if not matched:
+                    contained = False
+                    break
+            else:
+                x_radii, x_shift, matched = propagate_paired_drift_bound(
+                    left_before, right_before, interval_raw, interval_raw,
+                    x_radii, p_radii, x_shift, p_shift, False,
+                )
+                if not matched:
+                    contained = False
+                    break
+                common = x_shift[min(x_shift)]
+                require(all(value == common for value in x_shift.values()),
+                        "frame drift does not have a common affine translation")
+            left_after = left_stages[(step, stage)]
+            right_after = right_stages[(step, stage)]
+            contained = contained and (
+                left_after.time_raw == left_before.time_raw
+                and right_after.time_raw == right_before.time_raw
+                and left_after.time_raw == right_after.time_raw
+            )
+            local, x_value, p_value = paired_state_containment(
+                left_after, right_after, x_shift, p_shift, x_radii, p_radii
+            )
+            contained = contained and local
+            x_aligned = max(x_aligned, x_value)
+            p_aligned = max(p_aligned, p_value)
+        if not scalar_bits_equal:
+            break
+        left_commit = left_stages[(step, "committed")]
+        right_commit = right_stages[(step, "committed")]
+        contained = contained and (
+            left_commit.time_raw == right_commit.time_raw
+            and left_commit.time_raw == left_before.time_raw + interval_raw
+            and right_commit.time_raw == right_before.time_raw + interval_raw
+        )
+        local, x_value, p_value = paired_state_containment(
+            left_commit, right_commit, x_shift, p_shift, x_radii, p_radii
+        )
+        contained = contained and local
+        x_aligned = max(x_aligned, x_value)
+        p_aligned = max(p_aligned, p_value)
+        x_relative = max(x_relative, relative_state_error(left_commit, right_commit))
+        p_relative = max(
+            p_relative, relative_state_error(left_commit, right_commit, True)
+        )
+        x_bound = max(x_bound, relative_observer_radius(x_radii))
+        p_bound = max(p_bound, relative_observer_radius(p_radii))
+        contained = contained and x_relative <= x_bound and p_relative <= p_bound
+    return {
+        "passed": scalar_bits_equal and contained,
+        "force_scalar_bits_equal": scalar_bits_equal,
+        "paired_relation_evaluations": paired_relations,
+        "maximum_aligned_position_residual_raw": ratio_text(x_aligned),
+        "maximum_aligned_momentum_residual_raw": ratio_text(p_aligned),
+        "maximum_relative_position_residual_raw": ratio_text(x_relative),
+        "maximum_relative_momentum_residual_raw": ratio_text(p_relative),
+        "inward_B256_local_half_ulp_position_witness_raw": ratio_text(x_bound),
+        "inward_B256_local_half_ulp_momentum_witness_raw": ratio_text(p_bound),
+    }
+
+
+def paired_reversal_bound_certificate(
+    forward: Trajectory,
+    forward_stages: Sequence[tuple[
+        int, str, PhaseState, tuple[Fraction, Fraction, Fraction],
+        tuple[Fraction, Fraction, Fraction],
+    ]],
+    forward_forces: Sequence[tuple[int, str, dict[str, object]]],
+    backward: Trajectory,
+    backward_stages: Sequence[tuple[
+        int, str, PhaseState, tuple[Fraction, Fraction, Fraction],
+        tuple[Fraction, Fraction, Fraction],
+    ]],
+    backward_forces: Sequence[tuple[int, str, dict[str, object]]],
+    interval_raw: int,
+) -> dict[str, object]:
+    """Certify signed-time recovery by pairing mirrored KDK primitives."""
+    require(
+        forward.completed_steps == backward.completed_steps
+        and forward.final.precision == backward.initial.precision,
+        "paired reversal trajectory profile differs",
+    )
+    require(forward.final.time_raw == backward.initial.time_raw,
+            "paired reversal starting time differs")
+    x_radii, p_radii = zero_phase_radii(forward.final)
+    x_shift = zero_phase_shift(forward.final)
+    p_shift = zero_phase_shift(forward.final)
+    left_stages = indexed_stage_trace(forward_stages)
+    right_stages = indexed_stage_trace(backward_stages)
+    left_forces = grouped_force_trace(forward_forces)
+    right_forces = grouped_force_trace(backward_forces)
+    contained, x_maximum, p_maximum = paired_state_containment(
+        forward.final, backward.initial, x_shift, p_shift, x_radii, p_radii
+    )
+    scalar_bits_equal = True
+    paired_relations = 0
+    steps = forward.completed_steps
+    for reverse_step in range(1, steps + 1):
+        forward_step = steps - reverse_step + 1
+        forward_pre = (
+            forward.initial if forward_step == 1
+            else left_stages[(forward_step - 1, "committed")]
+        )
+        reverse_pre = (
+            backward.initial if reverse_step == 1
+            else right_stages[(reverse_step - 1, "committed")]
+        )
+        contained = contained and (
+            reverse_pre.time_raw == forward_pre.time_raw + interval_raw
+        )
+        # Reverse first kick cancels the corresponding forward second kick.
+        p_radii, matched, count = propagate_paired_kick_bound(
+            left_forces[(forward_step, "second_kick")],
+            right_forces[(reverse_step, "first_kick")],
+            x_radii, p_radii, True,
+        )
+        scalar_bits_equal = scalar_bits_equal and matched
+        paired_relations += count
+        if not matched:
+            contained = False
+            break
+        reverse_first = right_stages[(reverse_step, "first_kick")]
+        forward_drift = left_stages[(forward_step, "drift")]
+        contained = contained and (
+            forward_drift.time_raw == forward_pre.time_raw
+            and reverse_first.time_raw == reverse_pre.time_raw
+        )
+        local, x_value, p_value = paired_state_containment(
+            forward_drift, reverse_first, x_shift, p_shift, x_radii, p_radii
+        )
+        contained = contained and local
+        x_maximum = max(x_maximum, x_value)
+        p_maximum = max(p_maximum, p_value)
+
+        # The signed drift maps the forward post-drift state back toward its
+        # pre-drift state; both local multiply/add RN errors enter the radius.
+        forward_first = left_stages[(forward_step, "first_kick")]
+        x_radii, x_shift, matched = propagate_paired_drift_bound(
+            forward_first, reverse_first,
+            interval_raw, -interval_raw,
+            x_radii, p_radii, x_shift, p_shift, True,
+        )
+        scalar_bits_equal = scalar_bits_equal and matched
+        if not matched:
+            contained = False
+            break
+        reverse_drift = right_stages[(reverse_step, "drift")]
+        contained = contained and (
+            forward_first.time_raw == forward_pre.time_raw
+            and reverse_drift.time_raw == reverse_pre.time_raw
+        )
+        local, x_value, p_value = paired_state_containment(
+            forward_first, reverse_drift, x_shift, p_shift, x_radii, p_radii
+        )
+        contained = contained and local
+        x_maximum = max(x_maximum, x_value)
+        p_maximum = max(p_maximum, p_value)
+
+        # Reverse second kick cancels the corresponding forward first kick.
+        p_radii, matched, count = propagate_paired_kick_bound(
+            left_forces[(forward_step, "first_kick")],
+            right_forces[(reverse_step, "second_kick")],
+            x_radii, p_radii, True,
+        )
+        scalar_bits_equal = scalar_bits_equal and matched
+        paired_relations += count
+        if not matched:
+            contained = False
+            break
+        reverse_second = right_stages[(reverse_step, "second_kick")]
+        contained = contained and (
+            left_stages[(forward_step, "second_kick")].time_raw
+            == forward_pre.time_raw
+            and reverse_second.time_raw == reverse_pre.time_raw
+        )
+        local, x_value, p_value = paired_state_containment(
+            forward_pre, reverse_second, x_shift, p_shift, x_radii, p_radii
+        )
+        contained = contained and local
+        x_maximum = max(x_maximum, x_value)
+        p_maximum = max(p_maximum, p_value)
+        reverse_commit = right_stages[(reverse_step, "committed")]
+        contained = contained and reverse_commit.time_raw == forward_pre.time_raw
+        local, x_value, p_value = paired_state_containment(
+            forward_pre, reverse_commit, x_shift, p_shift, x_radii, p_radii
+        )
+        contained = contained and local
+        x_maximum = max(x_maximum, x_value)
+        p_maximum = max(p_maximum, p_value)
+    final_x = raw_phase_error(backward.final, forward.initial)
+    final_p = raw_phase_error(backward.final, forward.initial, True)
+    contained = contained and backward.final.time_raw == forward.initial.time_raw
+    x_bound = max((max(value) for value in x_radii.values()), default=Fraction())
+    p_bound = max((max(value) for value in p_radii.values()), default=Fraction())
+    contained = contained and final_x <= x_bound and final_p <= p_bound
+    return {
+        "passed": scalar_bits_equal and contained,
+        "force_scalar_bits_equal": scalar_bits_equal,
+        "paired_relation_evaluations": paired_relations,
+        "maximum_stage_position_residual_raw": ratio_text(x_maximum),
+        "maximum_stage_momentum_residual_raw": ratio_text(p_maximum),
+        "final_position_residual_raw": ratio_text(final_x),
+        "final_momentum_residual_raw": ratio_text(final_p),
+        "inward_B256_local_half_ulp_position_witness_raw": ratio_text(x_bound),
+        "inward_B256_local_half_ulp_momentum_witness_raw": ratio_text(p_bound),
+    }
+
+
+def exact_discrete_equivariance_certificate(
+    baseline_stages: Sequence[tuple[
+        int, str, PhaseState, tuple[Fraction, Fraction, Fraction],
+        tuple[Fraction, Fraction, Fraction],
+    ]],
+    baseline_forces: Sequence[tuple[int, str, dict[str, object]]],
+    transformed_stages: Sequence[tuple[
+        int, str, PhaseState, tuple[Fraction, Fraction, Fraction],
+        tuple[Fraction, Fraction, Fraction],
+    ]],
+    transformed_forces: Sequence[tuple[int, str, dict[str, object]]],
+    inverse_signed_axis_rotation: bool,
+) -> dict[str, object]:
+    """Verify exact primitive equivariance, independently of sampled residual rows."""
+
+    def map_vector(value: Sequence[Fraction]) -> tuple[Fraction, Fraction, Fraction]:
+        if inverse_signed_axis_rotation:
+            return value[1], -value[0], value[2]
+        return value[0], value[1], value[2]
+
+    def map_bounds(value: Sequence[Fraction]) -> tuple[Fraction, Fraction, Fraction]:
+        if inverse_signed_axis_rotation:
+            return value[1], value[0], value[2]
+        return value[0], value[1], value[2]
+
+    left_stages = indexed_stage_trace(baseline_stages)
+    right_stages = indexed_stage_trace(transformed_stages)
+    passed = set(left_stages) == set(right_stages)
+    compared_components = 0
+    if passed:
+        for key in left_stages:
+            passed = passed and (
+                left_stages[key].time_raw == right_stages[key].time_raw
+            )
+            left_packets = packet_lookup(left_stages[key])
+            right_packets = packet_lookup(right_stages[key])
+            if set(left_packets) != set(right_packets):
+                passed = False
+                break
+            for identifier in left_packets:
+                passed = passed and (
+                    tuple(left_packets[identifier].x)
+                    == map_vector(right_packets[identifier].x)
+                    and tuple(left_packets[identifier].p)
+                    == map_vector(right_packets[identifier].p)
+                )
+                compared_components += 6
+    left_forces = grouped_force_trace(baseline_forces)
+    right_forces = grouped_force_trace(transformed_forces)
+    passed = passed and set(left_forces) == set(right_forces)
+    paired_relations = 0
+    if passed:
+        for key in left_forces:
+            left_values = left_forces[key]
+            right_values = right_forces[key]
+            if len(left_values) != len(right_values):
+                passed = False
+                break
+            for left, right in zip(left_values, right_values):
+                left_relation = left["relation"]
+                right_relation = right["relation"]
+                assert isinstance(left_relation, Relation)
+                assert isinstance(right_relation, Relation)
+                passed = passed and (
+                    left_relation == right_relation
+                    and left["length_bits"] == right["length_bits"]
+                    and left["conjugate_bits"] == right["conjugate_bits"]
+                    and left["alpha"] == right["alpha"]
+                )
+                for name in (
+                    "causal_offset", "rounded_impulse",
+                    "first_actual_impulse", "second_actual_impulse",
+                ):
+                    value = right[name]
+                    expected = left[name]
+                    assert isinstance(value, tuple) and isinstance(expected, tuple)
+                    passed = passed and expected == map_vector(value)
+                for name in (
+                    "relative_subtraction_bounds", "impulse_component_bounds",
+                    "first_endpoint_bounds", "second_endpoint_bounds",
+                ):
+                    value = right[name]
+                    expected = left[name]
+                    assert isinstance(value, tuple) and isinstance(expected, tuple)
+                    passed = passed and expected == map_bounds(value)
+                paired_relations += 1
+    return {
+        "passed": passed,
+        "exact_state_stage_components_compared": compared_components,
+        "exact_force_primitive_relations_compared": paired_relations,
+        "mapping": (
+            "inverse_signed_axis_rotation_[y,-x,z]"
+            if inverse_signed_axis_rotation else "canonical_packet_id_identity"
+        ),
+        "inward_B256_local_half_ulp_position_witness_raw": "0/1",
+        "inward_B256_local_half_ulp_momentum_witness_raw": "0/1",
+    }
+
+
+def _fraction_difference_pair(
+    first: Fraction, second: Fraction,
+) -> tuple[int, int]:
+    """Return an exact, not-necessarily-reduced |first-second| numerator/denominator.
+
+    The hot exact-comparator path only needs ordering or containment for most
+    components.  Deferring canonical Fraction reduction until the winning
+    maximum avoids repeating large gcd reductions without changing the exact
+    rational value.
+    """
+    common = math.gcd(first.denominator, second.denominator)
+    first_scale = second.denominator // common
+    second_scale = first.denominator // common
+    numerator = abs(
+        first.numerator * first_scale - second.numerator * second_scale
+    )
+    denominator = first.denominator * first_scale
+    return numerator, denominator
+
+
+def _fraction_pair_greater(
+    first: tuple[int, int], second: tuple[int, int],
+) -> bool:
+    return first[0] * second[1] > second[0] * first[1]
+
+
+def fraction_difference_within(
+    first: Fraction, second: Fraction, radius: Fraction,
+) -> bool:
+    """Compare |first-second| <= radius without reducing the difference."""
+    require(radius >= 0, "negative bounded/rational certificate radius")
+    numerator, denominator = _fraction_difference_pair(first, second)
+    return numerator * radius.denominator <= radius.numerator * denominator
+
+
+def bounded_rational_state_is_contained(
+    bounded: PhaseState, exact: RationalState,
+    x_radii: PhaseRadii, p_radii: PhaseRadii,
+) -> bool:
+    """Fast exact componentwise containment used by the recurrence hot path."""
+    bounded_packets = packet_lookup(bounded)
+    exact_packets = {packet.identifier: packet for packet in exact.packets}
+    require(
+        set(bounded_packets) == set(exact_packets) == set(x_radii) == set(p_radii),
+        "bounded/rational certificate inventory differs",
+    )
+    if bounded.time_raw != exact.time_raw:
+        return False
+    return all(
+        fraction_difference_within(
+            bounded_packets[identifier].x[axis],
+            exact_packets[identifier].x[axis],
+            x_radii[identifier][axis],
+        )
+        and fraction_difference_within(
+            bounded_packets[identifier].p[axis],
+            exact_packets[identifier].p[axis],
+            p_radii[identifier][axis],
+        )
+        for identifier in bounded_packets for axis in range(3)
+    )
+
+
+def bounded_rational_state_containment(
+    bounded: PhaseState, exact: RationalState,
+    x_radii: PhaseRadii, p_radii: PhaseRadii,
+) -> tuple[bool, Fraction, Fraction]:
+    bounded_packets = packet_lookup(bounded)
+    exact_packets = {packet.identifier: packet for packet in exact.packets}
+    require(
+        set(bounded_packets) == set(exact_packets) == set(x_radii) == set(p_radii),
+        "bounded/rational certificate inventory differs",
+    )
+    return (
+        bounded_rational_state_is_contained(
+            bounded, exact, x_radii, p_radii,
+        ),
+        bounded_rational_error(bounded, exact),
+        bounded_rational_error(bounded, exact, True),
+    )
+
+
+def kinetic_difference_radius_bound(
+    bounded: PhaseState, exact: RationalState, p_radii: PhaseRadii,
+) -> Fraction:
+    """Bound kinetic-energy error from independently propagated p radii."""
+    bounded_packets = packet_lookup(bounded)
+    exact_packets = {packet.identifier: packet for packet in exact.packets}
+    require(set(bounded_packets) == set(exact_packets) == set(p_radii),
+            "kinetic-radius certificate inventory differs")
+    result = Fraction()
+    for identifier, bounded_packet in bounded_packets.items():
+        exact_packet = exact_packets[identifier]
+        require(bounded_packet.mass_raw == exact_packet.mass_raw,
+                "kinetic-radius certificate mass differs")
+        factor = PQ * PQ / (2 * bounded_packet.mass_raw * MQ)
+        for axis in range(3):
+            result += (
+                factor * p_radii[identifier][axis]
+                * (abs(bounded_packet.p[axis]) + abs(exact_packet.p[axis]))
+            )
+    return result
+
+
+def propagate_bounded_rational_kick_bound(
+    bounded_audits: Sequence[dict[str, object]],
+    exact_relations: Sequence[
+        tuple[Relation, tuple[Fraction, Fraction, Fraction], float, float]
+    ],
+    interval_raw: int,
+    x_radii: PhaseRadii,
+    p_radii: PhaseRadii,
+    precision: int,
+) -> tuple[PhaseRadii, bool, int]:
+    """Advance a one-sided B-vs-exact-Q kick radius from local B half-ULPs."""
+    if len(bounded_audits) != len(exact_relations):
+        return p_radii, False, 0
+    result_radii = {identifier: list(value) for identifier, value in p_radii.items()}
+    c_exact = Fraction(interval_raw) * TQ * LQ / PQ
+    c_bounded = rn(c_exact, precision)
+    c_radius = component_round_bound(c_exact, precision)
+    matched = True
+    paired = 0
+    for audit, exact_relation in zip(bounded_audits, exact_relations):
+        relation, exact_offset, exact_length, exact_conjugate = exact_relation
+        audit_relation = audit["relation"]
+        assert isinstance(audit_relation, Relation)
+        length_bits = struct.unpack(">Q", struct.pack(">d", exact_length))[0]
+        conjugate_bits = struct.unpack(">Q", struct.pack(">d", exact_conjugate))[0]
+        if (
+            audit_relation != relation
+            or audit["length_bits"] != length_bits
+            or audit["conjugate_bits"] != conjugate_bits
+        ):
+            return p_radii, False, paired
+        length = exact_float_bits(length_bits)
+        conjugate = exact_float_bits(conjugate_bits)
+        bounded_coefficient_operand = c_bounded * conjugate
+        bounded_coefficient = rn(bounded_coefficient_operand, precision)
+        coefficient_radius = (
+            abs(conjugate) * c_radius
+            + component_round_bound(bounded_coefficient_operand, precision)
+        )
+        bounded_alpha_operand = bounded_coefficient / length
+        bounded_alpha = rn(bounded_alpha_operand, precision)
+        alpha_radius = (
+            coefficient_radius / abs(length)
+            + component_round_bound(bounded_alpha_operand, precision)
+        )
+        audit_alpha = audit["alpha"]
+        assert isinstance(audit_alpha, Fraction)
+        require(audit_alpha == bounded_alpha,
+                "bounded/rational kick alpha reconstruction differs")
+        offset_bounds = audit["relative_subtraction_bounds"]
+        impulse_bounds = audit["impulse_component_bounds"]
+        first_bounds = audit["first_endpoint_bounds"]
+        second_bounds = audit["second_endpoint_bounds"]
+        assert all(isinstance(value, tuple) for value in (
+            offset_bounds, impulse_bounds, first_bounds, second_bounds
+        ))
+        for axis in range(3):
+            offset_radius = (
+                x_radii[relation.first_id][axis]
+                + x_radii[relation.second_id][axis]
+                + offset_bounds[axis]
+            )
+            impulse_radius = (
+                abs(bounded_alpha) * offset_radius
+                + abs(exact_offset[axis]) * alpha_radius
+                + impulse_bounds[axis]
+            )
+            result_radii[relation.first_id][axis] = inward_certificate_witness(
+                result_radii[relation.first_id][axis]
+                + impulse_radius + first_bounds[axis]
+            )
+            result_radii[relation.second_id][axis] = inward_certificate_witness(
+                result_radii[relation.second_id][axis]
+                + impulse_radius + second_bounds[axis]
+            )
+        paired += 1
+    return result_radii, matched, paired
+
+
+def propagate_bounded_rational_drift_bound(
+    bounded_before: PhaseState,
+    exact_before: RationalState,
+    interval_raw: int,
+    x_radii: PhaseRadii,
+    p_radii: PhaseRadii,
+) -> PhaseRadii:
+    """Advance a one-sided B-vs-exact-Q drift radius from local B half-ULPs."""
+    precision = bounded_before.precision
+    bounded_packets = packet_lookup(bounded_before)
+    exact_packets = {packet.identifier: packet for packet in exact_before.packets}
+    require(set(bounded_packets) == set(exact_packets),
+            "bounded/rational drift packet IDs differ")
+    result = {identifier: list(value) for identifier, value in x_radii.items()}
+    for identifier, bounded_packet in bounded_packets.items():
+        exact_packet = exact_packets[identifier]
+        require(bounded_packet.mass_raw == exact_packet.mass_raw,
+                "bounded/rational drift mass differs")
+        exact_coefficient = Fraction(interval_raw, bounded_packet.mass_raw)
+        bounded_coefficient = rn(exact_coefficient, precision)
+        coefficient_radius = component_round_bound(exact_coefficient, precision)
+        for axis in range(3):
+            bounded_exact_displacement = bounded_coefficient * bounded_packet.p[axis]
+            bounded_displacement = rn(bounded_exact_displacement, precision)
+            bounded_exact_position = bounded_packet.x[axis] + bounded_displacement
+            displacement_radius = (
+                abs(bounded_coefficient) * p_radii[identifier][axis]
+                + abs(exact_packet.p[axis]) * coefficient_radius
+                + component_round_bound(bounded_exact_displacement, precision)
+            )
+            result[identifier][axis] = inward_certificate_witness(
+                result[identifier][axis]
+                + displacement_radius
+                + component_round_bound(bounded_exact_position, precision)
+            )
+    return result
+
+
+def advance_bounded_rational_step_bound(
+    bounded_stages: dict[tuple[int, str], PhaseState],
+    bounded_forces: dict[tuple[int, str], list[dict[str, object]]],
+    step: int,
+    exact_before: RationalState,
+    exact_stages: dict[str, RationalState],
+    exact_forces: dict[str, list[
+        tuple[Relation, tuple[Fraction, Fraction, Fraction], float, float]
+    ]],
+    interval_raw: int,
+    path: str,
+    x_radii: PhaseRadii,
+    p_radii: PhaseRadii,
+) -> tuple[PhaseRadii, PhaseRadii, bool, int]:
+    """Advance and check one complete bounded-vs-Q operation graph."""
+    precision = bounded_stages[(step, "first_kick" if path == KDK else "full_kick")].precision
+    matched = True
+    paired = 0
+    if path == KDK:
+        p_radii, local, count = propagate_bounded_rational_kick_bound(
+            bounded_forces[(step, "first_kick")], exact_forces["first_kick"],
+            interval_raw // 2, x_radii, p_radii, precision,
+        )
+        matched = matched and local
+        paired += count
+        contained = bounded_rational_state_is_contained(
+            bounded_stages[(step, "first_kick")], exact_stages["first_kick"],
+            x_radii, p_radii
+        )
+        matched = matched and contained
+        x_radii = propagate_bounded_rational_drift_bound(
+            bounded_stages[(step, "first_kick")], exact_stages["first_kick"],
+            interval_raw,
+            x_radii, p_radii,
+        )
+        contained = bounded_rational_state_is_contained(
+            bounded_stages[(step, "drift")], exact_stages["drift"], x_radii, p_radii
+        )
+        matched = matched and contained
+        p_radii, local, count = propagate_bounded_rational_kick_bound(
+            bounded_forces[(step, "second_kick")], exact_forces["second_kick"],
+            interval_raw // 2, x_radii, p_radii, precision,
+        )
+        matched = matched and local
+        paired += count
+        contained = bounded_rational_state_is_contained(
+            bounded_stages[(step, "second_kick")], exact_stages["second_kick"],
+            x_radii, p_radii
+        )
+        matched = matched and contained
+    elif path == CONTROL:
+        p_radii, local, count = propagate_bounded_rational_kick_bound(
+            bounded_forces[(step, "full_kick")], exact_forces["full_kick"],
+            interval_raw, x_radii, p_radii, precision,
+        )
+        matched = matched and local
+        paired += count
+        contained = bounded_rational_state_is_contained(
+            bounded_stages[(step, "full_kick")], exact_stages["full_kick"],
+            x_radii, p_radii
+        )
+        matched = matched and contained
+        x_radii = propagate_bounded_rational_drift_bound(
+            bounded_stages[(step, "full_kick")], exact_stages["full_kick"],
+            interval_raw,
+            x_radii, p_radii,
+        )
+        contained = bounded_rational_state_is_contained(
+            bounded_stages[(step, "drift")], exact_stages["drift"], x_radii, p_radii
+        )
+        matched = matched and contained
+    else:
+        raise OracleError("unknown bounded/rational certificate path")
+    contained = bounded_rational_state_is_contained(
+        bounded_stages[(step, "committed")], exact_stages["committed"],
+        x_radii, p_radii
+    )
+    return x_radii, p_radii, matched and contained, paired
 
 
 def one_step(
@@ -2314,10 +3400,15 @@ def rational_force_and_energy(
     return evaluated, exact_float_bits(bits)
 
 
-def rational_kick(model: Model, state: RationalState, interval_raw: int) -> RationalState:
+def rational_kick_from_evaluated(
+    state: RationalState,
+    interval_raw: int,
+    evaluated: Sequence[
+        tuple[Relation, tuple[Fraction, Fraction, Fraction], float, float]
+    ],
+) -> RationalState:
     result = state.clone()
     packets = {packet.identifier: packet for packet in result.packets}
-    evaluated, _potential = rational_force_and_energy(model, state)
     for relation, offset, length, conjugate in evaluated:
         coefficient = (
             Fraction(interval_raw) * TQ * exact_float_bits(
@@ -2328,6 +3419,11 @@ def rational_kick(model: Model, state: RationalState, interval_raw: int) -> Rati
         packets[relation.first_id].p = list(vector_add(packets[relation.first_id].p, impulse))
         packets[relation.second_id].p = list(vector_sub(packets[relation.second_id].p, impulse))
     return result
+
+
+def rational_kick(model: Model, state: RationalState, interval_raw: int) -> RationalState:
+    evaluated, _potential = rational_force_and_energy(model, state)
+    return rational_kick_from_evaluated(state, interval_raw, evaluated)
 
 
 def rational_drift(model: Model, state: RationalState, interval_raw: int) -> RationalState:
@@ -2359,6 +3455,104 @@ def rational_step(
     return work
 
 
+def rational_step_trace(
+    model: Model, state: RationalState, interval_raw: int, path: str,
+    initial_evaluation: tuple[
+        Sequence[
+            tuple[Relation, tuple[Fraction, Fraction, Fraction], float, float]
+        ],
+        Fraction,
+    ] | None = None,
+) -> tuple[
+    RationalState,
+    dict[str, RationalState],
+    dict[str, list[
+        tuple[Relation, tuple[Fraction, Fraction, Fraction], float, float]
+    ]],
+    tuple[
+        list[tuple[
+            Relation, tuple[Fraction, Fraction, Fraction], float, float
+        ]],
+        Fraction,
+    ],
+]:
+    """Advance Q and carry the terminal position's force evaluation forward."""
+    stages: dict[str, RationalState] = {}
+    forces: dict[str, list[
+        tuple[Relation, tuple[Fraction, Fraction, Fraction], float, float]
+    ]] = {}
+    if initial_evaluation is None:
+        current_force, _current_potential = rational_force_and_energy(model, state)
+    else:
+        force, _current_potential = initial_evaluation
+        current_force = list(force)
+    if path == KDK:
+        first_force = current_force
+        forces["first_kick"] = first_force
+        work = rational_kick_from_evaluated(state, interval_raw // 2, first_force)
+        stages["first_kick"] = work.clone()
+        work = rational_drift(model, work, interval_raw)
+        stages["drift"] = work.clone()
+        second_force, second_potential = rational_force_and_energy(model, work)
+        forces["second_kick"] = second_force
+        work = rational_kick_from_evaluated(work, interval_raw // 2, second_force)
+        stages["second_kick"] = work.clone()
+        next_evaluation = (second_force, second_potential)
+    elif path == CONTROL:
+        full_force = current_force
+        forces["full_kick"] = full_force
+        work = rational_kick_from_evaluated(state, interval_raw, full_force)
+        stages["full_kick"] = work.clone()
+        work = rational_drift(model, work, interval_raw)
+        stages["drift"] = work.clone()
+        next_evaluation = rational_force_and_energy(model, work)
+    else:
+        raise OracleError("unknown rational-control path")
+    work.time_raw += interval_raw
+    stages["committed"] = work.clone()
+    # Force and potential depend only on position.  Neither the final kick nor
+    # the time counter changes position, so this exact evaluation is also the
+    # next committed sample's evaluation.
+    return work, stages, forces, next_evaluation
+
+
+def run_rational_trajectory_with_traces(
+    model: Model, initial: RationalState, interval_raw: int, steps: int, path: str,
+) -> tuple[
+    list[RationalState],
+    list[tuple[
+        dict[str, RationalState],
+        dict[str, list[
+            tuple[Relation, tuple[Fraction, Fraction, Fraction], float, float]
+        ]],
+    ]],
+    list[tuple[
+        list[tuple[
+            Relation, tuple[Fraction, Fraction, Fraction], float, float
+        ]],
+        Fraction,
+    ]],
+]:
+    state = initial.clone()
+    samples = [state.clone()]
+    traces: list[tuple[
+        dict[str, RationalState],
+        dict[str, list[
+            tuple[Relation, tuple[Fraction, Fraction, Fraction], float, float]
+        ]],
+    ]] = []
+    evaluation = rational_force_and_energy(model, state)
+    evaluations = [evaluation]
+    for _step in range(steps):
+        state, stages, forces, evaluation = rational_step_trace(
+            model, state, interval_raw, path, evaluation
+        )
+        samples.append(state.clone())
+        traces.append((stages, forces))
+        evaluations.append(evaluation)
+    return samples, traces, evaluations
+
+
 def run_rational_trajectory(
     model: Model, initial: RationalState, interval_raw: int, steps: int, path: str,
 ) -> list[RationalState]:
@@ -2371,11 +3565,40 @@ def run_rational_trajectory(
 
 
 def rational_energy(model: Model, state: RationalState) -> Fraction:
+    kinetic = rational_kinetic_energy(state)
+    _relations, potential = rational_force_and_energy(model, state)
+    return kinetic + potential
+
+
+def rational_kinetic_energy(state: RationalState) -> Fraction:
     kinetic = Fraction()
     for packet in state.packets:
         kinetic += dot(packet.p, packet.p) * PQ * PQ / (2 * packet.mass_raw * MQ)
-    _relations, potential = rational_force_and_energy(model, state)
-    return kinetic + potential
+    return kinetic
+
+
+def bounded_kinetic_energy(state: PhaseState) -> Fraction:
+    kinetic = Fraction()
+    for packet in state.packets:
+        kinetic += dot(packet.p, packet.p) * PQ * PQ / (2 * packet.mass_raw * MQ)
+    return kinetic
+
+
+def least_squares_absolute_bound(
+    values: Sequence[Fraction], dt: Fraction,
+) -> Fraction:
+    """Bound a fitted slope from independent per-sample absolute radii."""
+    require(bool(values), "least-squares bound requires samples")
+    if len(values) == 1:
+        return Fraction()
+    times = [Fraction(index) * dt for index in range(len(values))]
+    mean_time = sum(times, Fraction()) / len(times)
+    denominator = sum(((value - mean_time) ** 2 for value in times), Fraction())
+    require(denominator > 0, "least-squares bound has zero time variance")
+    return sum(
+        (abs(time - mean_time) * radius for time, radius in zip(times, values)),
+        Fraction(),
+    ) / denominator
 
 
 def bounded_rational_error(
@@ -2385,12 +3608,15 @@ def bounded_rational_error(
     exact = {packet.identifier: packet for packet in control.packets}
     require(set(candidate) == set(exact), "bounded/rational packet IDs differ")
     vector_name = "p" if momentum else "x"
-    maximum = Fraction()
+    maximum = (0, 1)
     for identifier in candidate:
         first = getattr(candidate[identifier], vector_name)
         second = getattr(exact[identifier], vector_name)
-        maximum = max(maximum, *(abs(a - b) for a, b in zip(first, second)))
-    return maximum
+        for left, right in zip(first, second):
+            difference = _fraction_difference_pair(left, right)
+            if _fraction_pair_greater(difference, maximum):
+                maximum = difference
+    return Fraction(*maximum)
 
 
 def rational_physical_decimal(state: RationalState) -> list[Decimal]:
@@ -2795,6 +4021,8 @@ def verify_audit_trajectory(
     initial_angular_bound: tuple[Fraction, Fraction, Fraction] | None = None,
 ) -> tuple[
     Trajectory,
+    StageTrace,
+    ForceTrace,
     tuple[Fraction, Fraction, Fraction],
     tuple[Fraction, Fraction, Fraction],
     int,
@@ -2869,7 +4097,8 @@ def verify_audit_trajectory(
     final_momentum_bound = stage_states[-1][3]
     final_angular_bound = stage_states[-1][4]
     return (
-        replay, final_momentum_bound, final_angular_bound,
+        replay, stage_states, force_events,
+        final_momentum_bound, final_angular_bound,
         len(invariant_rows), len(force_rows),
         dict(residual_maxima), dict(bound_maxima),
     )
@@ -2881,7 +4110,7 @@ def verify_auxiliary_audits(
     models: dict[str, Model],
     trajectories: dict[tuple[int, str, str, int], Trajectory],
     operation_rows: dict[str, dict[str, str]],
-) -> dict[str, object]:
+) -> tuple[dict[str, object], dict[str, AuditReplay]]:
     """Independently replay all 225 non-primary, non-long accepted invocations."""
     initial = state_report["initial"]
     checkpoints = state_report["checkpoint"]
@@ -2904,6 +4133,7 @@ def verify_auxiliary_audits(
     bound_maxima: dict[int, dict[str, Fraction]] = {
         precision: defaultdict(Fraction) for precision in PRECISIONS
     }
+    audit_replays: dict[str, AuditReplay] = {}
 
     def consume(
         trajectory_id: str,
@@ -2932,7 +4162,14 @@ def verify_auxiliary_audits(
             trajectory_id, precision, level, model, state, interval_raw, steps,
             baseline, step_offset, momentum_bound, angular_bound,
         )
-        replay, final_p_bound, final_l_bound, inv_rows, frc_rows, residuals, bounds = result
+        (
+            replay, stage_states, force_events,
+            final_p_bound, final_l_bound,
+            inv_rows, frc_rows, residuals, bounds,
+        ) = result
+        require(trajectory_id not in audit_replays,
+                "duplicate auxiliary replay cache identity")
+        audit_replays[trajectory_id] = (replay, stage_states, force_events)
         invocations += 1
         invariant_count += inv_rows
         force_count += frc_rows
@@ -3011,7 +4248,7 @@ def verify_auxiliary_audits(
     except StopIteration:
         pass
     require(invocations == 225, "auxiliary accepted audit invocation count differs")
-    return {
+    report = {
         "invocations": invocations,
         "invariant_rows": invariant_count,
         "force_rows": force_count,
@@ -3028,6 +4265,11 @@ def verify_auxiliary_audits(
             for precision, values in bound_maxima.items()
         },
     }
+    require(set(audit_replays) == {
+        trajectory_id for trajectory_id in operation_rows
+        if trajectory_id.startswith(auxiliary_prefixes)
+    }, "auxiliary replay cache inventory differs")
+    return report, audit_replays
 
 
 def verify_short_replay(
@@ -3036,6 +4278,13 @@ def verify_short_replay(
     models: dict[str, Model],
 ) -> tuple[
     dict[tuple[int, str, str, int], Trajectory],
+    dict[tuple[int, str, str, int], tuple[
+        list[tuple[
+            int, str, PhaseState, tuple[Fraction, Fraction, Fraction],
+            tuple[Fraction, Fraction, Fraction],
+        ]],
+        list[tuple[int, str, dict[str, object]]],
+    ]],
     dict[str, object],
 ]:
     initial = state_report["initial"]
@@ -3074,6 +4323,13 @@ def verify_short_replay(
     )
 
     trajectories: dict[tuple[int, str, str, int], Trajectory] = {}
+    trajectory_traces: dict[tuple[int, str, str, int], tuple[
+        list[tuple[
+            int, str, PhaseState, tuple[Fraction, Fraction, Fraction],
+            tuple[Fraction, Fraction, Fraction],
+        ]],
+        list[tuple[int, str, dict[str, object]]],
+    ]] = {}
     maximum_residuals: dict[int, dict[str, Fraction]] = {
         precision: defaultdict(Fraction) for precision in PRECISIONS
     }
@@ -3100,6 +4356,7 @@ def verify_short_replay(
                     require(encode_phase_state(trajectory.final) == encode_phase_state(expected_endpoint),
                             f"{trajectory_id}: endpoint replay differs")
                     trajectories[key] = trajectory
+                    trajectory_traces[key] = (stage_states, force_events)
 
                     baseline = exact_state_invariants(initial_state)
                     invariant_rows = invariant_groups.get((trajectory_id,), [])
@@ -3168,7 +4425,7 @@ def verify_short_replay(
                         initial_state, STEP_COUNTS[level], trajectory,
                     )
 
-    return trajectories, {
+    return trajectories, trajectory_traces, {
         "trajectories": len(trajectories),
         "maximum_residuals": {
             str(precision): {
@@ -3193,6 +4450,13 @@ def verify_representation_and_temporal(
     parent_raw: Path,
     models: dict[str, Model],
     trajectories: dict[tuple[int, str, str, int], Trajectory],
+    trajectory_traces: dict[tuple[int, str, str, int], tuple[
+        list[tuple[
+            int, str, PhaseState, tuple[Fraction, Fraction, Fraction],
+            tuple[Fraction, Fraction, Fraction],
+        ]],
+        list[tuple[int, str, dict[str, object]]],
+    ]],
     smooth: dict[str, list[Decimal]],
     smooth_traces: dict[str, list[list[Decimal]]],
 ) -> tuple[
@@ -3229,6 +4493,19 @@ def verify_representation_and_temporal(
     exact_truncation: dict[tuple[str, str, int], Decimal] = {}
     exact_truncation_samples: dict[tuple[str, str, int], list[Decimal]] = {}
     bounded_smooth_samples: dict[tuple[str, str, int, int], list[Decimal]] = {}
+    short_energy_bound_pass = {precision: True for precision in PRECISIONS}
+    short_energy_certificate: dict[int, dict[str, object]] = {
+        precision: {
+            "samples": 0,
+            "potential_binary64_value_matches": 0,
+            "force_scalar_pairs": 0,
+            "force_scalar_bit_matches": 0,
+            "paired_kick_relations": 0,
+            "maximum_energy_residual": Fraction(),
+            "maximum_componentwise_energy_bound": Fraction(),
+        }
+        for precision in PRECISIONS
+    }
     model_names = {
         "k4_breathing": "k4", "k4_internal": "k4",
         "octahedron_deformation": "octahedron",
@@ -3238,12 +4515,26 @@ def verify_representation_and_temporal(
             model = models[model_names[scenario]]
             rational_initial = rational_from_parent_rows(parent_initial[(scenario,)])
             for path, parent_path in ((CONTROL, Q_CONTROL), (KDK, Q_KDK)):
-                rational_samples = run_rational_trajectory(
-                    model, rational_initial, TIMESTEPS_RAW[level], STEP_COUNTS[level], path
+                (
+                    rational_samples, rational_traces, rational_evaluations,
+                ) = run_rational_trajectory_with_traces(
+                    model, rational_initial, TIMESTEPS_RAW[level],
+                    STEP_COUNTS[level], path,
+                )
+                rational_hashes = [rational_hash(state) for state in rational_samples]
+                rational_decimals = [
+                    rational_physical_decimal(state) for state in rational_samples
+                ]
+                require(
+                    all(
+                        trace[0]["committed"] == rational_samples[index + 1]
+                        for index, trace in enumerate(rational_traces)
+                    ),
+                    "exact-rational short trace/sample chain differs",
                 )
                 rational_endpoint[(scenario, path, level)] = rational_samples[-1]
                 require(
-                    rational_hash(rational_samples[-1])
+                    rational_hashes[-1]
                     == parent_endpoints[(scenario, parent_path, level)],
                     "exact-rational short positive-control endpoint differs",
                 )
@@ -3253,18 +4544,40 @@ def verify_representation_and_temporal(
                         "smooth/exact-rational sample grids differ")
                 truncation_trace = [
                     foundation.state_norm_difference(
-                        rational_physical_decimal(exact), smooth_state,
-                        len(exact.packets),
+                        exact_decimal, smooth_state, len(exact.packets),
                     )
-                    for exact, smooth_state in zip(rational_samples, registered_smooth)
+                    for exact, exact_decimal, smooth_state in zip(
+                        rational_samples, rational_decimals, registered_smooth
+                    )
                 ]
                 exact_truncation_samples[(scenario, path, level)] = truncation_trace
                 exact_truncation[(scenario, path, level)] = max(
                     truncation_trace, default=Decimal()
                 )
-                rational_energies = [rational_energy(model, state) for state in rational_samples]
+                rational_energy_parts = [
+                    (*evaluation, rational_kinetic_energy(state))
+                    for state, evaluation in zip(
+                        rational_samples, rational_evaluations
+                    )
+                ]
                 for precision in PRECISIONS:
-                    bounded_samples = trajectories[(precision, scenario, path, level)].samples
+                    trajectory_key = (precision, scenario, path, level)
+                    bounded_trajectory = trajectories[trajectory_key]
+                    bounded_samples = bounded_trajectory.samples
+                    bounded_stage_values, bounded_force_values = trajectory_traces[
+                        trajectory_key
+                    ]
+                    bounded_stage_map = indexed_stage_trace(bounded_stage_values)
+                    bounded_force_map = grouped_force_trace(bounded_force_values)
+                    x_radii, p_radii = zero_phase_radii(bounded_trajectory.initial)
+                    certified_exact = rational_samples[0]
+                    initial_contained = bounded_rational_state_is_contained(
+                        bounded_trajectory.initial, certified_exact,
+                        x_radii, p_radii,
+                    )
+                    short_energy_bound_pass[precision] = (
+                        short_energy_bound_pass[precision] and initial_contained
+                    )
                     evidence = representation_groups[(scenario, path, str(precision), str(level))]
                     require(len(evidence) == len(bounded_samples) == len(rational_samples),
                             "short representation sample count differs")
@@ -3272,9 +4585,20 @@ def verify_representation_and_temporal(
                     maximum_p = Fraction()
                     maximum_state = Decimal()
                     smooth_error_trace: list[Decimal] = []
-                    for sample, (row, bounded, exact, exact_energy) in enumerate(
-                        zip(evidence, bounded_samples, rational_samples, rational_energies)
+                    for sample, (
+                        row, bounded, exact, exact_energy_parts,
+                        exact_hash, exact_decimal,
+                    ) in enumerate(
+                        zip(
+                            evidence, bounded_samples, rational_samples,
+                            rational_energy_parts, rational_hashes,
+                            rational_decimals,
+                        )
                     ):
+                        exact_relations, exact_potential, exact_kinetic = exact_energy_parts
+                        exact_energy = exact_kinetic + exact_potential
+                        require(certified_exact == exact,
+                                "short bounded/rational certificate state differs")
                         identity: dict[str, object] = {
                             "scenario_id": scenario,
                             "scope": "short",
@@ -3284,24 +4608,79 @@ def verify_representation_and_temporal(
                             "dt_raw": TIMESTEPS_RAW[level],
                             "sample": sample,
                             "candidate_state_hash": phase_hash(bounded),
-                            "control_state_hash": rational_hash(exact),
+                            "control_state_hash": exact_hash,
                         }
                         x_raw = bounded_rational_error(bounded, exact)
                         p_raw = bounded_rational_error(bounded, exact, True)
                         x_physical = x_raw * LQ
                         p_physical = p_raw * PQ
+                        bounded_decimal = physical_state_decimal_from_phase(bounded)
                         state_error = foundation.state_norm_difference(
-                            physical_state_decimal_from_phase(bounded),
-                            rational_physical_decimal(exact),
-                            len(bounded.packets),
+                            bounded_decimal, exact_decimal, len(bounded.packets),
                         )
                         smooth_error_trace.append(foundation.state_norm_difference(
-                            physical_state_decimal_from_phase(bounded),
+                            bounded_decimal,
                             registered_smooth[sample],
                             len(bounded.packets),
                         ))
-                        bounded_energy = mechanical_energy(model, bounded)[2]
+                        bounded_relations, bounded_potential, _operations = force_and_energy(
+                            model, bounded
+                        )
+                        bounded_energy = (
+                            bounded_kinetic_energy(bounded) + bounded_potential
+                        )
                         energy_error = bounded_energy - exact_energy
+                        potential_match = bounded_potential == exact_potential
+                        force_matches = sum(
+                            1
+                            for bounded_relation, exact_relation in zip(
+                                bounded_relations, exact_relations
+                            )
+                            if (
+                                bounded_relation.relation == exact_relation[0]
+                                and struct.unpack(
+                                    ">Q", struct.pack(">d", bounded_relation.length)
+                                )[0] == struct.unpack(
+                                    ">Q", struct.pack(">d", exact_relation[2])
+                                )[0]
+                                and struct.unpack(
+                                    ">Q", struct.pack(">d", bounded_relation.conjugate)
+                                )[0] == struct.unpack(
+                                    ">Q", struct.pack(">d", exact_relation[3])
+                                )[0]
+                            )
+                        )
+                        force_match = (
+                            len(bounded_relations) == len(exact_relations) == force_matches
+                        )
+                        energy_bound = kinetic_difference_radius_bound(
+                            bounded, exact, p_radii
+                        )
+                        energy_contained = (
+                            potential_match and abs(energy_error) <= energy_bound
+                        )
+                        certificate = short_energy_certificate[precision]
+                        certificate["samples"] = int(certificate["samples"]) + 1
+                        certificate["potential_binary64_value_matches"] = (
+                            int(certificate["potential_binary64_value_matches"])
+                            + int(potential_match)
+                        )
+                        certificate["force_scalar_pairs"] = (
+                            int(certificate["force_scalar_pairs"]) + len(exact_relations)
+                        )
+                        certificate["force_scalar_bit_matches"] = (
+                            int(certificate["force_scalar_bit_matches"]) + force_matches
+                        )
+                        certificate["maximum_energy_residual"] = max(
+                            certificate["maximum_energy_residual"], abs(energy_error)
+                        )
+                        certificate["maximum_componentwise_energy_bound"] = max(
+                            certificate["maximum_componentwise_energy_bound"], energy_bound
+                        )
+                        short_energy_bound_pass[precision] = (
+                            short_energy_bound_pass[precision]
+                            and force_match and energy_contained
+                        )
                         verify_representation_error_row(
                             row, identity, x_raw, p_raw, energy_error,
                         )
@@ -3320,6 +4699,26 @@ def verify_representation_and_temporal(
                         maximum_x = max(maximum_x, x_physical)
                         maximum_p = max(maximum_p, p_physical)
                         maximum_state = max(maximum_state, state_error)
+                        if sample < STEP_COUNTS[level]:
+                            exact_stages, exact_forces = rational_traces[sample]
+                            (
+                                x_radii, p_radii,
+                                recurrence_passed, paired_relations,
+                            ) = advance_bounded_rational_step_bound(
+                                bounded_stage_map, bounded_force_map,
+                                sample + 1, certified_exact,
+                                exact_stages, exact_forces, TIMESTEPS_RAW[level],
+                                path, x_radii, p_radii,
+                            )
+                            certified_exact = exact_stages["committed"]
+                            certificate["paired_kick_relations"] = (
+                                int(certificate["paired_kick_relations"])
+                                + paired_relations
+                            )
+                            short_energy_bound_pass[precision] = (
+                                short_energy_bound_pass[precision]
+                                and recurrence_passed
+                            )
                     envelope[(scenario, path, level, precision)] = (
                         maximum_x, maximum_p, maximum_state
                     )
@@ -3383,7 +4782,9 @@ def verify_representation_and_temporal(
     internal_velocity_temporal_pass: dict[int, bool] = {
         precision: False for precision in PRECISIONS
     }
-    control_pass = True
+    control_scenarios: dict[int, dict[str, bool]] = {
+        precision: {} for precision in PRECISIONS
+    }
     truncation_margin_pass: dict[int, bool] = {precision: True for precision in PRECISIONS}
     for precision in PRECISIONS:
         precision_report: dict[str, object] = {}
@@ -3424,12 +4825,17 @@ def verify_representation_and_temporal(
             temporal_pass[precision] = temporal_pass[precision] and kdk_window
             if scenario == "k4_internal":
                 internal_velocity_temporal_pass[precision] = kdk_window
-            control_pass = control_pass and control_window and separated
+            control_scenarios[precision][scenario] = control_window and separated
             precision_report[scenario] = scenario_report
         convergence[str(precision)] = precision_report
 
+    control_pass = aggregate_precision_scenario_gate(control_scenarios)
     selectable_representation = {
-        precision: component_budget_pass[precision] and truncation_margin_pass[precision]
+        precision: (
+            component_budget_pass[precision]
+            and truncation_margin_pass[precision]
+            and short_energy_bound_pass[precision]
+        )
         for precision in PRECISIONS
     }
     return {
@@ -3441,6 +4847,13 @@ def verify_representation_and_temporal(
         "selection_margin": "R_state<=0.1*T_exact_Q_vs_smooth",
         "component_budget_pass": component_budget_pass,
         "truncation_margin_pass": truncation_margin_pass,
+        "short_energy_componentwise_certificates": {
+            str(precision): {
+                name: ratio_text(value) if isinstance(value, Fraction) else value
+                for name, value in certificate.items()
+            } | {"passed": short_energy_bound_pass[precision]}
+            for precision, certificate in short_energy_certificate.items()
+        },
         "exact_rational_smooth_truncation": {
             f"{scenario}:{path}:L{level}": format(value, ".29E")
             for (scenario, path, level), value in exact_truncation.items()
@@ -3458,7 +4871,11 @@ def verify_representation_and_temporal(
             for (scenario, path, level, precision), values in bounded_smooth_samples.items()
         },
         "convergence": convergence,
-        "control_distinguishable": control_pass,
+        # Keep the aggregate for a concise experiment-wide diagnostic, but do
+        # not use it to make a precision selectable.  The control is evaluated
+        # independently at every registered arithmetic precision.
+        "control_distinguishable": all(control_pass.values()),
+        "control_distinguishable_by_precision": control_pass,
         "kdk_all_scenarios_second_order": temporal_pass,
         "kdk_internal_velocity_second_order": internal_velocity_temporal_pass,
         "maximum_representation_envelopes": {
@@ -3772,33 +5189,72 @@ def verify_checkpoint_row(
     initial_state: PhaseState, checkpoint_state: PhaseState,
     baseline_trajectory: Trajectory | None = None,
     operation_rows: dict[str, dict[str, str]] | None = None,
+    baseline_trace: tuple[StageTrace, ForceTrace] | None = None,
+    auxiliary_replays: dict[str, AuditReplay] | None = None,
 ) -> None:
     """Verify one checkpoint, including every independently framed suffix event."""
     steps = STEP_COUNTS[level]
     half = steps // 2
     dt_raw = TIMESTEPS_RAW[level]
     trajectory_id = f"short:k4_internal:{KDK}:B{precision}:L{level}"
-    whole, whole_stages, whole_forces = run_trajectory(
-        model, initial_state, dt_raw, steps, KDK, True
-    )
+    require((baseline_trajectory is None) == (baseline_trace is None),
+            "checkpoint cached trajectory/trace pairing differs")
+    if baseline_trajectory is None:
+        whole, whole_stages, whole_forces = run_trajectory(
+            model, initial_state, dt_raw, steps, KDK, True
+        )
+    else:
+        whole = baseline_trajectory
+        assert baseline_trace is not None
+        whole_stages, whole_forces = baseline_trace
     require(whole.status == "accepted" and whole.completed_steps == steps,
             "checkpoint whole trajectory did not complete")
-    if baseline_trajectory is not None:
-        require(phase_hash(whole.final) == phase_hash(baseline_trajectory.final),
-                "checkpoint whole replay disagrees with short replay")
+    require(
+        encode_phase_state(whole.initial) == encode_phase_state(initial_state),
+        "checkpoint whole replay initial state differs",
+    )
     require(encode_phase_state(whole.samples[half]) == encode_phase_state(checkpoint_state),
             "interior checkpoint state differs")
-    resumed, resumed_stages, resumed_forces = run_trajectory(
-        model, checkpoint_state, dt_raw, half, KDK, True
-    )
-    require(resumed.status == "accepted" and resumed.completed_steps == half,
-            "checkpoint resumed trajectory did not complete")
-    if operation_rows is not None:
+    first_id = f"checkpoint:first:B{precision}:L{level}"
+    resumed_id = f"checkpoint:resumed:B{precision}:L{level}"
+    if auxiliary_replays is None:
         first, _first_stages, _first_forces = run_trajectory(
             model, initial_state, dt_raw, half, KDK
         )
-        first_id = f"checkpoint:first:B{precision}:L{level}"
-        resumed_id = f"checkpoint:resumed:B{precision}:L{level}"
+        resumed, resumed_stages, resumed_forces = run_trajectory(
+            model, checkpoint_state, dt_raw, half, KDK, True
+        )
+    else:
+        require(first_id in auxiliary_replays and resumed_id in auxiliary_replays,
+                "checkpoint auxiliary replay cache entry missing")
+        first, _first_stages, _first_forces = auxiliary_replays[first_id]
+        resumed, resumed_stages, resumed_forces = auxiliary_replays[resumed_id]
+    require(first.status == "accepted" and first.completed_steps == half,
+            "checkpoint first-half trajectory did not complete")
+    require(resumed.status == "accepted" and resumed.completed_steps == half,
+            "checkpoint resumed trajectory did not complete")
+    require(
+        encode_phase_state(first.initial) == encode_phase_state(initial_state)
+        and encode_phase_state(first.final) == encode_phase_state(checkpoint_state)
+        and encode_phase_state(resumed.initial) == encode_phase_state(checkpoint_state)
+        and encode_phase_state(resumed.final) == encode_phase_state(whole.final),
+        "checkpoint cached trajectory association differs",
+    )
+    initial_time = initial_state.time_raw
+    checkpoint_time = initial_time + half * dt_raw
+    final_time = initial_time + steps * dt_raw
+    require(
+        whole.initial.time_raw == initial_time
+        and whole.samples[half].time_raw == checkpoint_time
+        and whole.final.time_raw == final_time
+        and checkpoint_state.time_raw == checkpoint_time
+        and first.initial.time_raw == initial_time
+        and first.final.time_raw == checkpoint_time
+        and resumed.initial.time_raw == checkpoint_time
+        and resumed.final.time_raw == final_time,
+        "checkpoint cached trajectory time association differs",
+    )
+    if operation_rows is not None:
         verify_operation_row(
             operation_rows[first_id], first_id, precision, level, KDK,
             model, initial_state, half, first,
@@ -3845,29 +5301,85 @@ def verify_checkpoint_row(
     )
 
 
+def verify_reversal_checkpoint_domain_inventory(
+    raw: Path,
+) -> tuple[
+    dict[tuple[int, str, int], dict[str, str]],
+    dict[tuple[int, int], dict[str, str]],
+    dict[tuple[int, int], dict[str, str]],
+]:
+    """Bind each small composition table to its exact canonical row stream."""
+    reversal_evidence = rows(raw / "reversibility.csv")
+    reversal_keys = [
+        (int(row["precision"]), row["scenario_id"], int(row["level"]))
+        for row in reversal_evidence
+    ]
+    expected_reversal = [
+        (precision, scenario, level)
+        for level in LEVELS for precision in PRECISIONS for scenario in SCENARIOS
+    ]
+    require(len(reversal_evidence) == len(expected_reversal),
+            "reversibility row count differs")
+    require(len(set(reversal_keys)) == len(reversal_keys),
+            "duplicate reversibility key")
+    require(reversal_keys == expected_reversal,
+            "reversibility canonical producer order differs")
+
+    expected_profile = [
+        (precision, level) for level in LEVELS for precision in PRECISIONS
+    ]
+    checkpoint_evidence = rows(raw / "checkpoint.csv")
+    checkpoint_keys = [
+        (int(row["precision"]), int(row["level"]))
+        for row in checkpoint_evidence
+    ]
+    require(len(checkpoint_evidence) == len(expected_profile),
+            "checkpoint row count differs")
+    require(len(set(checkpoint_keys)) == len(checkpoint_keys),
+            "duplicate checkpoint key")
+    require(checkpoint_keys == expected_profile,
+            "checkpoint canonical producer order differs")
+
+    domain_evidence = rows(raw / "domain.csv")
+    domain_keys = [
+        (int(row["precision"]), int(row["level"]))
+        for row in domain_evidence
+    ]
+    require(len(domain_evidence) == len(expected_profile),
+            "domain row count differs")
+    require(len(set(domain_keys)) == len(domain_keys),
+            "duplicate domain key")
+    require(domain_keys == expected_profile,
+            "domain canonical producer order differs")
+
+    return (
+        dict(zip(reversal_keys, reversal_evidence)),
+        dict(zip(checkpoint_keys, checkpoint_evidence)),
+        dict(zip(domain_keys, domain_evidence)),
+    )
+
+
 def verify_reversal_checkpoint_covariance_domain(
     raw: Path,
     state_report: dict[str, object],
     models: dict[str, Model],
     trajectories: dict[tuple[int, str, str, int], Trajectory],
+    trajectory_traces: dict[tuple[int, str, str, int], tuple[
+        list[tuple[
+            int, str, PhaseState, tuple[Fraction, Fraction, Fraction],
+            tuple[Fraction, Fraction, Fraction],
+        ]],
+        list[tuple[int, str, dict[str, object]]],
+    ]],
 ) -> tuple[dict[str, object], dict[int, bool]]:
     initial = state_report["initial"]
     checkpoint_states = state_report["checkpoint"]
     recovery_states = state_report["recovery"]
     assert isinstance(initial, dict) and isinstance(checkpoint_states, dict)
     assert isinstance(recovery_states, dict)
-    reversal_rows = {
-        (int(row["precision"]), row["scenario_id"], int(row["level"])): row
-        for row in rows(raw / "reversibility.csv")
-    }
-    checkpoint_rows = {
-        (int(row["precision"]), int(row["level"])): row
-        for row in rows(raw / "checkpoint.csv")
-    }
-    domain_rows = {
-        (int(row["precision"]), int(row["level"])): row
-        for row in rows(raw / "domain.csv")
-    }
+    reversal_rows, checkpoint_rows, domain_rows = (
+        verify_reversal_checkpoint_domain_inventory(raw)
+    )
     operation_evidence = rows(raw / "operation_counts.csv")
     operation_rows = {row["trajectory_id"]: row for row in operation_evidence}
     require(len(operation_rows) == len(operation_evidence),
@@ -3898,7 +5410,7 @@ def verify_reversal_checkpoint_covariance_domain(
     require(len(expected_operation_ids) == 425
             and set(operation_rows) == expected_operation_ids,
             "complete accepted operation-audit inventory differs")
-    auxiliary_audits = verify_auxiliary_audits(
+    auxiliary_audits, auxiliary_replays = verify_auxiliary_audits(
         raw, state_report, models, trajectories, operation_rows
     )
     expected_reversal = {
@@ -3906,22 +5418,20 @@ def verify_reversal_checkpoint_covariance_domain(
         for precision in PRECISIONS for scenario in SCENARIOS for level in LEVELS
     }
     require(set(reversal_rows) == expected_reversal, "reversibility inventory differs")
-    require(set(checkpoint_rows) == {(precision, level) for precision in PRECISIONS for level in LEVELS},
-            "checkpoint inventory differs")
-    require(set(domain_rows) == {(precision, level) for precision in PRECISIONS for level in LEVELS},
-            "domain inventory differs")
 
     precision_pass = {precision: True for precision in PRECISIONS}
     recovery_max: dict[int, tuple[Fraction, Fraction]] = {}
+    recovery_bound_pass = {precision: True for precision in PRECISIONS}
+    recovery_bound_report: dict[str, object] = {}
     complete_checkpoint_event_streams = 0
     for precision, scenario, level in sorted(expected_reversal):
         initial_state = initial[(precision, scenario, "initial", 0)]
         forward = trajectories[(precision, scenario, KDK, level)]
         model = models["octahedron" if scenario == "octahedron_deformation" else "k4"]
-        backward, _stages, _forces = run_trajectory(
-            model, forward.final, -TIMESTEPS_RAW[level], STEP_COUNTS[level], KDK
-        )
         reverse_id = f"reverse:{scenario}:B{precision}:L{level}"
+        require(reverse_id in auxiliary_replays,
+                "signed-time auxiliary replay cache entry missing")
+        backward, backward_stages, backward_forces = auxiliary_replays[reverse_id]
         verify_operation_row(
             operation_rows[reverse_id], reverse_id, precision, level, KDK, model,
             forward.final, STEP_COUNTS[level], backward,
@@ -3949,6 +5459,18 @@ def verify_reversal_checkpoint_covariance_domain(
                     f"reversibility {prefix} differs")
         old = recovery_max.get(precision, (Fraction(), Fraction()))
         recovery_max[precision] = (max(old[0], x_raw * LQ), max(old[1], p_raw * PQ))
+        forward_stages, forward_forces = trajectory_traces[
+            (precision, scenario, KDK, level)
+        ]
+        certificate = paired_reversal_bound_certificate(
+            forward, forward_stages, forward_forces,
+            backward, backward_stages, backward_forces,
+            TIMESTEPS_RAW[level],
+        )
+        recovery_bound_report[f"{scenario}:B{precision}:L{level}"] = certificate
+        recovery_bound_pass[precision] = (
+            recovery_bound_pass[precision] and bool(certificate["passed"])
+        )
 
     for precision in PRECISIONS:
         for level in LEVELS:
@@ -3960,6 +5482,8 @@ def verify_reversal_checkpoint_covariance_domain(
                 row, precision, level, models["k4"],
                 initial[(precision, "k4_internal", "initial", 0)],
                 expected_checkpoint, baseline, operation_rows,
+                trajectory_traces[(precision, "k4_internal", KDK, level)],
+                auxiliary_replays,
             )
             complete_checkpoint_event_streams += 1
 
@@ -4023,19 +5547,33 @@ def verify_reversal_checkpoint_covariance_domain(
     }, "short covariance inventory differs")
     covariance_max: dict[int, tuple[Fraction, Fraction]] = {}
     covariance_level: dict[tuple[str, int, int], tuple[Fraction, Fraction, Fraction, Fraction]] = {}
+    frame_bound_pass = {precision: True for precision in PRECISIONS}
+    frame_bound_report: dict[str, object] = {}
     rotation_classification: dict[tuple[int, int], str] = {}
     for precision in PRECISIONS:
         for level in LEVELS:
             baseline = trajectories[(precision, "k4_internal", KDK, level)]
-            transformed_runs: dict[str, tuple[Trajectory, list[PhaseState], PhaseState, Model]] = {}
+            baseline_stages, baseline_forces = trajectory_traces[
+                (precision, "k4_internal", KDK, level)
+            ]
+            transformed_runs: dict[str, tuple[
+                Trajectory, list[PhaseState], PhaseState, Model,
+                list[tuple[
+                    int, str, PhaseState, tuple[Fraction, Fraction, Fraction],
+                    tuple[Fraction, Fraction, Fraction],
+                ]],
+                list[tuple[int, str, dict[str, object]]],
+            ]] = {}
             for kind, scenario, model_name in (
                 ("translation", "k4_translated", "k4_translated"),
                 ("galilean_boost", "k4_boosted", "k4"),
                 ("proper_lattice_rotation", "k4_rotated", "k4_rotated"),
             ):
-                candidate, _stages, _forces = run_trajectory(
-                    models[model_name], initial[(precision, scenario, "initial", 0)],
-                    TIMESTEPS_RAW[level], STEP_COUNTS[level], KDK
+                operation_id = f"covariance:{kind}:B{precision}:L{level}"
+                require(operation_id in auxiliary_replays,
+                        "covariance auxiliary replay cache entry missing")
+                candidate, candidate_stages, candidate_forces = (
+                    auxiliary_replays[operation_id]
                 )
                 transformed = [
                     inverse_rotate(state) if kind == "proper_lattice_rotation" else state
@@ -4044,8 +5582,8 @@ def verify_reversal_checkpoint_covariance_domain(
                 transformed_runs[kind] = (
                     candidate, transformed,
                     initial[(precision, scenario, "initial", 0)], models[model_name],
+                    candidate_stages, candidate_forces,
                 )
-                operation_id = f"covariance:{kind}:B{precision}:L{level}"
                 verify_operation_row(
                     operation_rows[operation_id], operation_id, precision, level, KDK,
                     models[model_name], initial[(precision, scenario, "initial", 0)],
@@ -4053,18 +5591,24 @@ def verify_reversal_checkpoint_covariance_domain(
                 )
             permuted = initial[(precision, "k4_internal", "initial", 0)].clone()
             permuted.packets.reverse()
-            permutation, _stages, _forces = run_trajectory(
-                models["k4"], permuted, TIMESTEPS_RAW[level], STEP_COUNTS[level], KDK
-            )
             permutation_id = f"covariance:packet_permutation:B{precision}:L{level}"
+            require(permutation_id in auxiliary_replays,
+                    "permutation auxiliary replay cache entry missing")
+            permutation, permutation_stages, permutation_forces = (
+                auxiliary_replays[permutation_id]
+            )
             verify_operation_row(
                 operation_rows[permutation_id], permutation_id, precision, level, KDK,
                 models["k4"], permuted, STEP_COUNTS[level], permutation,
             )
             transformed_runs["packet_permutation"] = (
                 permutation, permutation.samples, permuted, models["k4"],
+                permutation_stages, permutation_forces,
             )
-            for kind, (_candidate, transformed, _candidate_initial, _model) in transformed_runs.items():
+            for kind, (
+                candidate, transformed, _candidate_initial, _model,
+                candidate_stages, candidate_forces,
+            ) in transformed_runs.items():
                 evidence = covariance_groups[(kind, str(precision), str(level))]
                 require(len(evidence) == len(baseline.samples) == len(transformed),
                         "short covariance sample count differs")
@@ -4114,6 +5658,29 @@ def verify_reversal_checkpoint_covariance_domain(
                     else:
                         classification = "unresolved"
                     rotation_classification[(precision, level)] = classification
+                if kind in {"translation", "galilean_boost"}:
+                    certificate = paired_frame_bound_certificate(
+                        baseline, baseline_stages, baseline_forces,
+                        candidate, candidate_stages, candidate_forces,
+                        TIMESTEPS_RAW[level],
+                    )
+                else:
+                    certificate = exact_discrete_equivariance_certificate(
+                        baseline_stages, baseline_forces,
+                        candidate_stages, candidate_forces,
+                        kind == "proper_lattice_rotation",
+                    )
+                    certificate["sampled_relative_residuals_exact_zero"] = (
+                        level_x == 0 and level_p == 0
+                    )
+                    certificate["passed"] = (
+                        bool(certificate["passed"])
+                        and bool(certificate["sampled_relative_residuals_exact_zero"])
+                    )
+                frame_bound_report[f"short:{kind}:B{precision}:L{level}"] = certificate
+                frame_bound_pass[precision] = (
+                    frame_bound_pass[precision] and bool(certificate["passed"])
+                )
 
     rotation_precision_scaling: dict[int, bool] = {}
     for level in LEVELS:
@@ -4167,6 +5734,8 @@ def verify_reversal_checkpoint_covariance_domain(
         precision_pass[precision] = (
             recovery[0] <= POSITION_BUDGET and recovery[1] <= MOMENTUM_BUDGET
             and covariance[0] <= POSITION_BUDGET and covariance[1] <= MOMENTUM_BUDGET
+            and recovery_bound_pass[precision]
+            and frame_bound_pass[precision]
             and x_qualitative and x_attained and p_qualitative and p_attained
             and all(
                 covariance_level[("proper_lattice_rotation", precision, level)][0]
@@ -4179,6 +5748,14 @@ def verify_reversal_checkpoint_covariance_domain(
     return {
         "recovery_max": {str(k): [ratio_text(v[0]), ratio_text(v[1])] for k, v in recovery_max.items()},
         "covariance_max": {str(k): [ratio_text(v[0]), ratio_text(v[1])] for k, v in covariance_max.items()},
+        "signed_time_recovery_summed_local_half_ulp_certificates": recovery_bound_report,
+        "signed_time_recovery_bound_pass": {
+            str(precision): value for precision, value in recovery_bound_pass.items()
+        },
+        "short_frame_summed_local_half_ulp_certificates": frame_bound_report,
+        "short_frame_bound_pass": {
+            str(precision): value for precision, value in frame_bound_pass.items()
+        },
         "checkpoint_rows": len(checkpoint_rows),
         "independent_complete_checkpoint_event_streams": complete_checkpoint_event_streams,
         "domain_rows": len(domain_rows),
@@ -4406,9 +5983,45 @@ def verify_long_replay(
     full_anchor_pass = {precision: True for precision in PRECISIONS}
     full_anchor_report: dict[str, object] = {}
     comparator_report: dict[str, object] = {}
+    long_frame_bound_pass = {precision: True for precision in PRECISIONS}
+    long_frame_bound_report: dict[str, object] = {}
+    exact_prefix_energy_bound_pass = {precision: True for precision in PRECISIONS}
+    exact_prefix_energy_profile_pass = {
+        (precision, level, scenario): True
+        for precision in PRECISIONS for level in LEVELS
+        for scenario in ("k4_internal", "k4_boosted")
+    }
+    exact_prefix_energy_bounds: dict[
+        tuple[int, int, str], list[Fraction]
+    ] = defaultdict(list)
+    exact_prefix_energy_residuals: dict[
+        tuple[int, int, str], list[Fraction]
+    ] = defaultdict(list)
+    exact_prefix_energy_certificate: dict[int, dict[str, object]] = {
+        precision: {
+            "samples": 0,
+            "potential_binary64_value_matches": 0,
+            "force_scalar_pairs": 0,
+            "force_scalar_bit_matches": 0,
+            "paired_kick_relations": 0,
+            "maximum_energy_residual": Fraction(),
+            "maximum_componentwise_energy_bound": Fraction(),
+            "maximum_slope_residual": Fraction(),
+            "maximum_least_squares_slope_bound": Fraction(),
+        }
+        for precision in PRECISIONS
+    }
 
     for level in LEVELS:
+        progress(f"long-replay:L{level}:start")
         level_runs: dict[tuple[int, str], Trajectory] = {}
+        level_traces: dict[tuple[int, str], tuple[
+            list[tuple[
+                int, str, PhaseState, tuple[Fraction, Fraction, Fraction],
+                tuple[Fraction, Fraction, Fraction],
+            ]],
+            list[tuple[int, str, dict[str, object]]],
+        ]] = {}
         level_representation: dict[tuple[int, str], list[dict[str, str]]] = {}
         total_steps = 16 * STEP_COUNTS[level]
         for precision in PRECISIONS:
@@ -4487,9 +6100,25 @@ def verify_long_replay(
                     operation, trajectory_id, precision, level, KDK, models["k4"],
                     run.initial, total_steps, run,
                 )
+                level_traces[(precision, scenario)] = (
+                    stage_states, compact_long_force_trace(force_events)
+                )
 
             internal = level_runs[(precision, "k4_internal")]
             boosted = level_runs[(precision, "k4_boosted")]
+            internal_stages, internal_forces = level_traces[(precision, "k4_internal")]
+            boosted_stages, boosted_forces = level_traces[(precision, "k4_boosted")]
+            frame_certificate = paired_frame_bound_certificate(
+                internal, internal_stages, internal_forces,
+                boosted, boosted_stages, boosted_forces,
+                TIMESTEPS_RAW[level],
+            )
+            long_frame_bound_report[f"long:galilean_boost:B{precision}:L{level}"] = (
+                frame_certificate
+            )
+            long_frame_bound_pass[precision] = (
+                long_frame_bound_pass[precision] and bool(frame_certificate["passed"])
+            )
             covariance = take_evidence_rows(
                 covariance_iterator, total_steps + 1, "long covariance"
             )
@@ -4640,19 +6269,59 @@ def verify_long_replay(
             scenario: rational_from_parent_rows(parent_initial[(scenario,)])
             for scenario in ("k4_internal", "k4_boosted")
         }
+        rational_evaluations = {
+            scenario: rational_force_and_energy(models["k4"], state)
+            for scenario, state in rational_states.items()
+        }
+        rational_metrics = {
+            scenario: rational_state_metrics(state)
+            for scenario, state in rational_states.items()
+        }
+        bounded_rational_radii: dict[
+            tuple[int, str], tuple[PhaseRadii, PhaseRadii]
+        ] = {}
+        bounded_rational_stage_maps: dict[
+            tuple[int, str], dict[tuple[int, str], PhaseState]
+        ] = {}
+        bounded_rational_force_maps: dict[
+            tuple[int, str], dict[tuple[int, str], list[dict[str, object]]]
+        ] = {}
+        for precision in PRECISIONS:
+            for scenario in ("k4_internal", "k4_boosted"):
+                run = level_runs[(precision, scenario)]
+                bounded_rational_radii[(precision, scenario)] = zero_phase_radii(
+                    run.initial
+                )
+                stage_values, force_values = level_traces[(precision, scenario)]
+                bounded_rational_stage_maps[(precision, scenario)] = (
+                    indexed_stage_trace(stage_values)
+                )
+                bounded_rational_force_maps[(precision, scenario)] = (
+                    grouped_force_trace(force_values)
+                )
+                x_radius, p_radius = bounded_rational_radii[(precision, scenario)]
+                initial_contained = bounded_rational_state_is_contained(
+                    run.initial, rational_states[scenario], x_radius, p_radius
+                )
+                exact_prefix_energy_bound_pass[precision] = (
+                    exact_prefix_energy_bound_pass[precision] and initial_contained
+                )
+                exact_prefix_energy_profile_pass[(precision, level, scenario)] = (
+                    exact_prefix_energy_profile_pass[(precision, level, scenario)]
+                    and initial_contained
+                )
         exact_energy_error: dict[int, list[Fraction]] = {
             precision: [] for precision in PRECISIONS
         }
         comparator_metrics: dict[str, dict[str, object]] = {}
         for scenario in rational_states:
-            maximum, median, checkpoint_bytes, exceeded = rational_complexity(
-                rational_states[scenario]
-            )
-            require(not exceeded, "exact-rational initial comparator exceeds ceiling")
+            metrics = rational_metrics[scenario]
+            require(not metrics.exceeded,
+                    "exact-rational initial comparator exceeds ceiling")
             comparator_metrics[scenario] = {
-                "maximum": maximum,
-                "median": median,
-                "checkpoint_bytes": checkpoint_bytes,
+                "maximum": metrics.maximum_component_bits,
+                "median": metrics.median_component_bits,
+                "checkpoint_bytes": metrics.checkpoint_bytes,
                 "crossing": None,
             }
         maximum_prefix_step = max(
@@ -4664,9 +6333,11 @@ def verify_long_replay(
                 if sample > completed:
                     continue
                 exact = rational_states[scenario]
-                component_bits, median_bits, checkpoint_bytes, exceeded = (
-                    rational_complexity(exact)
-                )
+                state_metrics = rational_metrics[scenario]
+                component_bits = state_metrics.maximum_component_bits
+                median_bits = state_metrics.median_component_bits
+                checkpoint_bytes = state_metrics.checkpoint_bytes
+                exceeded = state_metrics.exceeded
                 metrics = comparator_metrics[scenario]
                 metrics["maximum"] = max(int(metrics["maximum"]), component_bits)
                 metrics["median"] = max(metrics["median"], median_bits)
@@ -4682,8 +6353,10 @@ def verify_long_replay(
                 else:
                     require(sample < completed or completed == 16 * STEP_COUNTS[level],
                             "exact comparator failed to cross at declared terminal sample")
-                exact_energy = rational_energy(models["k4"], exact)
-                exact_hash = rational_hash(exact)
+                exact_relations, exact_potential = rational_evaluations[scenario]
+                exact_energy = rational_kinetic_energy(exact) + exact_potential
+                exact_hash = state_metrics.sha256
+                exact_decimal = rational_physical_decimal(exact)
                 for precision in PRECISIONS:
                     bounded = level_runs[(precision, scenario)].samples[sample]
                     evidence = level_representation[(precision, scenario)]
@@ -4692,10 +6365,79 @@ def verify_long_replay(
                     p_raw = bounded_rational_error(bounded, exact, True)
                     state_norm = foundation.state_norm_difference(
                         physical_state_decimal_from_phase(bounded),
-                        rational_physical_decimal(exact),
+                        exact_decimal,
                         len(bounded.packets),
                     )
-                    bounded_energy = mechanical_energy(models["k4"], bounded)[2]
+                    bounded_relations, bounded_potential, _operations = force_and_energy(
+                        models["k4"], bounded
+                    )
+                    bounded_energy = (
+                        bounded_kinetic_energy(bounded) + bounded_potential
+                    )
+                    potential_match = bounded_potential == exact_potential
+                    force_matches = sum(
+                        1
+                        for bounded_relation, exact_relation in zip(
+                            bounded_relations, exact_relations
+                        )
+                        if (
+                            bounded_relation.relation == exact_relation[0]
+                            and struct.unpack(
+                                ">Q", struct.pack(">d", bounded_relation.length)
+                            )[0] == struct.unpack(
+                                ">Q", struct.pack(">d", exact_relation[2])
+                            )[0]
+                            and struct.unpack(
+                                ">Q", struct.pack(">d", bounded_relation.conjugate)
+                            )[0] == struct.unpack(
+                                ">Q", struct.pack(">d", exact_relation[3])
+                            )[0]
+                        )
+                    )
+                    force_match = (
+                        len(bounded_relations) == len(exact_relations) == force_matches
+                    )
+                    _x_radius, current_p_radius = bounded_rational_radii[
+                        (precision, scenario)
+                    ]
+                    kinetic_bound = kinetic_difference_radius_bound(
+                        bounded, exact, current_p_radius
+                    )
+                    energy_residual = abs(bounded_energy - exact_energy)
+                    energy_bound = kinetic_bound if potential_match else Fraction()
+                    energy_contained = potential_match and energy_residual <= energy_bound
+                    certificate = exact_prefix_energy_certificate[precision]
+                    certificate["samples"] = int(certificate["samples"]) + 1
+                    certificate["potential_binary64_value_matches"] = (
+                        int(certificate["potential_binary64_value_matches"])
+                        + int(potential_match)
+                    )
+                    certificate["force_scalar_pairs"] = (
+                        int(certificate["force_scalar_pairs"]) + len(exact_relations)
+                    )
+                    certificate["force_scalar_bit_matches"] = (
+                        int(certificate["force_scalar_bit_matches"]) + force_matches
+                    )
+                    certificate["maximum_energy_residual"] = max(
+                        certificate["maximum_energy_residual"], energy_residual
+                    )
+                    certificate["maximum_componentwise_energy_bound"] = max(
+                        certificate["maximum_componentwise_energy_bound"], energy_bound
+                    )
+                    exact_prefix_energy_bounds[(precision, level, scenario)].append(
+                        energy_bound
+                    )
+                    exact_prefix_energy_residuals[(precision, level, scenario)].append(
+                        bounded_energy - exact_energy
+                    )
+                    exact_prefix_energy_bound_pass[precision] = (
+                        exact_prefix_energy_bound_pass[precision]
+                        and force_match and energy_contained
+                    )
+                    exact_prefix_energy_profile_pass[(precision, level, scenario)] = (
+                        exact_prefix_energy_profile_pass[(precision, level, scenario)]
+                        and force_match and energy_contained
+                    )
                     identity: dict[str, object] = {
                         "scenario_id": scenario,
                         "scope": "long_exact_prefix",
@@ -4729,9 +6471,47 @@ def verify_long_replay(
                         (x_raw * LQ, p_raw * PQ, state_norm)
                     )
                 if sample < completed:
-                    rational_states[scenario] = rational_step(
-                        models["k4"], rational_states[scenario], TIMESTEPS_RAW[level], KDK
+                    (
+                        next_exact, exact_stages, exact_forces, next_evaluation,
+                    ) = rational_step_trace(
+                        models["k4"], exact, TIMESTEPS_RAW[level], KDK,
+                        (exact_relations, exact_potential),
                     )
+                    for precision in PRECISIONS:
+                        x_radius, p_radius = bounded_rational_radii[
+                            (precision, scenario)
+                        ]
+                        (
+                            x_radius, p_radius, recurrence_passed, paired_relations,
+                        ) = advance_bounded_rational_step_bound(
+                            bounded_rational_stage_maps[(precision, scenario)],
+                            bounded_rational_force_maps[(precision, scenario)],
+                            sample + 1, exact, exact_stages, exact_forces,
+                            TIMESTEPS_RAW[level], KDK, x_radius, p_radius,
+                        )
+                        bounded_rational_radii[(precision, scenario)] = (
+                            x_radius, p_radius
+                        )
+                        certificate = exact_prefix_energy_certificate[precision]
+                        certificate["paired_kick_relations"] = (
+                            int(certificate["paired_kick_relations"])
+                            + paired_relations
+                        )
+                        exact_prefix_energy_bound_pass[precision] = (
+                            exact_prefix_energy_bound_pass[precision]
+                            and recurrence_passed
+                        )
+                        exact_prefix_energy_profile_pass[
+                            (precision, level, scenario)
+                        ] = (
+                            exact_prefix_energy_profile_pass[
+                                (precision, level, scenario)
+                            ]
+                            and recurrence_passed
+                        )
+                    rational_states[scenario] = next_exact
+                    rational_evaluations[scenario] = next_evaluation
+                    rational_metrics[scenario] = rational_state_metrics(next_exact)
         for scenario, exact in rational_states.items():
             completed = prefix_steps[(scenario, level)]
             requested = 16 * STEP_COUNTS[level]
@@ -4749,7 +6529,8 @@ def verify_long_replay(
                 and int(row["last_within_ceiling_step"])
                     == (completed - 1 if crossed else completed)
                 and int(row["last_comparator_time_raw"]) == exact.time_raw
-                and row["last_comparator_state_hash"] == rational_hash(exact)
+                and row["last_comparator_state_hash"]
+                    == rational_metrics[scenario].sha256
                 and int(row["maximum_component_bits"]) == metrics["maximum"]
                 and scalar_from_columns(row, "maximum_state_median_bits")
                     == metrics["median"]
@@ -4780,13 +6561,44 @@ def verify_long_replay(
             comparator_report[f"{scenario}:L{level}"] = {
                 "status": row["status"],
                 "completed_steps": completed,
-                "last_state_hash": rational_hash(exact),
+                "last_state_hash": rational_metrics[scenario].sha256,
                 "maximum_component_bits": metrics["maximum"],
                 "maximum_state_median_bits": ratio_text(metrics["median"]),
                 "maximum_checkpoint_bytes": metrics["checkpoint_bytes"],
                 "crossing_state_included": crossed,
             }
         for precision in PRECISIONS:
+            exact_prefix_dt = Fraction(TIMESTEPS_RAW[level]) * TQ
+            for scenario in ("k4_internal", "k4_boosted"):
+                energy_values = exact_prefix_energy_residuals[
+                    (precision, level, scenario)
+                ]
+                energy_bounds = exact_prefix_energy_bounds[
+                    (precision, level, scenario)
+                ]
+                require(len(energy_values) == len(energy_bounds) > 0,
+                        "exact-prefix energy certificate inventory differs")
+                slope_residual = abs(
+                    least_squares_slope(energy_values, exact_prefix_dt)
+                )
+                slope_bound = least_squares_absolute_bound(
+                    energy_bounds, exact_prefix_dt
+                )
+                certificate = exact_prefix_energy_certificate[precision]
+                certificate["maximum_slope_residual"] = max(
+                    certificate["maximum_slope_residual"], slope_residual
+                )
+                certificate["maximum_least_squares_slope_bound"] = max(
+                    certificate["maximum_least_squares_slope_bound"], slope_bound
+                )
+                exact_prefix_energy_bound_pass[precision] = (
+                    exact_prefix_energy_bound_pass[precision]
+                    and slope_residual <= slope_bound
+                )
+                exact_prefix_energy_profile_pass[(precision, level, scenario)] = (
+                    exact_prefix_energy_profile_pass[(precision, level, scenario)]
+                    and slope_residual <= slope_bound
+                )
             energy_error_series[(precision, level)] = exact_energy_error[precision]
             physical_energy = mechanical_energy_series[(precision, level)]
             physical_offsets = [value - physical_energy[0] for value in physical_energy]
@@ -4866,6 +6678,7 @@ def verify_long_replay(
                 "physical_energy_least_squares_slope": ratio_text(physical_slope),
             }
             report[f"B{precision}:L{level}"] = run_report
+        progress(f"long-replay:L{level}:complete")
 
     try:
         next(representation_iterator)
@@ -4961,6 +6774,118 @@ def verify_long_replay(
         )
         for name in slope_envelopes
     )
+    exact_prefix_anchor_report: dict[str, object] = {}
+    exact_prefix_anchor_pass: dict[int, bool] = {}
+    anchor_contracts: list[tuple[bool, bool, bool]] = []
+    analytic_anchor_contracts: list[bool] = []
+    for level in LEVELS:
+        scenario_report: dict[str, object] = {}
+        level_contracts: list[tuple[bool, bool, bool]] = []
+        level_analytic_contracts: list[bool] = []
+        for scenario in ("k4_internal", "k4_boosted"):
+            metric_envelopes = {
+                name: {precision: Fraction() for precision in PRECISIONS}
+                for name in (
+                    "position_maximum", "position_final",
+                    "momentum_maximum", "momentum_final",
+                )
+            }
+            for precision in PRECISIONS:
+                state_values = prefix_state_series[(precision, level, scenario)]
+                metric_envelopes["position_maximum"][precision] = max(
+                    value[0] for value in state_values
+                )
+                metric_envelopes["position_final"][precision] = state_values[-1][0]
+                metric_envelopes["momentum_maximum"][precision] = max(
+                    value[1] for value in state_values
+                )
+                metric_envelopes["momentum_final"][precision] = state_values[-1][1]
+            metric_budgets = {
+                "position_maximum": POSITION_BUDGET,
+                "position_final": POSITION_BUDGET,
+                "momentum_maximum": MOMENTUM_BUDGET,
+                "momentum_final": MOMENTUM_BUDGET,
+            }
+            if scenario == "k4_internal":
+                for name in ("energy_maximum", "energy_final", "energy_slope"):
+                    metric_envelopes[name] = {
+                        precision: Fraction() for precision in PRECISIONS
+                    }
+                dt = Fraction(TIMESTEPS_RAW[level]) * TQ
+                for precision in PRECISIONS:
+                    energy_values = energy_error_series[(precision, level)]
+                    metric_envelopes["energy_maximum"][precision] = max(
+                        (abs(value) for value in energy_values), default=Fraction()
+                    )
+                    metric_envelopes["energy_final"][precision] = abs(energy_values[-1])
+                    metric_envelopes["energy_slope"][precision] = abs(
+                        least_squares_slope(energy_values, dt)
+                    )
+                metric_budgets.update({
+                    "energy_maximum": ENERGY_BUDGET,
+                    "energy_final": ENERGY_BUDGET,
+                    "energy_slope": ENERGY_SLOPE_BUDGET,
+                })
+            anchor_required = (
+                prefix_steps[(scenario, level)] < 16 * STEP_COUNTS[level]
+            )
+            below_one_sixteenth, pair_scaling, scenario_qualified = (
+                qualify_exact_prefix_anchor(
+                    metric_envelopes, metric_budgets, anchor_required
+                )
+            )
+            analytic_anchor_pass = exact_prefix_energy_profile_pass[
+                (256, level, scenario)
+            ]
+            analytic_contract = not anchor_required or analytic_anchor_pass
+            scenario_qualified = scenario_qualified and analytic_contract
+            contract = (
+                anchor_required,
+                all(below_one_sixteenth.values()),
+                all(pair_scaling.values()),
+            )
+            level_contracts.append(contract)
+            anchor_contracts.append(contract)
+            level_analytic_contracts.append(analytic_contract)
+            analytic_anchor_contracts.append(analytic_contract)
+            scenario_report[scenario] = {
+                "anchor_required": anchor_required,
+                "qualification": (
+                    "passed" if anchor_required and scenario_qualified
+                    else "failed" if anchor_required else "not_applicable"
+                ),
+                "metric_envelopes": {
+                    name: {
+                        str(precision): ratio_text(value)
+                        for precision, value in values.items()
+                    }
+                    for name, values in metric_envelopes.items()
+                },
+                "physical_budgets": {
+                    name: ratio_text(value) for name, value in metric_budgets.items()
+                },
+                "b256_below_one_sixteenth_budget": below_one_sixteenth,
+                "b192_b256_unit_roundoff_scaling": pair_scaling,
+                "b256_analytic_energy_certificate": analytic_anchor_pass,
+                "qualified": scenario_qualified if anchor_required else None,
+            }
+        _level_budgets, _level_scaling, level_qualified = (
+            aggregate_required_anchor_contracts(level_contracts)
+        )
+        level_qualified = level_qualified and all(level_analytic_contracts)
+        exact_prefix_anchor_pass[level] = level_qualified
+        exact_prefix_anchor_report[str(level)] = {
+            "scenarios": scenario_report,
+            "all_required_scenarios_qualified": level_qualified,
+        }
+    (
+        all_required_anchor_budgets_pass,
+        all_required_anchor_scaling_pass,
+        all_required_anchors_qualified,
+    ) = aggregate_required_anchor_contracts(anchor_contracts)
+    all_required_anchors_qualified = (
+        all_required_anchors_qualified and all(analytic_anchor_contracts)
+    )
     boost_timestep_contraction: dict[str, object] = {}
     for precision in PRECISIONS:
         x_maxima = [
@@ -5000,7 +6925,24 @@ def verify_long_replay(
             **contracts,
         }
     for precision in PRECISIONS:
-        precision_pass[precision] = precision_pass[precision] and full_anchor_pass[precision]
+        for level in LEVELS:
+            anchor_row = full_anchor_report[f"B{precision}:L{level}"]
+            assert isinstance(anchor_row, dict)
+            comparison_passed = bool(anchor_row["passed"])
+            anchor_row["comparison_passed"] = comparison_passed
+            anchor_row["qualified_by_exact_prefix"] = exact_prefix_anchor_pass[level]
+            anchor_row["passed"] = (
+                comparison_passed and exact_prefix_anchor_pass[level]
+            )
+            full_anchor_pass[precision] = (
+                full_anchor_pass[precision] and bool(anchor_row["passed"])
+            )
+        precision_pass[precision] = (
+            precision_pass[precision]
+            and full_anchor_pass[precision]
+            and long_frame_bound_pass[precision]
+            and exact_prefix_energy_bound_pass[precision]
+        )
     return {
         "runs": report,
         "force_maxima": {
@@ -5013,14 +6955,55 @@ def verify_long_replay(
             }
             for precision, values in analytic_bound_maxima.items()
         },
+        "long_frame_summed_local_half_ulp_certificates": long_frame_bound_report,
+        "long_frame_bound_pass": {
+            str(precision): value for precision, value in long_frame_bound_pass.items()
+        },
+        "exact_prefix_energy_componentwise_certificates": {
+            str(precision): {
+                name: (
+                    ratio_text(value) if isinstance(value, Fraction) else value
+                )
+                for name, value in certificate.items()
+            } | {"passed": exact_prefix_energy_bound_pass[precision]}
+            for precision, certificate in exact_prefix_energy_certificate.items()
+        },
+        "exact_prefix_energy_profile_pass": {
+            f"B{precision}:L{level}:{scenario}": passed
+            for (precision, level, scenario), passed
+            in exact_prefix_energy_profile_pass.items()
+        },
+        "paired_bound_accumulator": {
+            "eligibility_witness_rounding": (
+                "greatest_B256_dyadic_not_above_each_monotone_exact_"
+                "recurrence_update"
+            ),
+            "eligibility_implication": (
+                "measured_residual<=inward_witness<=literal_exact_local_"
+                "half_ulp_recurrence"
+            ),
+            "fitted_constants": False,
+        },
         "slope_envelopes": {
             name: {str(precision): ratio_text(value) for precision, value in values.items()}
             for name, values in slope_envelopes.items()
         },
         "slope_unit_roundoff_scaling": slope_scaling,
-        "b256_slope_anchor_below_one_sixteenth_budget": slope_anchor_budget_pass,
-        "b192_b256_slope_anchor_unit_roundoff_scaling": (
+        "b256_all_residual_slopes_below_one_sixteenth_budget_diagnostic": (
+            slope_anchor_budget_pass
+        ),
+        "b192_b256_all_residual_slopes_unit_roundoff_diagnostic": (
             slope_anchor_unit_roundoff_scaling
+        ),
+        "long_exact_prefix_anchor": exact_prefix_anchor_report,
+        "all_required_exact_prefix_below_one_sixteenth_budget": (
+            all_required_anchor_budgets_pass
+        ),
+        "all_required_exact_prefix_unit_roundoff_scaling": (
+            all_required_anchor_scaling_pass
+        ),
+        "all_required_full_tail_anchors_qualified": (
+            all_required_anchors_qualified
         ),
         "comparator_free_b256_trace_agreement": full_anchor_report,
         "boost_timestep_contraction": boost_timestep_contraction,
@@ -5028,7 +7011,7 @@ def verify_long_replay(
         "compact_xyz_hash_max_physical_and_delta_derivations": True,
     }, precision_pass, (
         all(slope_scaling.values())
-        and slope_anchor_unit_roundoff_scaling
+        and all_required_anchor_scaling_pass
         and all(
             bool(boost_timestep_contraction["256"][f"{name}_qualitative_contraction"])
             for name in (
@@ -5069,6 +7052,39 @@ def unit_roundoff_pair_scales(lower: Fraction, higher: Fraction, bit_gap: int) -
     if lower == 0:
         return higher == 0
     return higher < lower and higher <= 4 * Fraction(1, 2**bit_gap) * lower
+
+
+def qualify_exact_prefix_anchor(
+    metric_envelopes: dict[str, dict[int, Fraction]],
+    metric_budgets: dict[str, Fraction],
+    required: bool,
+) -> tuple[dict[str, bool], dict[str, bool], bool]:
+    require(set(metric_envelopes) == set(metric_budgets),
+            "exact-prefix anchor metric inventory differs")
+    require(all(set(values) == set(PRECISIONS) for values in metric_envelopes.values()),
+            "exact-prefix anchor precision inventory differs")
+    below_one_sixteenth = {
+        name: values[256] <= metric_budgets[name] / 16
+        for name, values in metric_envelopes.items()
+    }
+    pair_scaling = {
+        name: unit_roundoff_pair_scales(values[192], values[256], 64)
+        for name, values in metric_envelopes.items()
+    }
+    qualified = (
+        not required
+        or (all(below_one_sixteenth.values()) and all(pair_scaling.values()))
+    )
+    return below_one_sixteenth, pair_scaling, qualified
+
+
+def aggregate_required_anchor_contracts(
+    contracts: Sequence[tuple[bool, bool, bool]],
+) -> tuple[bool, bool, bool]:
+    require(bool(contracts), "exact-prefix anchor contract inventory is empty")
+    budget_pass = all(not required or budget for required, budget, _scaling in contracts)
+    scaling_pass = all(not required or scaling for required, _budget, scaling in contracts)
+    return budget_pass, scaling_pass, budget_pass and scaling_pass
 
 
 def structure_residual_report(
@@ -5186,25 +7202,22 @@ def structure_residual_report(
         precision: all(envelope[precision] <= budget for budget, envelope in quantities.values())
         for precision in PRECISIONS
     }
-    anchor_budget_pass = all(
-        envelope[256] <= budget / 16 for budget, envelope in quantities.values()
-    )
-    anchor_unit_roundoff_scaling = all(
-        unit_roundoff_pair_scales(envelope[192], envelope[256], 64)
-        for _budget, envelope in quantities.values()
-    )
+    pair_scaling_diagnostic = {
+        name: unit_roundoff_pair_scales(envelope[192], envelope[256], 64)
+        for name, (_budget, envelope) in quantities.items()
+    }
     return {
         "envelopes": {
             name: {str(precision): ratio_text(value) for precision, value in envelope.items()}
             for name, (_budget, envelope) in quantities.items()
         },
-        "unit_roundoff_scaling": scaling,
-        "b256_anchor_below_one_sixteenth_budget": anchor_budget_pass,
-        "b192_b256_anchor_unit_roundoff_scaling": anchor_unit_roundoff_scaling,
-    }, eligible, (
-        all(scaling.values())
-        and anchor_unit_roundoff_scaling
-    )
+        "scaling_until_budget": scaling,
+        "absolute_budget_pass": {
+            str(precision): value for precision, value in eligible.items()
+        },
+        "all_scaling_until_budget_passed": all(scaling.values()),
+        "b192_b256_unconditional_pair_scaling_diagnostic": pair_scaling_diagnostic,
+    }, eligible, all(scaling.values())
 
 
 def verify_state_size(
@@ -5325,6 +7338,70 @@ def verify_state_size(
     }, eligible
 
 
+def scientific_disposition(
+    parent_decision: str,
+    highest_precision_dynamics_pass: bool,
+    structure_residuals_resolved: bool,
+    selected_precision: int | None,
+) -> tuple[str, int | None]:
+    if parent_decision != PARENT_DECISION:
+        return "stop_inconclusive_or_wrong_parent", None
+    if not highest_precision_dynamics_pass:
+        return "reject_bounded_binary_fractional_phase_state", None
+    if not structure_residuals_resolved:
+        return "bounded_phase_state_restores_dynamics_but_structure_residuals_unresolved", None
+    if selected_precision is None:
+        return "bounded_phase_state_converges_but_required_precision_unresolved", None
+    return "retain_bounded_variable_exponent_phase_state_for_research", selected_precision
+
+
+def require_final_outcome(result: dict[str, object]) -> None:
+    """Pin the completed lab source to its accepted, reproducible outcome."""
+    eligibility = result.get("precision_eligibility")
+    require(
+        result.get("decision") == FINAL_DECISION
+        and result.get("selected_precision") is FINAL_SELECTED_PRECISION
+        and result.get("highest_precision_dynamics_pass") is True
+        and result.get("structure_residuals_resolved") is False
+        and isinstance(eligibility, dict)
+        and set(eligibility) == {str(precision) for precision in PRECISIONS}
+        and all(value is False for value in eligibility.values()),
+        "completed-lab outcome differs from the accepted bounded negative",
+    )
+
+
+def aggregate_precision_scenario_gate(
+    scenario_gates: dict[int, dict[str, bool]],
+) -> dict[int, bool]:
+    """Require every registered scenario independently at each precision."""
+    require(set(scenario_gates) == set(PRECISIONS),
+            "precision scenario-gate profile differs")
+    require(
+        all(set(gates) == set(SCENARIOS) for gates in scenario_gates.values()),
+        "precision scenario-gate inventory differs",
+    )
+    return {
+        precision: all(scenario_gates[precision][scenario] for scenario in SCENARIOS)
+        for precision in PRECISIONS
+    }
+
+
+def combine_precision_eligibility(
+    precision_gates: Sequence[dict[int, bool]], shared_gates: Sequence[bool],
+) -> dict[int, bool]:
+    """Combine independent per-precision gates without cross-precision leakage."""
+    require(bool(precision_gates), "precision eligibility gate inventory is empty")
+    require(
+        all(set(gate) == set(PRECISIONS) for gate in precision_gates),
+        "precision eligibility gate profile differs",
+    )
+    shared = all(shared_gates)
+    return {
+        precision: shared and all(gate[precision] for gate in precision_gates)
+        for precision in PRECISIONS
+    }
+
+
 def verify(
     raw: Path,
     parent_raw: Path,
@@ -5333,9 +7410,12 @@ def verify(
         dict[str, list[Decimal]], dict[str, Decimal], dict[str, list[list[Decimal]]]
     ] | None = None,
 ) -> dict[str, object]:
+    progress("metadata-parent-controls:start")
     meta = verify_schema_metadata_profiles(raw, allow_dirty)
     parent_fingerprint = verify_parent_hashes(raw, parent_raw)
     declared_positive = verify_positive_control_rows(raw, parent_raw)
+    progress("metadata-parent-controls:complete")
+    progress("smooth-parent-oracle:start")
     if precomputed_smooth is None:
         smooth_models, smooth_initial = load_smooth_problem(parent_raw)
         smooth_data = smooth_oracle_with_samples(smooth_models, smooth_initial)
@@ -5343,24 +7423,39 @@ def verify(
         smooth_data = precomputed_smooth
     positive = verify_positive_parent(parent_raw, (smooth_data[0], smooth_data[1]))
     positive["declared_rows"] = declared_positive
+    progress("smooth-parent-oracle:complete")
 
+    progress("state-tables-short-replay:start")
     models = load_models(raw)
     state_report = verify_state_tables(raw, parent_raw)
-    trajectories, short_replay = verify_short_replay(raw, state_report, models)
+    trajectories, trajectory_traces, short_replay = verify_short_replay(
+        raw, state_report, models
+    )
+    progress("state-tables-short-replay:complete")
+    progress("representation-temporal:start")
     (
         representation, representation_temporal_pass,
         highest_precision_dynamics_pass, short_representation_envelopes,
     ) = (
         verify_representation_and_temporal(
-            raw, parent_raw, models, trajectories, smooth_data[0], smooth_data[2]
+            raw, parent_raw, models, trajectories, trajectory_traces,
+            smooth_data[0], smooth_data[2]
         )
     )
+    progress("representation-temporal:complete")
+    progress("composition-contracts:start")
     composition, composition_pass = verify_reversal_checkpoint_covariance_domain(
-        raw, state_report, models, trajectories
+        raw, state_report, models, trajectories, trajectory_traces
     )
+    progress("composition-contracts:complete")
+    # The short and auxiliary composition reports contain no replay objects.
+    # Release their completed trajectories before materializing a long level.
+    del trajectories, trajectory_traces
+    progress("long-replay:start")
     long_run, long_pass, long_scaling, long_representation_envelopes = verify_long_replay(
         raw, parent_raw, state_report, models
     )
+    progress("long-replay:complete")
     require(set(short_representation_envelopes) == set(long_representation_envelopes),
             "short/long recomputed representation envelope inventory differs")
     representation_envelopes = {
@@ -5373,42 +7468,58 @@ def verify(
         }
         for name in short_representation_envelopes
     }
+    progress("structure-residuals-state-size:start")
     residuals, residual_budget_pass, residual_scaling = structure_residual_report(
         raw, state_report, representation_envelopes
     )
     composition["structure_residuals"] = residuals
     state_size, size_pass = verify_state_size(raw, state_report)
+    progress("structure-residuals-state-size:complete")
 
     anchor_qualification = bool(
-        residuals["b256_anchor_below_one_sixteenth_budget"]
-    ) and bool(long_run["b256_slope_anchor_below_one_sixteenth_budget"])
-    long_run["b256_full_tail_anchor_qualified"] = anchor_qualification
-    full_tail = long_run["comparator_free_b256_trace_agreement"]
-    assert isinstance(full_tail, dict)
-    for precision in PRECISIONS:
-        for level in LEVELS:
-            anchor_row = full_tail[f"B{precision}:L{level}"]
-            assert isinstance(anchor_row, dict)
-            comparison_passed = bool(anchor_row["passed"])
-            anchor_row["comparison_passed"] = comparison_passed
-            anchor_row["qualified_by_exact_prefix"] = anchor_qualification
-            anchor_row["passed"] = comparison_passed and anchor_qualification
+        long_run["all_required_full_tail_anchors_qualified"]
+    )
 
-    precision_eligibility = {
-        precision: all((
-            representation_temporal_pass[precision], composition_pass[precision],
-            long_pass[precision], residual_budget_pass[precision], size_pass[precision],
-            representation["control_distinguishable"],
-            representation["precision_scaling"],
-            anchor_qualification,
-        ))
-        for precision in PRECISIONS
-    }
+    control_by_precision = representation["control_distinguishable_by_precision"]
+    assert isinstance(control_by_precision, dict)
+    short_energy_certificates = representation[
+        "short_energy_componentwise_certificates"
+    ]
+    recovery_certificate_pass = composition["signed_time_recovery_bound_pass"]
+    short_frame_certificate_pass = composition["short_frame_bound_pass"]
+    long_frame_certificate_pass = long_run["long_frame_bound_pass"]
+    long_energy_certificates = long_run[
+        "exact_prefix_energy_componentwise_certificates"
+    ]
+    assert all(isinstance(value, dict) for value in (
+        short_energy_certificates, recovery_certificate_pass,
+        short_frame_certificate_pass, long_frame_certificate_pass,
+        long_energy_certificates,
+    ))
+    highest_precision_analytic_certificates_pass = (
+        bool(short_energy_certificates["256"]["passed"])
+        and bool(recovery_certificate_pass["256"])
+        and bool(short_frame_certificate_pass["256"])
+        and bool(long_frame_certificate_pass["256"])
+        and bool(long_energy_certificates["256"]["passed"])
+    )
+    precision_eligibility = combine_precision_eligibility(
+        (
+            representation_temporal_pass,
+            composition_pass,
+            long_pass,
+            residual_budget_pass,
+            size_pass,
+            control_by_precision,
+        ),
+        (bool(representation["precision_scaling"]), anchor_qualification),
+    )
     all_qualitative_gates_converge = (
         residual_scaling and long_scaling
         and bool(composition["highest_precision_frame_contract"])
+        and highest_precision_analytic_certificates_pass
         and bool(representation["precision_scaling"])
-        and bool(representation["control_distinguishable"])
+        and bool(control_by_precision[256])
         and bool(representation["kdk_all_scenarios_second_order"][256])
         and all(size_pass.values())
         and composition["checkpoint_rows"] == len(PRECISIONS) * len(LEVELS)
@@ -5416,23 +7527,17 @@ def verify(
     )
     structure_residuals_resolved = all_qualitative_gates_converge
     composition["all_qualitative_gates_converge"] = all_qualitative_gates_converge
-    composition["b256_exact_prefix_anchor_qualified"] = anchor_qualification
+    composition["highest_precision_analytic_certificates_pass"] = (
+        highest_precision_analytic_certificates_pass
+    )
+    composition["all_required_full_tail_anchors_qualified"] = anchor_qualification
     selected = next(
         (precision for precision in PRECISIONS if precision_eligibility[precision]), None
     )
-    if positive["decision"] != PARENT_DECISION:
-        decision = "stop_inconclusive_or_wrong_parent"
-        selected = None
-    elif not highest_precision_dynamics_pass:
-        decision = "reject_bounded_binary_fractional_phase_state"
-        selected = None
-    elif not structure_residuals_resolved:
-        decision = "bounded_phase_state_restores_dynamics_but_structure_residuals_unresolved"
-        selected = None
-    elif selected is None:
-        decision = "bounded_phase_state_converges_but_required_precision_unresolved"
-    else:
-        decision = "retain_bounded_variable_exponent_phase_state_for_research"
+    decision, selected = scientific_disposition(
+        str(positive["decision"]), highest_precision_dynamics_pass,
+        structure_residuals_resolved, selected,
+    )
 
     canonical_state_summary = {
         "state_groups": state_report["state_count"],
@@ -5440,6 +7545,7 @@ def verify(
         "registered_precisions": list(PRECISIONS),
         "canonical_hashes_independently_reproduced": True,
     }
+    progress("disposition-summary:start")
     result = {
         "schema": "mls.bounded-fractional-phase-state.oracle.v1",
         "precision_decimal_digits": getcontext().prec,
@@ -5463,6 +7569,7 @@ def verify(
         "promotion": "NO_PROMOTION",
         "raw_files": {filename: sha256(raw / filename) for filename in FILES},
     }
+    progress("disposition-summary:complete")
     return result
 
 
@@ -5475,10 +7582,12 @@ def main() -> int:
     arguments = parser.parse_args()
     try:
         result = verify(arguments.raw, arguments.parent_raw, arguments.allow_dirty)
+        require_final_outcome(result)
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
+        progress("summary-write:complete")
         print(
             "BOUNDED FRACTIONAL PHASE STATE ORACLE: "
             f"PASS {result['decision']} selected={result['selected_precision']} NO_PROMOTION"
