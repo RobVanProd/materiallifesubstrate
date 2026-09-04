@@ -133,6 +133,47 @@ FILES = (
     "rational_comparator.csv",
 )
 
+LONG_REPLAY_FRAGMENT_SCHEMA = (
+    "mls.bounded-fractional-phase-state.long-replay-fragment.v1"
+)
+LONG_REPLAY_FRAGMENT_FIELDS = frozenset(
+    {
+        "schema", "source_sha", "parent_source_sha", "level", "raw_files",
+        "long_run", "precision_pass", "representation_envelopes",
+        "payload_sha256",
+    }
+)
+LONG_REPLAY_REPORT_FIELDS = frozenset(
+    {
+        "runs", "force_maxima", "independently_summed_half_ulp_bound_maxima",
+        "long_frame_summed_local_half_ulp_certificates", "long_frame_bound_pass",
+        "exact_prefix_energy_componentwise_certificates",
+        "exact_prefix_energy_profile_pass", "paired_bound_accumulator",
+        "slope_envelopes", "slope_unit_roundoff_scaling",
+        "b256_all_residual_slopes_below_one_sixteenth_budget_diagnostic",
+        "b192_b256_all_residual_slopes_unit_roundoff_diagnostic",
+        "long_exact_prefix_anchor",
+        "all_required_exact_prefix_below_one_sixteenth_budget",
+        "all_required_exact_prefix_unit_roundoff_scaling",
+        "all_required_full_tail_anchors_qualified",
+        "comparator_free_b256_trace_agreement", "boost_timestep_contraction",
+        "exact_rational_comparator_receipts",
+        "compact_xyz_hash_max_physical_and_delta_derivations",
+    }
+)
+LONG_CERTIFICATE_SUM_FIELDS = frozenset(
+    {
+        "samples", "potential_binary64_value_matches", "force_scalar_pairs",
+        "force_scalar_bit_matches", "paired_kick_relations",
+    }
+)
+LONG_CERTIFICATE_MAX_FIELDS = frozenset(
+    {
+        "maximum_energy_residual", "maximum_componentwise_energy_bound",
+        "maximum_slope_residual", "maximum_least_squares_slope_bound",
+    }
+)
+
 
 def _state_fields() -> tuple[str, ...]:
     base = (
@@ -4928,7 +4969,7 @@ def inverse_rotate(state: PhaseState) -> PhaseState:
 
 
 def timestep_contraction_profile(
-    values: Sequence[Fraction], floor: Fraction,
+    values: Sequence[Fraction], floor: Fraction, expected_count: int | None = None,
 ) -> tuple[bool, bool]:
     """Return qualitative h-contraction and separate floor attainment.
 
@@ -4936,7 +4977,9 @@ def timestep_contraction_profile(
     but not yet selectable.  Once an envelope is below the floor, finer levels
     may plateau but may not leave it.  Exact zero is closed under refinement.
     """
-    require(len(values) == len(LEVELS) and floor > 0,
+    if expected_count is None:
+        expected_count = len(LEVELS)
+    require(len(values) == expected_count and expected_count > 0 and floor > 0,
             "invalid timestep-contraction inventory")
     reached_floor = values[0] <= floor
     prior = values[0]
@@ -5887,10 +5930,18 @@ def verify_long_replay(
     parent_raw: Path,
     state_report: dict[str, object],
     models: dict[str, Model],
+    levels: Sequence[int] = LEVELS,
 ) -> tuple[
     dict[str, object], dict[int, bool], bool,
     dict[str, dict[int, Fraction]],
 ]:
+    selected_levels = tuple(levels)
+    require(
+        bool(selected_levels)
+        and selected_levels == tuple(sorted(set(selected_levels)))
+        and set(selected_levels) <= set(LEVELS),
+        "long-replay level selection differs",
+    )
     initial = state_report["initial"]
     long_endpoints = state_report["long_endpoint"]
     assert isinstance(initial, dict) and isinstance(long_endpoints, dict)
@@ -5932,10 +5983,15 @@ def verify_long_replay(
     representation_iterator = iter(
         row for row in iter_rows(raw / "representation_error.csv")
         if row["scope"] == "long_exact_prefix"
+        and int(row["level"]) in selected_levels
     )
-    energy_iterator = iter(iter_rows(raw / "long_energy.csv"))
+    energy_iterator = iter(
+        row for row in iter_rows(raw / "long_energy.csv")
+        if int(row["level"]) in selected_levels
+    )
     covariance_iterator = iter(
-        row for row in iter_rows(raw / "covariance.csv") if row["scope"] == "long"
+        row for row in iter_rows(raw / "covariance.csv")
+        if row["scope"] == "long" and int(row["level"]) in selected_levels
     )
     operation_rows = {
         row["trajectory_id"]: row
@@ -5948,10 +6004,12 @@ def verify_long_replay(
     invariant_iterator = iter(
         row for row in iter_rows(raw / "invariants.csv")
         if row["trajectory_id"].startswith("long:")
+        and int(row["level"]) in selected_levels
     )
     force_iterator = iter(
         row for row in iter_rows(raw / "force_audit.csv")
         if row["trajectory_id"].startswith("long:")
+        and int(row["level"]) in selected_levels
     )
     precision_pass = {precision: True for precision in PRECISIONS}
     report: dict[str, object] = {}
@@ -5988,7 +6046,7 @@ def verify_long_replay(
     exact_prefix_energy_bound_pass = {precision: True for precision in PRECISIONS}
     exact_prefix_energy_profile_pass = {
         (precision, level, scenario): True
-        for precision in PRECISIONS for level in LEVELS
+        for precision in PRECISIONS for level in selected_levels
         for scenario in ("k4_internal", "k4_boosted")
     }
     exact_prefix_energy_bounds: dict[
@@ -6012,7 +6070,7 @@ def verify_long_replay(
         for precision in PRECISIONS
     }
 
-    for level in LEVELS:
+    for level in selected_levels:
         progress(f"long-replay:L{level}:start")
         level_runs: dict[tuple[int, str], Trajectory] = {}
         level_traces: dict[tuple[int, str], tuple[
@@ -6707,7 +6765,7 @@ def verify_long_replay(
         pass
 
     for precision in PRECISIONS:
-        for level in LEVELS:
+        for level in selected_levels:
             dt = Fraction(TIMESTEPS_RAW[level]) * TQ
             e_values = energy_error_series[(precision, level)]
             b_values = boost_series[(precision, level)]
@@ -6778,7 +6836,7 @@ def verify_long_replay(
     exact_prefix_anchor_pass: dict[int, bool] = {}
     anchor_contracts: list[tuple[bool, bool, bool]] = []
     analytic_anchor_contracts: list[bool] = []
-    for level in LEVELS:
+    for level in selected_levels:
         scenario_report: dict[str, object] = {}
         level_contracts: list[tuple[bool, bool, bool]] = []
         level_analytic_contracts: list[bool] = []
@@ -6890,25 +6948,36 @@ def verify_long_replay(
     for precision in PRECISIONS:
         x_maxima = [
             max((value[0] for value in boost_series[(precision, level)]), default=Fraction())
-            for level in LEVELS
+            for level in selected_levels
         ]
         p_maxima = [
             max((value[1] for value in boost_series[(precision, level)]), default=Fraction())
-            for level in LEVELS
+            for level in selected_levels
         ]
-        x_finals = [boost_series[(precision, level)][-1][0] for level in LEVELS]
-        p_finals = [boost_series[(precision, level)][-1][1] for level in LEVELS]
+        x_finals = [boost_series[(precision, level)][-1][0] for level in selected_levels]
+        p_finals = [boost_series[(precision, level)][-1][1] for level in selected_levels]
         profiles = {
-            "position_maximum": timestep_contraction_profile(x_maxima, POSITION_BUDGET),
-            "position_final": timestep_contraction_profile(x_finals, POSITION_BUDGET),
-            "momentum_maximum": timestep_contraction_profile(p_maxima, MOMENTUM_BUDGET),
-            "momentum_final": timestep_contraction_profile(p_finals, MOMENTUM_BUDGET),
+            "position_maximum": timestep_contraction_profile(
+                x_maxima, POSITION_BUDGET, len(selected_levels)
+            ),
+            "position_final": timestep_contraction_profile(
+                x_finals, POSITION_BUDGET, len(selected_levels)
+            ),
+            "momentum_maximum": timestep_contraction_profile(
+                p_maxima, MOMENTUM_BUDGET, len(selected_levels)
+            ),
+            "momentum_final": timestep_contraction_profile(
+                p_finals, MOMENTUM_BUDGET, len(selected_levels)
+            ),
         }
         contracts = {
             name: qualitative and attained
             for name, (qualitative, attained) in profiles.items()
         }
-        precision_pass[precision] = precision_pass[precision] and all(contracts.values())
+        if selected_levels == LEVELS:
+            precision_pass[precision] = (
+                precision_pass[precision] and all(contracts.values())
+            )
         boost_timestep_contraction[str(precision)] = {
             "position_maxima": [ratio_text(value) for value in x_maxima],
             "position_finals": [ratio_text(value) for value in x_finals],
@@ -6925,7 +6994,7 @@ def verify_long_replay(
             **contracts,
         }
     for precision in PRECISIONS:
-        for level in LEVELS:
+        for level in selected_levels:
             anchor_row = full_anchor_report[f"B{precision}:L{level}"]
             assert isinstance(anchor_row, dict)
             comparison_passed = bool(anchor_row["passed"])
@@ -7020,6 +7089,580 @@ def verify_long_replay(
             )
         )
     ), exact_structure_envelopes
+
+
+def canonical_json_sha256(value: object) -> str:
+    encoded = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def raw_file_hashes(raw: Path) -> dict[str, str]:
+    return {filename: sha256(raw / filename) for filename in FILES}
+
+
+def verify_long_replay_global_level_order(raw: Path) -> dict[str, int]:
+    """Restore monolithic cross-level ordering before merging replay shards."""
+    streams = (
+        ("long_energy.csv", lambda row: True),
+        ("covariance.csv", lambda row: row["scope"] == "long"),
+        (
+            "invariants.csv",
+            lambda row: row["trajectory_id"].startswith("long:"),
+        ),
+        (
+            "force_audit.csv",
+            lambda row: row["trajectory_id"].startswith("long:"),
+        ),
+    )
+    selected_counts: dict[str, int] = {}
+    for filename, selected in streams:
+        level_blocks: list[int] = []
+        prior_level: int | None = None
+        selected_count = 0
+        for row in iter_rows(raw / filename):
+            if not selected(row):
+                continue
+            level = decimal_integer(row["level"], unsigned=True)
+            require(level in LEVELS, f"{filename}: long replay level differs")
+            selected_count += 1
+            if level != prior_level:
+                level_blocks.append(level)
+                prior_level = level
+        require(
+            tuple(level_blocks) == LEVELS,
+            f"{filename}: long replay global level-block order differs",
+        )
+        selected_counts[filename] = selected_count
+    return selected_counts
+
+
+def long_replay_fragment_payload(fragment: dict[str, object]) -> dict[str, object]:
+    return {
+        "long_run": fragment["long_run"],
+        "precision_pass": fragment["precision_pass"],
+        "representation_envelopes": fragment["representation_envelopes"],
+    }
+
+
+def create_long_replay_fragment(
+    raw: Path, parent_raw: Path, level: int, allow_dirty: bool = False,
+) -> dict[str, object]:
+    require(level in LEVELS, "long-replay fragment level differs")
+    meta = verify_schema_metadata_profiles(raw, allow_dirty)
+    verify_parent_hashes(raw, parent_raw)
+    models = load_models(raw)
+    state_report = verify_state_tables(raw, parent_raw)
+    progress(f"long-replay-fragment:L{level}:start")
+    long_run, precision_pass, _long_scaling, representation_envelopes = (
+        verify_long_replay(raw, parent_raw, state_report, models, (level,))
+    )
+    progress(f"long-replay-fragment:L{level}:complete")
+    fragment: dict[str, object] = {
+        "schema": LONG_REPLAY_FRAGMENT_SCHEMA,
+        "source_sha": meta["source_sha"],
+        "parent_source_sha": PARENT_SHA,
+        "level": level,
+        "raw_files": raw_file_hashes(raw),
+        "long_run": long_run,
+        "precision_pass": {
+            str(precision): precision_pass[precision] for precision in PRECISIONS
+        },
+        "representation_envelopes": {
+            name: {
+                str(precision): ratio_text(value)
+                for precision, value in values.items()
+            }
+            for name, values in representation_envelopes.items()
+        },
+    }
+    fragment["payload_sha256"] = canonical_json_sha256(
+        long_replay_fragment_payload(fragment)
+    )
+    return fragment
+
+
+def ordered_long_replay_fragments(
+    fragments: Sequence[dict[str, object]], source_sha: str,
+    expected_raw_files: dict[str, str],
+) -> list[dict[str, object]]:
+    require(len(fragments) == len(LEVELS), "long-replay fragment count differs")
+    by_level: dict[int, dict[str, object]] = {}
+    expected_precision_keys = {str(precision) for precision in PRECISIONS}
+    expected_envelopes = {
+        "representation_position", "representation_momentum", "representation_energy",
+    }
+    for fragment in fragments:
+        require(
+            isinstance(fragment, dict)
+            and set(fragment) == LONG_REPLAY_FRAGMENT_FIELDS,
+            "long-replay fragment field inventory differs",
+        )
+        level = fragment["level"]
+        require(
+            type(level) is int and level in LEVELS and level not in by_level,
+            "long-replay fragment level identity differs",
+        )
+        require(
+            fragment["schema"] == LONG_REPLAY_FRAGMENT_SCHEMA
+            and fragment["source_sha"] == source_sha
+            and fragment["parent_source_sha"] == PARENT_SHA
+            and fragment["raw_files"] == expected_raw_files
+            and isinstance(fragment["raw_files"], dict)
+            and set(fragment["raw_files"]) == set(FILES)
+            and all(
+                isinstance(value, str) and SHA256.fullmatch(value) is not None
+                for value in fragment["raw_files"].values()
+            ),
+            "long-replay fragment input identity differs",
+        )
+        long_run = fragment["long_run"]
+        precision_pass = fragment["precision_pass"]
+        envelopes = fragment["representation_envelopes"]
+        require(
+            isinstance(long_run, dict) and set(long_run) == LONG_REPLAY_REPORT_FIELDS
+            and isinstance(precision_pass, dict)
+            and set(precision_pass) == expected_precision_keys
+            and all(type(value) is bool for value in precision_pass.values())
+            and isinstance(envelopes, dict) and set(envelopes) == expected_envelopes,
+            "long-replay fragment payload inventory differs",
+        )
+        for values in envelopes.values():
+            require(
+                isinstance(values, dict) and set(values) == expected_precision_keys
+                and all(ratio(str(value)) >= 0 for value in values.values()),
+                "long-replay fragment envelope inventory differs",
+            )
+        payload_hash = fragment["payload_sha256"]
+        require(
+            isinstance(payload_hash, str)
+            and SHA256.fullmatch(payload_hash) is not None
+            and payload_hash == canonical_json_sha256(
+                long_replay_fragment_payload(fragment)
+            ),
+            "long-replay fragment payload digest differs",
+        )
+        expected_runs = {f"B{precision}:L{level}" for precision in PRECISIONS}
+        expected_frames = {
+            f"long:galilean_boost:B{precision}:L{level}"
+            for precision in PRECISIONS
+        }
+        expected_profiles = {
+            f"B{precision}:L{level}:{scenario}"
+            for precision in PRECISIONS
+            for scenario in ("k4_internal", "k4_boosted")
+        }
+        expected_comparators = {
+            f"{scenario}:L{level}"
+            for scenario in ("k4_internal", "k4_boosted")
+        }
+        require(
+            isinstance(long_run["runs"], dict)
+            and set(long_run["runs"]) == expected_runs
+            and isinstance(
+                long_run["long_frame_summed_local_half_ulp_certificates"], dict
+            )
+            and set(long_run["long_frame_summed_local_half_ulp_certificates"])
+                == expected_frames
+            and isinstance(long_run["exact_prefix_energy_profile_pass"], dict)
+            and set(long_run["exact_prefix_energy_profile_pass"]) == expected_profiles
+            and isinstance(long_run["long_exact_prefix_anchor"], dict)
+            and set(long_run["long_exact_prefix_anchor"]) == {str(level)}
+            and isinstance(long_run["comparator_free_b256_trace_agreement"], dict)
+            and set(long_run["comparator_free_b256_trace_agreement"])
+                == expected_runs
+            and isinstance(long_run["exact_rational_comparator_receipts"], dict)
+            and set(long_run["exact_rational_comparator_receipts"])
+                == expected_comparators,
+            "long-replay fragment level payload differs",
+        )
+        by_level[level] = fragment
+    require(set(by_level) == set(LEVELS), "long-replay fragment level inventory differs")
+    return [by_level[level] for level in LEVELS]
+
+
+def merge_unique_mapping(
+    target: dict[str, object], source: object, label: str,
+) -> None:
+    require(isinstance(source, dict), f"{label} is not an object")
+    for key, value in source.items():
+        require(isinstance(key, str) and key not in target, f"duplicate {label} key")
+        target[key] = value
+
+
+def merged_maximum_profiles(
+    reports: Sequence[dict[str, object]], field: str,
+) -> dict[str, dict[str, str]]:
+    result: dict[str, dict[str, Fraction]] = {
+        str(precision): {} for precision in PRECISIONS
+    }
+    expected_precision_keys = set(result)
+    for report in reports:
+        profile = report[field]
+        require(
+            isinstance(profile, dict) and set(profile) == expected_precision_keys,
+            f"{field} precision inventory differs",
+        )
+        for precision, values in profile.items():
+            require(isinstance(values, dict), f"{field} metric inventory differs")
+            for name, encoded in values.items():
+                require(isinstance(name, str), f"{field} metric name differs")
+                value = ratio(str(encoded))
+                require(value >= 0, f"negative {field} envelope")
+                result[precision][name] = max(
+                    result[precision].get(name, Fraction()), value
+                )
+    metric_inventory = {frozenset(values) for values in result.values()}
+    require(len(metric_inventory) == 1, f"{field} metric profile differs")
+    return {
+        precision: {name: ratio_text(value) for name, value in values.items()}
+        for precision, values in result.items()
+    }
+
+
+def merge_long_replay_fragments(
+    fragments: Sequence[dict[str, object]], source_sha: str,
+    expected_raw_files: dict[str, str],
+) -> tuple[
+    dict[str, object], dict[int, bool], bool,
+    dict[str, dict[int, Fraction]],
+]:
+    ordered = ordered_long_replay_fragments(
+        fragments, source_sha, expected_raw_files
+    )
+    reports = [fragment["long_run"] for fragment in ordered]
+    assert all(isinstance(report, dict) for report in reports)
+    typed_reports: list[dict[str, object]] = list(reports)  # type: ignore[arg-type]
+
+    runs: dict[str, object] = {}
+    frame_reports: dict[str, object] = {}
+    profile_pass: dict[str, object] = {}
+    exact_prefix_anchors: dict[str, object] = {}
+    full_anchors: dict[str, object] = {}
+    comparator_reports: dict[str, object] = {}
+    for report in typed_reports:
+        merge_unique_mapping(runs, report["runs"], "long run")
+        merge_unique_mapping(
+            frame_reports,
+            report["long_frame_summed_local_half_ulp_certificates"],
+            "long frame certificate",
+        )
+        merge_unique_mapping(
+            profile_pass, report["exact_prefix_energy_profile_pass"],
+            "exact-prefix profile",
+        )
+        merge_unique_mapping(
+            exact_prefix_anchors, report["long_exact_prefix_anchor"],
+            "exact-prefix anchor",
+        )
+        merge_unique_mapping(
+            full_anchors, report["comparator_free_b256_trace_agreement"],
+            "full-tail anchor",
+        )
+        merge_unique_mapping(
+            comparator_reports, report["exact_rational_comparator_receipts"],
+            "rational comparator",
+        )
+
+    force_maxima = merged_maximum_profiles(typed_reports, "force_maxima")
+    analytic_maxima = merged_maximum_profiles(
+        typed_reports, "independently_summed_half_ulp_bound_maxima"
+    )
+
+    expected_precision_keys = {str(precision) for precision in PRECISIONS}
+    frame_pass = {precision: True for precision in expected_precision_keys}
+    precision_pass = {precision: True for precision in PRECISIONS}
+    for fragment, report in zip(ordered, typed_reports):
+        fragment_pass = fragment["precision_pass"]
+        report_frame_pass = report["long_frame_bound_pass"]
+        require(
+            isinstance(fragment_pass, dict)
+            and isinstance(report_frame_pass, dict)
+            and set(report_frame_pass) == expected_precision_keys
+            and all(type(value) is bool for value in report_frame_pass.values()),
+            "long-replay fragment pass inventory differs",
+        )
+        for precision in PRECISIONS:
+            precision_pass[precision] = (
+                precision_pass[precision] and bool(fragment_pass[str(precision)])
+            )
+            frame_pass[str(precision)] = (
+                frame_pass[str(precision)]
+                and bool(report_frame_pass[str(precision)])
+            )
+
+    certificate_sums = {
+        precision: {name: 0 for name in LONG_CERTIFICATE_SUM_FIELDS}
+        for precision in expected_precision_keys
+    }
+    certificate_maxima = {
+        precision: {name: Fraction() for name in LONG_CERTIFICATE_MAX_FIELDS}
+        for precision in expected_precision_keys
+    }
+    certificate_pass = {precision: True for precision in expected_precision_keys}
+    expected_certificate_fields = (
+        LONG_CERTIFICATE_SUM_FIELDS | LONG_CERTIFICATE_MAX_FIELDS | {"passed"}
+    )
+    for report in typed_reports:
+        certificates = report["exact_prefix_energy_componentwise_certificates"]
+        require(
+            isinstance(certificates, dict)
+            and set(certificates) == expected_precision_keys,
+            "long energy-certificate precision inventory differs",
+        )
+        for precision, certificate in certificates.items():
+            require(
+                isinstance(certificate, dict)
+                and set(certificate) == expected_certificate_fields,
+                "long energy-certificate field inventory differs",
+            )
+            for name in LONG_CERTIFICATE_SUM_FIELDS:
+                value = certificate[name]
+                require(type(value) is int and value >= 0,
+                        "long energy-certificate count differs")
+                certificate_sums[precision][name] += value
+            for name in LONG_CERTIFICATE_MAX_FIELDS:
+                value = ratio(str(certificate[name]))
+                require(value >= 0, "negative long energy-certificate envelope")
+                certificate_maxima[precision][name] = max(
+                    certificate_maxima[precision][name], value
+                )
+            require(type(certificate["passed"]) is bool,
+                    "long energy-certificate pass differs")
+            certificate_pass[precision] = (
+                certificate_pass[precision] and bool(certificate["passed"])
+            )
+    energy_certificates = {
+        precision: {
+            **certificate_sums[precision],
+            **{
+                name: ratio_text(value)
+                for name, value in certificate_maxima[precision].items()
+            },
+            "passed": certificate_pass[precision],
+        }
+        for precision in expected_precision_keys
+    }
+
+    slope_names = {
+        "momentum", "angular", "energy", "boost_position", "boost_momentum",
+    }
+    slope_values: dict[str, dict[int, Fraction]] = {
+        name: {precision: Fraction() for precision in PRECISIONS}
+        for name in slope_names
+    }
+    for report in typed_reports:
+        slopes = report["slope_envelopes"]
+        require(isinstance(slopes, dict) and set(slopes) == slope_names,
+                "long slope-envelope inventory differs")
+        for name, values in slopes.items():
+            require(isinstance(values, dict) and set(values) == expected_precision_keys,
+                    "long slope precision inventory differs")
+            for precision in PRECISIONS:
+                slope_values[name][precision] = max(
+                    slope_values[name][precision], ratio(str(values[str(precision)]))
+                )
+    slope_budgets = {
+        "momentum": MOMENTUM_SLOPE_BUDGET,
+        "angular": ANGULAR_SLOPE_BUDGET,
+        "energy": ENERGY_SLOPE_BUDGET,
+        "boost_position": POSITION_BUDGET / 16,
+        "boost_momentum": MOMENTUM_BUDGET / 16,
+    }
+    slope_scaling = {
+        name: scaling_until_budget(values, slope_budgets[name])
+        for name, values in slope_values.items()
+    }
+    slope_anchor_budget_pass = all(
+        slope_values[name][256] <= slope_budgets[name] / 16
+        for name in slope_values
+    )
+    slope_anchor_unit_roundoff_scaling = all(
+        unit_roundoff_pair_scales(
+            slope_values[name][192], slope_values[name][256], 64
+        )
+        for name in slope_values
+    )
+
+    anchor_contracts: list[tuple[bool, bool, bool]] = []
+    analytic_anchor_contracts: list[bool] = []
+    for level in LEVELS:
+        level_report = exact_prefix_anchors[str(level)]
+        require(isinstance(level_report, dict)
+                and isinstance(level_report.get("scenarios"), dict),
+                "long exact-prefix anchor shape differs")
+        scenarios = level_report["scenarios"]
+        assert isinstance(scenarios, dict)
+        require(set(scenarios) == {"k4_internal", "k4_boosted"},
+                "long exact-prefix anchor scenario inventory differs")
+        level_contracts: list[tuple[bool, bool, bool]] = []
+        level_analytics: list[bool] = []
+        for scenario_report in scenarios.values():
+            require(isinstance(scenario_report, dict),
+                    "long exact-prefix scenario report differs")
+            required = scenario_report.get("anchor_required")
+            budgets = scenario_report.get("b256_below_one_sixteenth_budget")
+            scaling = scenario_report.get("b192_b256_unit_roundoff_scaling")
+            analytic = scenario_report.get("b256_analytic_energy_certificate")
+            require(
+                type(required) is bool and isinstance(budgets, dict)
+                and bool(budgets) and all(type(value) is bool for value in budgets.values())
+                and isinstance(scaling, dict) and set(scaling) == set(budgets)
+                and all(type(value) is bool for value in scaling.values())
+                and type(analytic) is bool,
+                "long exact-prefix anchor contract differs",
+            )
+            contract = (required, all(budgets.values()), all(scaling.values()))
+            analytic_contract = not required or analytic
+            level_contracts.append(contract)
+            anchor_contracts.append(contract)
+            level_analytics.append(analytic_contract)
+            analytic_anchor_contracts.append(analytic_contract)
+        _budget, _scaling, level_qualified = aggregate_required_anchor_contracts(
+            level_contracts
+        )
+        level_qualified = level_qualified and all(level_analytics)
+        require(
+            level_report.get("all_required_scenarios_qualified") == level_qualified,
+            "long exact-prefix level qualification differs",
+        )
+    (
+        all_required_anchor_budgets_pass,
+        all_required_anchor_scaling_pass,
+        all_required_anchors_qualified,
+    ) = aggregate_required_anchor_contracts(anchor_contracts)
+    all_required_anchors_qualified = (
+        all_required_anchors_qualified and all(analytic_anchor_contracts)
+    )
+
+    boost_timestep_contraction: dict[str, object] = {}
+    for precision in PRECISIONS:
+        x_maxima: list[Fraction] = []
+        x_finals: list[Fraction] = []
+        p_maxima: list[Fraction] = []
+        p_finals: list[Fraction] = []
+        for report in typed_reports:
+            boost = report["boost_timestep_contraction"]
+            require(isinstance(boost, dict) and set(boost) == expected_precision_keys,
+                    "long boost precision inventory differs")
+            values = boost[str(precision)]
+            require(isinstance(values, dict), "long boost report differs")
+            for name, target in (
+                ("position_maxima", x_maxima), ("position_finals", x_finals),
+                ("momentum_maxima", p_maxima), ("momentum_finals", p_finals),
+            ):
+                encoded = values.get(name)
+                require(isinstance(encoded, list) and len(encoded) == 1,
+                        "long boost fragment level inventory differs")
+                target.append(ratio(str(encoded[0])))
+        profiles = {
+            "position_maximum": timestep_contraction_profile(x_maxima, POSITION_BUDGET),
+            "position_final": timestep_contraction_profile(x_finals, POSITION_BUDGET),
+            "momentum_maximum": timestep_contraction_profile(p_maxima, MOMENTUM_BUDGET),
+            "momentum_final": timestep_contraction_profile(p_finals, MOMENTUM_BUDGET),
+        }
+        contracts = {
+            name: qualitative and attained
+            for name, (qualitative, attained) in profiles.items()
+        }
+        precision_pass[precision] = precision_pass[precision] and all(contracts.values())
+        boost_timestep_contraction[str(precision)] = {
+            "position_maxima": [ratio_text(value) for value in x_maxima],
+            "position_finals": [ratio_text(value) for value in x_finals],
+            "momentum_maxima": [ratio_text(value) for value in p_maxima],
+            "momentum_finals": [ratio_text(value) for value in p_finals],
+            **{
+                f"{name}_qualitative_contraction": qualitative
+                for name, (qualitative, _attained) in profiles.items()
+            },
+            **{
+                f"{name}_floor_attained": attained
+                for name, (_qualitative, attained) in profiles.items()
+            },
+            **contracts,
+        }
+
+    paired_bound = typed_reports[0]["paired_bound_accumulator"]
+    require(
+        all(report["paired_bound_accumulator"] == paired_bound for report in typed_reports)
+        and all(
+            report["compact_xyz_hash_max_physical_and_delta_derivations"] is True
+            for report in typed_reports
+        ),
+        "long-replay fragment constant report differs",
+    )
+
+    representation_envelopes = {
+        name: {precision: Fraction() for precision in PRECISIONS}
+        for name in (
+            "representation_position", "representation_momentum",
+            "representation_energy",
+        )
+    }
+    for fragment in ordered:
+        encoded_envelopes = fragment["representation_envelopes"]
+        assert isinstance(encoded_envelopes, dict)
+        for name, values in encoded_envelopes.items():
+            assert isinstance(values, dict)
+            for precision in PRECISIONS:
+                representation_envelopes[name][precision] = max(
+                    representation_envelopes[name][precision],
+                    ratio(str(values[str(precision)])),
+                )
+
+    long_scaling = (
+        all(slope_scaling.values())
+        and all_required_anchor_scaling_pass
+        and all(
+            bool(boost_timestep_contraction["256"][f"{name}_qualitative_contraction"])
+            for name in (
+                "position_maximum", "position_final",
+                "momentum_maximum", "momentum_final",
+            )
+        )
+    )
+    result: dict[str, object] = {
+        "runs": runs,
+        "force_maxima": force_maxima,
+        "independently_summed_half_ulp_bound_maxima": analytic_maxima,
+        "long_frame_summed_local_half_ulp_certificates": frame_reports,
+        "long_frame_bound_pass": frame_pass,
+        "exact_prefix_energy_componentwise_certificates": energy_certificates,
+        "exact_prefix_energy_profile_pass": profile_pass,
+        "paired_bound_accumulator": paired_bound,
+        "slope_envelopes": {
+            name: {
+                str(precision): ratio_text(value)
+                for precision, value in values.items()
+            }
+            for name, values in slope_values.items()
+        },
+        "slope_unit_roundoff_scaling": slope_scaling,
+        "b256_all_residual_slopes_below_one_sixteenth_budget_diagnostic": (
+            slope_anchor_budget_pass
+        ),
+        "b192_b256_all_residual_slopes_unit_roundoff_diagnostic": (
+            slope_anchor_unit_roundoff_scaling
+        ),
+        "long_exact_prefix_anchor": exact_prefix_anchors,
+        "all_required_exact_prefix_below_one_sixteenth_budget": (
+            all_required_anchor_budgets_pass
+        ),
+        "all_required_exact_prefix_unit_roundoff_scaling": (
+            all_required_anchor_scaling_pass
+        ),
+        "all_required_full_tail_anchors_qualified": (
+            all_required_anchors_qualified
+        ),
+        "comparator_free_b256_trace_agreement": full_anchors,
+        "boost_timestep_contraction": boost_timestep_contraction,
+        "exact_rational_comparator_receipts": comparator_reports,
+        "compact_xyz_hash_max_physical_and_delta_derivations": True,
+    }
+    require(set(result) == LONG_REPLAY_REPORT_FIELDS,
+            "merged long-replay report field inventory differs")
+    return result, precision_pass, long_scaling, representation_envelopes
 
 
 def scaling_until_budget(values: dict[int, Fraction], budget: Fraction) -> bool:
@@ -7409,6 +8052,7 @@ def verify(
     precomputed_smooth: tuple[
         dict[str, list[Decimal]], dict[str, Decimal], dict[str, list[list[Decimal]]]
     ] | None = None,
+    long_replay_fragments: Sequence[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     progress("metadata-parent-controls:start")
     meta = verify_schema_metadata_profiles(raw, allow_dirty)
@@ -7452,9 +8096,19 @@ def verify(
     # Release their completed trajectories before materializing a long level.
     del trajectories, trajectory_traces
     progress("long-replay:start")
-    long_run, long_pass, long_scaling, long_representation_envelopes = verify_long_replay(
-        raw, parent_raw, state_report, models
-    )
+    verified_raw_files: dict[str, str] | None = None
+    if long_replay_fragments is None:
+        (
+            long_run, long_pass, long_scaling, long_representation_envelopes,
+        ) = verify_long_replay(raw, parent_raw, state_report, models)
+    else:
+        verify_long_replay_global_level_order(raw)
+        verified_raw_files = raw_file_hashes(raw)
+        (
+            long_run, long_pass, long_scaling, long_representation_envelopes,
+        ) = merge_long_replay_fragments(
+            long_replay_fragments, meta["source_sha"], verified_raw_files
+        )
     progress("long-replay:complete")
     require(set(short_representation_envelopes) == set(long_representation_envelopes),
             "short/long recomputed representation envelope inventory differs")
@@ -7567,7 +8221,10 @@ def verify(
         "selected_precision": selected,
         "decision": decision,
         "promotion": "NO_PROMOTION",
-        "raw_files": {filename: sha256(raw / filename) for filename in FILES},
+        "raw_files": (
+            verified_raw_files if verified_raw_files is not None
+            else raw_file_hashes(raw)
+        ),
     }
     progress("disposition-summary:complete")
     return result
@@ -7579,9 +8236,48 @@ def main() -> int:
     parser.add_argument("--parent-raw", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--allow-dirty", action="store_true")
+    parser.add_argument("--long-replay-level", type=int, choices=LEVELS)
+    parser.add_argument(
+        "--long-replay-fragment", type=Path, action="append", default=[],
+        help=(
+            "merge one identity-bound fragment per registered long-replay level; "
+            "omit to retain the default monolithic verifier"
+        ),
+    )
     arguments = parser.parse_args()
     try:
-        result = verify(arguments.raw, arguments.parent_raw, arguments.allow_dirty)
+        require(
+            arguments.long_replay_level is None
+            or not arguments.long_replay_fragment,
+            "long-replay fragment production and aggregation are mutually exclusive",
+        )
+        if arguments.long_replay_level is not None:
+            result = create_long_replay_fragment(
+                arguments.raw, arguments.parent_raw,
+                arguments.long_replay_level, arguments.allow_dirty,
+            )
+            arguments.output.parent.mkdir(parents=True, exist_ok=True)
+            arguments.output.write_text(
+                json.dumps(result, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            progress(f"fragment-write:L{arguments.long_replay_level}:complete")
+            print(
+                "BOUNDED FRACTIONAL PHASE STATE LONG REPLAY FRAGMENT: "
+                f"PASS L{arguments.long_replay_level}"
+            )
+            return 0
+        fragments: list[dict[str, object]] | None = None
+        if arguments.long_replay_fragment:
+            fragments = []
+            for path in arguments.long_replay_fragment:
+                value = json.loads(path.read_text(encoding="utf-8"))
+                require(isinstance(value, dict), "long-replay fragment is not an object")
+                fragments.append(value)
+        result = verify(
+            arguments.raw, arguments.parent_raw, arguments.allow_dirty,
+            long_replay_fragments=fragments,
+        )
         require_final_outcome(result)
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(

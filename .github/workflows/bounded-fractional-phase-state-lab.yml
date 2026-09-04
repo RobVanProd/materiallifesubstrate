@@ -17,8 +17,9 @@ jobs:
     name: C++ / ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
     # Leave ten minutes below GitHub-hosted runners' six-hour hard job limit.
-    # The Linux entries also generate one fresh raw twin each so that the
-    # independent oracle job spends its bounded runtime on verification.
+    # The Linux entries generate one fresh raw twin each and verify assigned
+    # long-replay levels before caching identity-bound fragments for the final
+    # oracle job.  This keeps every job below the hosted six-hour ceiling.
     timeout-minutes: 350
     strategy:
       fail-fast: false
@@ -29,16 +30,19 @@ jobs:
             cc: gcc
             cxx: g++
             raw_name: raw-a
+            long_levels: "0 1"
           - label: Linux Clang
             os: ubuntu-latest
             cc: clang
             cxx: clang++
             raw_name: raw-b
+            long_levels: "2"
           - label: Windows MSVC
             os: windows-latest
             cc: ""
             cxx: ""
             raw_name: ""
+            long_levels: ""
     steps:
       - name: Check out tested source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -135,6 +139,27 @@ jobs:
           du -sh "$raw_dir" "$transfer_dir/$RAW_NAME.tar.gz" \
             | tee "ci-artifacts/$RAW_NAME-transfer-size.txt"
           df -h . | tee "ci-artifacts/$RAW_NAME-disk.txt"
+      - name: Verify assigned long-replay fragments
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          RAW_NAME: ${{ matrix.raw_name }}
+          LONG_LEVELS: ${{ matrix.long_levels }}
+          LONG_FRAGMENT_TIMEOUT_SECONDS: "10800"
+        run: |
+          set -euo pipefail
+          raw_dir="build/bounded-fractional-ci/$RAW_NAME"
+          parent_raw="build/bounded-fractional-ci/explicit-fractional-phase-state-evidence-v1/raw-a"
+          transfer_dir="ci-transfer/$RAW_NAME"
+          for level in $LONG_LEVELS; do
+            timeout --foreground --kill-after=60s "$LONG_FRAGMENT_TIMEOUT_SECONDS" \
+              python -u reference/bounded_fractional_phase_state_oracle.py \
+                --raw "$raw_dir" --parent-raw "$parent_raw" \
+                --long-replay-level "$level" \
+                --output "$transfer_dir/long-replay-L$level.json" \
+              2>&1 | tee "ci-artifacts/long-replay-L$level.txt"
+          done
       - name: Cache fresh raw twin for the oracle job
         if: runner.os == 'Linux'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -181,7 +206,8 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: "1"
           TWIN_COMPARE_TIMEOUT_SECONDS: "900"
-          ORACLE_TIMEOUT_SECONDS: "18600"
+          LONG_FRAGMENT_TIMEOUT_SECONDS: "10800"
+          ORACLE_TIMEOUT_SECONDS: "7200"
           MUTATION_TIMEOUT_SECONDS: "1800"
           SEAL_MUTATION_TIMEOUT_SECONDS: "600"
         run: |
@@ -193,6 +219,8 @@ jobs:
             2>&1 | tee ci-artifacts/python-dependencies.txt
           python tests/bounded_fractional_phase_state_algorithm_test.py \
             2>&1 | tee ci-artifacts/algorithm-contracts.txt
+          python tests/bounded_fractional_phase_state_sharding_test.py \
+            2>&1 | tee ci-artifacts/sharding-contracts.txt
 
           parent_archive=build/bounded-fractional-ci/parent.tar.gz
           curl --fail --location --show-error \
@@ -237,10 +265,23 @@ jobs:
             2>&1 | tee ci-artifacts/raw-twin.txt
           rm -rf build/bounded-fractional-ci/raw-b
           df -h . | tee ci-artifacts/pre-oracle-disk.txt
+          for level in 3 4; do
+            timeout --foreground --kill-after=60s "$LONG_FRAGMENT_TIMEOUT_SECONDS" \
+              python -u reference/bounded_fractional_phase_state_oracle.py \
+                --raw "$raw_a" --parent-raw "$parent_raw" \
+                --long-replay-level "$level" \
+                --output "ci-artifacts/long-replay-L$level.json" \
+              2>&1 | tee "ci-artifacts/long-replay-L$level.txt"
+          done
           timeout --foreground --kill-after=60s "$ORACLE_TIMEOUT_SECONDS" \
             python -u reference/bounded_fractional_phase_state_oracle.py \
               --raw "$raw_a" --parent-raw "$parent_raw" \
               --output ci-artifacts/oracle-summary.json \
+              --long-replay-fragment ci-transfer/raw-a/long-replay-L0.json \
+              --long-replay-fragment ci-transfer/raw-a/long-replay-L1.json \
+              --long-replay-fragment ci-transfer/raw-b/long-replay-L2.json \
+              --long-replay-fragment ci-artifacts/long-replay-L3.json \
+              --long-replay-fragment ci-artifacts/long-replay-L4.json \
             2>&1 | tee ci-artifacts/oracle.txt
           timeout --foreground --kill-after=60s "$MUTATION_TIMEOUT_SECONDS" \
             python -u tests/bounded_fractional_phase_state_oracle_test.py \

@@ -336,6 +336,18 @@ scientifically ineligible. The final verifier propagates those bounds from the
 registered local rounding sites rather than fitting them to observed
 residuals.
 
+The first branch-CI run on source
+`506ee4b692b38041479a5781823f3c637483e50c`, run `33830169828`, completed all
+three C++ jobs and the pinned Lean job successfully. Its Python exact-oracle
+job verified the parent, restored and compared the fresh twins, and completed
+the oracle through long-replay level 3. It began long-replay level 4 at
+`2026-09-04T09:56:52Z`; the registered `18,600`-second oracle subprocess limit
+then expired at `2026-09-04T09:58:39Z`, and the step ended with exit code
+`124`. This was a branch-CI execution-time failure, not a scientific failure:
+the complete local oracle independently reached the registered negative
+disposition. The failed run and its partial always-uploaded oracle evidence are
+preserved with null scientific disposition.
+
 Mutation tests cover restored verbose assumptions, changed exact fractions,
 commitment transplants, display aliases, rounded-only commitments, altered
 candidate/control hashes, row deletion/duplication/reordering, force or parent

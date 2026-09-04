@@ -57,8 +57,9 @@ groups.
 `failed-attempts.json` preserves the oversized-v1 packaging attempt, the first
 compact-v2 comparator-order attempt, the superseded overstrict anchor
 interpretation, and the precheck stopped when final audit found missing
-compositional recovery/frame/energy bounds, without importing their
-multi-gigabyte raw trees.
+compositional recovery/frame/energy bounds, plus the first branch-CI oracle
+timeout, without importing their multi-gigabyte raw trees or treating an
+execution-time limit as a scientific disposition.
 It is a JSON object with exactly `schema` and `attempts`; `schema` is
 `mls.bounded-fractional-phase-state.failed-attempts.v1`. `attempts` contains
 exactly these `(id, source_sha)` pairs in order:
@@ -68,6 +69,7 @@ oversized-v1-public-archive                 f891c248c414a5a705e60c13b865a722d24b
 compact-v2-row-order-verifier               be6f95a8dac47153616d398a079b30830d7213da
 overstrict-anchor-interpretation-verifier   be6f95a8dac47153616d398a079b30830d7213da
 incomplete-compositional-bound-verifier-precheck be6f95a8dac47153616d398a079b30830d7213da
+branch-ci-oracle-timeout-33830169828        506ee4b692b38041479a5781823f3c637483e50c
 ```
 
 Every attempt has exactly `id`, `source_sha`, `stage`, `outcome`,
@@ -646,6 +648,16 @@ exponent/rounding, noncanonical state, hidden history, absolute-position
 conversion, reordered or fused operations, false bounds/counts/scaling,
 omitted observer state, false dynamics/conservation/frame/energy/domain/size/
 replay results, changed budgets, and promotion relabeling.
+
+The command-line verifier remains monolithic by default. GitHub-hosted CI may
+evaluate the five independent long-replay levels as source-, parent-, and
+raw-hash-bound transport fragments with schema
+`mls.bounded-fractional-phase-state.long-replay-fragment.v1`. Each fragment
+contains exactly one registered level and a digest of its derived payload. The
+final `Python exact oracle` job requires all five distinct levels, orders them
+canonically, recomputes every cross-level reduction, and writes the unchanged
+oracle schema. These fragments are transient CI scheduling records, are not
+candidate state, and are not members of the sealed evidence bundle.
 
 `outer-seal.json` is canonical UTF-8 JSON. Its pre-hash is computed with
 `outer_pre_hash` set to JSON null. The validator first checks inventory and

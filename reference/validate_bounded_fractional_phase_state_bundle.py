@@ -230,6 +230,10 @@ FAILED_ATTEMPTS = (
         "incomplete-compositional-bound-verifier-precheck",
         "be6f95a8dac47153616d398a079b30830d7213da",
     ),
+    (
+        "branch-ci-oracle-timeout-33830169828",
+        "506ee4b692b38041479a5781823f3c637483e50c",
+    ),
 )
 ORACLE_FIELDS = {
     "schema",
