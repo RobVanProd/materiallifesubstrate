@@ -22,6 +22,16 @@ import MLSFormal.PhaseSpaceTimeCorefinement
 import MLSFormal.ExplicitFractionalPhaseState
 import MLSFormal.BoundedFractionalPhaseState
 import MLSFormal.BoundedPhaseTailCertification
+import MLSFormal.CorrelationAwareTailCertification
+
+#print axioms MLSFormal.correlatedTail_image_inclusion
+#print axioms MLSFormal.correlatedTail_shared_subtraction
+#print axioms MLSFormal.correlatedTail_bisection_coverage
+#print axioms MLSFormal.correlatedTail_fixed_scalar_kdk
+#print axioms MLSFormal.correlatedTail_branch_induction
+#print axioms MLSFormal.correlatedTail_signed_affine_sum
+#print axioms MLSFormal.correlatedTail_recenter
+#print axioms MLSFormal.correlatedTail_budget_slack
 
 #print axioms MLSFormal.boundedTail_trajectory_enclosure
 #print axioms MLSFormal.boundedTail_outward_slack
