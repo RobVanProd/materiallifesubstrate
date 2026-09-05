@@ -27,7 +27,8 @@ against its sealed hash. These are targeted prefixes, not new dynamics sweeps.
 Displays above are not the mathematical inputs. Evidence preserves exact
 rational values, coordinate argmax ties, all signed energy samples, and exact
 least-squares numerators, denominators, and sums of absolute contributions.
-Internal L4 and boosted L4 are matched signed passing controls. The extractor
+Internal L4 and boosted L4 are matched signed passing controls (the frozen
+boosted anchor gates concern position/momentum, not energy). The extractor
 also preserves the complete parent comparison inventory.
 
 For L3 let A_B = sum |(t_n - mean(t)) deltaE_n| and S_B be the corresponding
@@ -114,6 +115,14 @@ phase-state replay. Compiler CI remains a bounded unchanged-C++ regression;
 no new integrator experiment is included.
 
 ## Disposition
+
+An unpublished packaging/verifier attempt at source `0681df1d5bc07d65a583b1c0c2912c8c51c2a957`
+failed because the new record verifier indexed an energy-anchor field in the
+boosted parent control, where no such field exists. Its twin archives, SHA-256
+`baa7a0f2c94a4e2de3b9edcc527cf16d9989f5b4fd53e3b573e89e491fca0bc4`,
+are preserved locally as failed attempts and have no public scientific seal.
+The correction checks all mandatory internal energy gates and explicitly
+labels boosted energy as diagnostic-only. No parent gate or result changed.
 
 The ratio rule is not mathematically necessary. Its three particular failures
 are reproduced; the slope has a measured cancellation amplification, while

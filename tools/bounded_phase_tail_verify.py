@@ -48,8 +48,14 @@ def verify(inputs, evidence, replay=False):
             assert signed/denominator==Q(report['slope'])
             assert abs(signed)/unsigned==Q(report['cancellation_fraction'])
             assert values[-1]==Q(report['final_energy'])
-            assert abs(values[-1])==Q(envelopes['energy_final'][bits])
-            assert abs(signed/denominator)==Q(envelopes['energy_slope'][bits])
+            if scenario=='k4_internal':
+                assert abs(values[-1])==Q(envelopes['energy_final'][bits])
+                assert abs(signed/denominator)==Q(envelopes['energy_slope'][bits])
+            else:
+                # The sealed boosted anchor has position/momentum gates only.
+                # Its signed energy trace is an added diagnostic, never a
+                # fabricated parent gate or a reason to qualify a tail.
+                assert 'energy_final' not in envelopes and 'energy_slope' not in envelopes
             position=report['final_position']
             assert Q(position['magnitude'])==Q(envelopes['position_final'][bits])
             assert position['sample']==n-1 and position['ties']
@@ -57,6 +63,8 @@ def verify(inputs, evidence, replay=False):
             assert report['potential_binary64_matches']==n
             checked+=n
     return dict(record_samples_checked=checked,withheld_stage_checks=1320,
+                parent_energy_anchor_profiles_checked=8,
+                boosted_energy_profiles_diagnostic_only=2,
                 full_prefix_replay=replay,full_tails_certified=False,promotion='NO_PROMOTION')
 
 if __name__=='__main__':
