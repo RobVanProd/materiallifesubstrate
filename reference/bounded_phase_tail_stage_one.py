@@ -49,6 +49,27 @@ def controls():
     assert rows[1]["excess"] == "4"
     return rows
 
+def signed_sum_controls():
+    rows=[]
+    for values in ((Q(1),Q(1,201),Q(-1)),
+                   (Q(1),Q(1,1024),Q(-1)),
+                   (Q(1,3),Q(-1,3),Q(1,201))):
+        for bits in (192,256):
+            value,bound=Q(0),Q(0)
+            local=[]
+            for term in values:
+                exact=value+term
+                value,slack=nearest(exact,bits)
+                local.append(value-exact)
+                bound+=slack
+            error=value-sum(values)
+            assert error==sum(local) and abs(error)<=bound
+            rows.append(dict(terms=list(map(str,values)),bits=bits,
+                signed_error=str(error),local_signed_errors=list(map(str,local)),
+                independently_summed_upper_bound=str(bound),
+                eta=str(abs(error)/bound) if bound else None))
+    return rows
+
 def extract(path):
     content = path.read_bytes()
     assert hashlib.sha256(content).hexdigest() == SUMMARY_HASH
@@ -89,9 +110,19 @@ def extract(path):
     assert sorted(failures) == [(1, "k4_internal", "position_final"),
                                (2, "k4_internal", "energy_final"),
                                (3, "k4_internal", "energy_slope")]
+    structure=source['composition_contracts']['structure_residuals']
+    reversal=structure['envelopes']['reversal_position']
+    reversal_ratio=Q(reversal['256'])/Q(reversal['192'])
+    assert reversal_ratio/(4*Q(1,2**64))==Q(1024,9)
+    assert structure['scaling_until_budget']['reversal_position']
     return dict(schema="mls.bounded-phase-tail.stage-one.v1", parent=PARENT,
                 parent_summary_sha256=SUMMARY_HASH, promotion="NO_PROMOTION",
                 stage_one_complete=False, comparisons=rows, exact_controls=controls(),
+                signed_sum_controls=signed_sum_controls(),
+                parent_prefix_energy_certificates=source['long_run']['exact_prefix_energy_componentwise_certificates'],
+                nongating_reversal=dict(envelopes=reversal,ratio=str(reversal_ratio),
+                    excess='1024/9',gating=False,ordinary_registered_gate_pass=True,
+                    bit_exact_reversal=False),
                 limitations=["Signed position argmax and per-sample slope contributions require targeted prefix replay.",
                              "Parent inward witnesses are retrospective, not unconditional tail enclosures.",
                              "No cancellation diagnosis or full-tail certification follows from this extraction."])

@@ -1,0 +1,290 @@
+name: Bounded Phase Tail Certification Lab
+
+on:
+  push:
+    branches:
+      - bounded-phase-tail-certification-lab
+    tags:
+      - bounded-phase-tail-certification-lab-evidence-*
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cpp-build-and-test:
+    name: C++ / ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux GCC
+            os: ubuntu-latest
+            cc: gcc
+            cxx: g++
+          - label: Linux Clang
+            os: ubuntu-latest
+            cc: clang
+            cxx: clang++
+          - label: Windows MSVC
+            os: windows-latest
+            cc: ""
+            cxx: ""
+
+    steps:
+      - name: Check out tested source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+
+      - name: Initialize MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
+
+      - name: Configure, build, and test with GCC or Clang
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          set -euo pipefail
+          mkdir -p ci-artifacts
+          {
+            printf 'source_sha=' && git rev-parse HEAD
+            printf 'source_status_begin\n' && git status --short && printf 'source_status_end\n'
+            printf 'runner_os=%s\nrunner_arch=%s\nimage_os=%s\nimage_version=%s\n' \
+              "$RUNNER_OS" "$RUNNER_ARCH" "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+            uname -a
+            cmake --version
+            ninja --version
+            "$CXX" --version
+            python --version
+          } 2>&1 | tee ci-artifacts/tool-versions.txt
+          cmake --preset dev 2>&1 | tee ci-artifacts/configure.txt
+          cmake --build --preset dev --parallel 2>&1 | tee ci-artifacts/build.txt
+          ctest --preset dev --output-on-failure -R '^mls\.validation$' 2>&1 | tee ci-artifacts/ctest.txt
+
+      - name: Configure, build, and test with MSVC
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ci-artifacts | Out-Null
+          "source_sha=$(git rev-parse HEAD)" | Tee-Object -FilePath ci-artifacts/tool-versions.txt
+          "source_status_begin" | Tee-Object -FilePath ci-artifacts/tool-versions.txt -Append
+          git status --short | Tee-Object -FilePath ci-artifacts/tool-versions.txt -Append
+          "source_status_end" | Tee-Object -FilePath ci-artifacts/tool-versions.txt -Append
+          "runner_os=$env:RUNNER_OS`nrunner_arch=$env:RUNNER_ARCH`nimage_os=$env:ImageOS`nimage_version=$env:ImageVersion" `
+            | Tee-Object -FilePath ci-artifacts/tool-versions.txt -Append
+          cmd /c ver 2>&1 | Tee-Object -FilePath ci-artifacts/tool-versions.txt -Append
+          cmake --version 2>&1 | Tee-Object -FilePath ci-artifacts/tool-versions.txt -Append
+          ninja --version 2>&1 | Tee-Object -FilePath ci-artifacts/tool-versions.txt -Append
+          cmd /c "cl /? 2>&1" | Tee-Object -FilePath ci-artifacts/tool-versions.txt -Append
+          python --version 2>&1 | Tee-Object -FilePath ci-artifacts/tool-versions.txt -Append
+
+          cmake --preset dev 2>&1 | Tee-Object -FilePath ci-artifacts/configure.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build --preset dev --parallel 2>&1 | Tee-Object -FilePath ci-artifacts/build.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --preset dev --output-on-failure -R '^mls\.validation$' 2>&1 | Tee-Object -FilePath ci-artifacts/ctest.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Preserve compiler and test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cpp-${{ matrix.label }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-artifacts/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  exact-oracle:
+    name: Python exact oracle
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out tested source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+
+      - name: Run historical and extended exact oracles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-artifacts
+          {
+            printf 'source_sha=' && git rev-parse HEAD
+            printf 'runner_os=%s\nrunner_arch=%s\nimage_os=%s\nimage_version=%s\n' \
+              "$RUNNER_OS" "$RUNNER_ARCH" "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+            python --version
+          } 2>&1 | tee ci-artifacts/python-version.txt
+          python reference/exact_arithmetic_v0.py 2>&1 | tee ci-artifacts/historical-reference.txt
+          python tools/exact_validation.py \
+            --mode full \
+            --provenance-only \
+            --verify reference/validation_results_v0.json \
+            2>&1 | tee ci-artifacts/historical-verification.txt
+          python tools/exact_validation.py \
+            --mode full \
+            --verify tests/exact_validation_full.canonical.json \
+            2>&1 | tee ci-artifacts/extended-verification.txt
+          python reference/hardening_oracle.py \
+            --verify tests/hardening_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/hardening-oracle.txt
+          python reference/transfer_oracle.py \
+            --cases 1000 \
+            --verify tests/transfer_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/transfer-oracle.txt
+          python reference/affine_advection_oracle.py \
+            --verify tests/affine_advection_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/affine-advection-oracle.txt
+          python reference/moving_apic_limit_oracle.py \
+            --verify tests/moving_apic_limit_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/moving-apic-limit-oracle.txt
+          python reference/projection_foundation_oracle.py \
+            --verify tests/projection_foundation_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/projection-foundation-oracle.txt
+          python reference/projection_exactness_nullspace_oracle.py \
+            --verify tests/projection_exactness_nullspace_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/projection-exactness-nullspace-oracle.txt
+          python tests/projection_exactness_nullspace_validator_test.py \
+            2>&1 | tee ci-artifacts/projection-exactness-nullspace-validator.txt
+          python reference/mechanical_observability_oracle.py \
+            --verify tests/mechanical_observability_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/mechanical-observability-oracle.txt
+          python tests/mechanical_observability_oracle_test.py \
+            2>&1 | tee ci-artifacts/mechanical-observability-oracle-regression.txt
+          python tests/mechanical_observability_bundle_validator_test.py \
+            2>&1 | tee ci-artifacts/mechanical-observability-validator.txt
+          python tests/mechanical_observability_seal_test.py \
+            2>&1 | tee ci-artifacts/mechanical-observability-seal.txt
+          python reference/kelvin_covariance_oracle.py \
+            --verify tests/kelvin_covariance_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/kelvin-covariance-oracle.txt
+          python tests/kelvin_covariance_oracle_test.py \
+            2>&1 | tee ci-artifacts/kelvin-covariance-oracle-regression.txt
+          python -m py_compile \
+            reference/validate_kelvin_covariance_bundle.py \
+            tests/kelvin_covariance_bundle_validator_test.py \
+            2>&1 | tee ci-artifacts/kelvin-covariance-validator-compile.txt
+          python -m py_compile \
+            reference/validate_relational_observability_bundle.py \
+            tests/relational_observability_bundle_validator_test.py \
+            tools/relational_observability_tool_versions.py \
+            tools/run_relational_evidence_command.py \
+            tools/seal_relational_observability_evidence.py \
+            2>&1 | tee ci-artifacts/relational-observability-validator-compile.txt
+          python tests/relational_observability_seal_test.py \
+            2>&1 | tee ci-artifacts/relational-observability-seal.txt
+          python reference/constitutive_expressivity_oracle.py \
+            --verify tests/constitutive_expressivity_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/constitutive-expressivity-oracle.txt
+          python tests/constitutive_expressivity_oracle_test.py \
+            2>&1 | tee ci-artifacts/constitutive-expressivity-oracle-regression.txt
+          python -m py_compile \
+            reference/validate_constitutive_expressivity_bundle.py \
+            tests/constitutive_expressivity_bundle_validator_test.py \
+            tools/seal_constitutive_expressivity_evidence.py \
+            2>&1 | tee ci-artifacts/constitutive-expressivity-seal-compile.txt
+          python tests/constitutive_expressivity_seal_test.py \
+            2>&1 | tee ci-artifacts/constitutive-expressivity-seal.txt
+          python reference/conservative_force_oracle.py \
+            --verify tests/conservative_force_oracle.canonical.json \
+            2>&1 | tee ci-artifacts/conservative-force-oracle.txt
+          python tests/conservative_force_oracle_test.py \
+            2>&1 | tee ci-artifacts/conservative-force-oracle-regression.txt
+          python -m py_compile \
+            reference/validate_conservative_force_bundle.py \
+            tests/conservative_force_bundle_validator_test.py \
+            tools/seal_conservative_force_consistency_evidence.py \
+            2>&1 | tee ci-artifacts/conservative-force-validator-compile.txt
+          python tests/conservative_force_seal_test.py \
+            --tool tools/seal_conservative_force_consistency_evidence.py \
+            2>&1 | tee ci-artifacts/conservative-force-seal.txt
+
+      - name: Tail arithmetic and fail-closed controls
+        shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          set -euo pipefail
+          python tests/bounded_phase_tail_test.py 2>&1 | tee ci-artifacts/tail-controls.txt
+
+      - name: Preserve exact-oracle evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: exact-oracle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-artifacts/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  lean:
+    name: Pinned Lean build and axiom output
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ELAN_VERSION: v4.2.4
+      ELAN_ARCHIVE_SHA256: 42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63
+    steps:
+      - name: Check out tested source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install pinned Elan
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/elan-x86_64-unknown-linux-gnu.tar.gz"
+          install_dir="$RUNNER_TEMP/elan-installer"
+          curl --fail --location --show-error \
+            "https://github.com/leanprover/elan/releases/download/${ELAN_VERSION}/elan-x86_64-unknown-linux-gnu.tar.gz" \
+            --output "$archive"
+          echo "${ELAN_ARCHIVE_SHA256}  ${archive}" | sha256sum --check --strict
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir"
+          "$install_dir/elan-init" -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Build pinned Lean project and scan trust boundary
+        shell: bash
+        working-directory: formal
+        run: |
+          set -euo pipefail
+          mkdir -p ../ci-artifacts
+          {
+            printf 'source_sha=' && git rev-parse HEAD
+            printf 'runner_os=%s\nrunner_arch=%s\nimage_os=%s\nimage_version=%s\n' \
+              "$RUNNER_OS" "$RUNNER_ARCH" "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+            elan --version
+            lean --version
+            lake --version
+            printf 'lean-toolchain=' && tr -d '\r\n' < lean-toolchain && printf '\n'
+          } 2>&1 | tee ../ci-artifacts/lean-tool-versions.txt
+          lake --wfail build 2>&1 | tee ../ci-artifacts/lean-build.txt
+          lake env lean MLSFormal/AxiomReport.lean \
+            2>&1 | tee ../ci-artifacts/lean-axioms.txt
+          python ../tools/formal_trust_scan.py --formal-root . \
+            2>&1 | tee ../ci-artifacts/lean-source-scan.txt
+          git -C .lake/packages/mathlib rev-parse HEAD \
+            | tee ../ci-artifacts/mathlib-commit.txt
+
+      - name: Preserve Lean build and axiom evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lean-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-artifacts/
+          if-no-files-found: ignore
+          retention-days: 30

@@ -21,6 +21,13 @@ import MLSFormal.TimeIntegrationFoundation
 import MLSFormal.PhaseSpaceTimeCorefinement
 import MLSFormal.ExplicitFractionalPhaseState
 import MLSFormal.BoundedFractionalPhaseState
+import MLSFormal.BoundedPhaseTailCertification
+
+#print axioms MLSFormal.boundedTail_trajectory_enclosure
+#print axioms MLSFormal.boundedTail_outward_slack
+#print axioms MLSFormal.boundedTail_slope_sample_envelope
+#print axioms MLSFormal.boundedTail_one_over_201_remainders
+#print axioms MLSFormal.boundedTail_one_over_201_error_bounds
 
 /-!
 Complete kernel axiom report for every theorem exported by the MLSFormal
