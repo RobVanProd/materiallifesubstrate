@@ -71,4 +71,18 @@ theorem correlatedTail_budget_slack (target candidate lo hi budget : ℝ)
   apply abs_le.mpr
   constructor <;> linarith
 
+/-- Bound a signed numerator after common coefficients have been combined.
+This keeps cancellation in G rather than summing absolute sample slopes. -/
+theorem correlatedTail_signed_numerator_envelope (c g eta residual radius : ℝ)
+    (noise : |eta| ≤ 1) (remainder : |residual| ≤ radius) :
+    |(c + g * eta + residual) - c| ≤ |g| + radius := by
+  have hmul : |g * eta| ≤ |g| := by
+    rw [abs_mul]
+    calc
+      |g| * |eta| ≤ |g| * 1 := mul_le_mul_of_nonneg_left noise (abs_nonneg g)
+      _ = |g| := mul_one _
+  have h : (c + g * eta + residual) - c = g * eta + residual := by ring
+  rw [h]
+  exact le_trans (abs_add_le _ _) (add_le_add hmul remainder)
+
 end MLSFormal

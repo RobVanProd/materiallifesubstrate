@@ -51,6 +51,21 @@ arithmetic, precision or resource threshold was changed based on that run.
 
 ## Next gates
 
+Additional implementation work (not a trajectory result): five polynomial
+observer tests, three inventory-guard tests and four independent binary64-cell
+tests pass. A ninth Lean lemma bounds a signed common-generator numerator.
+The observer module is not yet connected to full trajectories. Its initial
+common-noise slope fixture exposed unnecessary pre-summation rounding; the
+corrected implementation combines signed coefficients before rounding. This
+was a known-answer unit-test failure, not a change to any physical budget or
+candidate trajectory.
+
+The first implementation CI at `270cfbd8f05a2ad872822e3782796e1088056e71`
+is run `33998667531`; its three compiler gates passed while Python and Lean
+were still running at this checkpoint. The withheld-v1 inventory uses the
+unchanged core and checker from that source. Additional observer/proof files
+are not imported by the running inventory and cannot affect its results.
+
 Complete the 90 withheld C blocks (both scenarios, all levels, starts 0/8/32,
 lengths 1/4/16) with 900-second subprocess and 2 GiB address-space ceilings.
 Preserve every subprocess receipt, including exhaustion. Inspect independent

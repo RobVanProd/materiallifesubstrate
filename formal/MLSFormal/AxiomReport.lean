@@ -32,6 +32,7 @@ import MLSFormal.CorrelationAwareTailCertification
 #print axioms MLSFormal.correlatedTail_signed_affine_sum
 #print axioms MLSFormal.correlatedTail_recenter
 #print axioms MLSFormal.correlatedTail_budget_slack
+#print axioms MLSFormal.correlatedTail_signed_numerator_envelope
 
 #print axioms MLSFormal.boundedTail_trajectory_enclosure
 #print axioms MLSFormal.boundedTail_outward_slack
