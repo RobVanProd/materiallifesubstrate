@@ -33,6 +33,21 @@ class DefectTests(unittest.TestCase):
         defects[1]=Q()
         with self.assertRaises(AssertionError): check.affine_image(a,c,n,e,out,defects)
 
+    def test_omitted_kick_and_drift_stage_defects(self):
+        for a in ([[Q(1),Q()],[Q(1,3),Q(1)]],[[Q(1),Q(1,5)],[Q(),Q(1)]]):
+            c,n=[Q(2),Q(3)],[Q(7),Q(11)]
+            e=[d.Interval(Q(),Q())]*2
+            out,defects=d.propagate(a,c,n,e)
+            check.affine_image(a,c,n,e,out,defects)
+            with self.assertRaises(AssertionError): check.affine_image(a,c,n,e,out,[Q(),Q()])
+
+    def test_candidate_recenter_is_not_truth(self):
+        a,c,n,e=self.fixture()
+        out,_=d.propagate(a,c,n,e)
+        translated=[d.Interval(b.lo+x,b.hi+x) for b,x in zip(e,c)]
+        recentered,_=d.propagate(a,[Q(),Q()],n,translated)
+        self.assertEqual(out,recentered)
+
     def test_candidate_as_truth_mutation(self):
         a,c,n,e=self.fixture(); out,defects=d.propagate(a,c,n,e)
         with self.assertRaises(AssertionError): check.affine_image(a,c,n,e,[d.Interval(Q(),Q())]*2,defects)
