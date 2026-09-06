@@ -23,6 +23,13 @@ import MLSFormal.ExplicitFractionalPhaseState
 import MLSFormal.BoundedFractionalPhaseState
 import MLSFormal.BoundedPhaseTailCertification
 import MLSFormal.CorrelationAwareTailCertification
+import MLSFormal.DefectRecurrenceTailCertification
+
+#print axioms MLSFormal.defectTail_identity
+#print axioms MLSFormal.defectTail_enclosure_step
+#print axioms MLSFormal.defectTail_sequence
+#print axioms MLSFormal.defectTail_signed_accumulator
+#print axioms MLSFormal.defectTail_rounding_slack
 
 #print axioms MLSFormal.correlatedTail_image_inclusion
 #print axioms MLSFormal.correlatedTail_shared_subtraction
