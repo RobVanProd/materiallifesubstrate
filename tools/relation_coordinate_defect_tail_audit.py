@@ -112,6 +112,14 @@ def audit(work,parent):
     full=load(work/'full');assert len(full)==10
     cases={(r['scenario'],r['level']):r for r in full}
     assert set(cases)=={(s,l) for s in ('k4_internal','k4_boosted') for l in range(5)}
+    for trial in ('phase-and-energy','supplementary-observers'):
+        pilots=load(work/'implementation-pilots'/trial);assert len(pilots)==10
+        for p in pilots:
+            current=cases[(p['scenario'],p['level'])]
+            for key in ('stage_stream_sha256','certified_stages','complete_steps',
+                        'partial_position_upper_m','partial_momentum_upper_SI',
+                        'partial_energy_upper_J','partial_signed_slope'):
+                assert p[key]==current[key], 'precanonical numerical recurrence changed'
     budgets=dict(partial_position_upper_m=f.POSITION_BUDGET,partial_momentum_upper_SI=f.MOMENTUM_BUDGET,
         partial_energy_upper_J=f.ENERGY_BUDGET,candidate_momentum_residual_max=f.MOMENTUM_BUDGET,
         candidate_angular_residual_max=f.ANGULAR_BUDGET,candidate_centrality_residual_max=f.ANGULAR_BUDGET)
@@ -141,4 +149,6 @@ def audit(work,parent):
         frozen_budgets={k:str(v) for k,v in budgets.items()},
         frozen_slope_budget=str(f.ENERGY_SLOPE_BUDGET),frame_certificates=frame,
         independent_repeat_byte_identical=True,bit_exact_reversal_claimed=False,
+        precanonical_stage_streams_unchanged=True,
+        raw_energy_enclosure_sign='exact_rational_target_minus_B96; negate for inherited B96-minus-target convention',
         exact_bounded_invariants_claimed=False,unbounded_horizon_claimed=False)
