@@ -6,6 +6,8 @@ from types import SimpleNamespace as NS
 from fractions import Fraction as Q
 import relation_coordinate_defect_tail as v
 import relation_coordinate_defect_full as full
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
+import relation_coordinate_defect_tail_suite as suite
 
 
 def image(a,x):
@@ -117,6 +119,35 @@ class RelationTests(unittest.TestCase):
         interval=full.energy_error(self.model,candidate,self.c,error,self.rc,self.e)
         exact=v.frozen.rational_energy(self.model,target)-v.frozen.mechanical_energy(self.model,candidate)[2]
         self.assertTrue(interval.contains(exact))
+
+
+class LaunchMutationTests(unittest.TestCase):
+    def reports(self):
+        return [dict(scenario=s,level=l,start_step=t,block_steps=n,precision=96,verifier_bits=512,
+            packet_intervals=24,relation_intervals=36,matrix_slots=1872,historical_noise_symbols=0,
+            promotion='NO_PROMOTION',selected_precision=None,physical_budgets_certified=False,
+            status='withheld_block_contained',reason=None,complete_steps=n,withheld_checks=3*n)
+            for s,l,t,n in suite.CASES]
+
+    def test_complete_inventory_required(self):
+        rows=self.reports();self.assertTrue(suite.gate(rows)['eligible'])
+        rows[-1]=rows[0]
+        with self.assertRaises(AssertionError):suite.gate(rows)
+
+    def test_b256_substitution_rejected(self):
+        rows=self.reports();rows[0]['precision']=256
+        with self.assertRaises(AssertionError):suite.gate(rows)
+
+    def test_packet_only_state_rejected(self):
+        rows=self.reports();rows[0]['relation_intervals']=0
+        with self.assertRaises(AssertionError):suite.gate(rows)
+
+    def test_resource_or_cell_failure_cannot_be_pass(self):
+        for reason in ('force_cell','verifier_resource_limit'):
+            rows=self.reports();rows[0]['reason']=reason
+            with self.assertRaises(AssertionError):suite.gate(rows)
+            rows[0]['status']='certificate_inconclusive'
+            self.assertFalse(suite.gate(rows)['eligible'])
 
 
 if __name__=='__main__': unittest.main()
