@@ -34,7 +34,9 @@ def check_receipts(directory):
 
 def frames(directory,level,internal,boosted):
     maxima=dict(candidate_position=Q(),candidate_momentum=Q(),
-                target_position_upper=Q(),target_momentum_upper=Q())
+                target_position_upper=Q(),target_momentum_upper=Q(),
+                frozen_anchor_candidate_position=Q(),frozen_anchor_candidate_momentum=Q(),
+                frozen_anchor_target_position_upper=Q(),frozen_anchor_target_momentum_upper=Q())
     count=0;hashes=[hashlib.sha256(),hashlib.sha256()]
     with (directory/f'k4_internal-L{level}.frames.jsonl').open('rb') as aa,\
          (directory/f'k4_boosted-L{level}.frames.jsonl').open('rb') as bb:
@@ -53,6 +55,19 @@ def frames(directory,level,internal,boosted):
                 kind='position' if k%6<3 else 'momentum'
                 maxima['candidate_'+kind]=max(maxima['candidate_'+kind],abs(delta))
                 maxima['target_'+kind+'_upper']=max(maxima['target_'+kind+'_upper'],abs(lo),abs(hi))
+            # Preserve the parent's literal first-packet-relative observer,
+            # in addition to COM controls. For this frozen equal-mass K4,
+            # subtracting COM-relative momenta cancels the same common term.
+            # These are relation-derived boxes, not propagated packet boxes.
+            for k in range(6,24):
+                a0,b0=ra['frame'][k%6],rb['frame'][k%6]
+                x,y=ra['frame'][k],rb['frame'][k]
+                delta=(Q(y['candidate'])-Q(b0['candidate']))-(Q(x['candidate'])-Q(a0['candidate']))
+                lo=delta+Q(y['error'][0])-Q(b0['error'][1])-Q(x['error'][1])+Q(a0['error'][0])
+                hi=delta+Q(y['error'][1])-Q(b0['error'][0])-Q(x['error'][0])+Q(a0['error'][1])
+                kind='position' if k%6<3 else 'momentum'
+                key='frozen_anchor_candidate_'+kind;maxima[key]=max(maxima[key],abs(delta))
+                key='frozen_anchor_target_'+kind+'_upper';maxima[key]=max(maxima[key],abs(lo),abs(hi))
             count+=1
     assert count==16*f.STEP_COUNTS[level]+1
     assert [h.hexdigest() for h in hashes]==[internal['frame_stream_sha256'],boosted['frame_stream_sha256']]
@@ -87,6 +102,8 @@ def audit(work,parent):
     authentication=json.loads((work/'parent-authentication.json').read_text())
     assert authentication['identity']['source_sha']==PARENT and authentication['identity']['status']=='PASS'
     assert authentication['candidate_stage_wires_authenticated']==1930
+    model=f.load_models(parent/'parent/parent/inputs/raw-a')['k4']
+    assert len(set(model.masses_raw.values()))==1, 'frozen first-packet momentum observer assumes equal masses here'
     short=load(work/'withheld');short_gate=gate(short)
     assert short_gate==dict(eligible=True,blocks_passed=90,blocks_total=90,stage_checks=1890,promotion='NO_PROMOTION')
     identical(work/'withheld',work/'repeat')
