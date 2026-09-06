@@ -1,3 +1,4 @@
+import MLSFormal.RelationCoordinateDefectTailCertification
 import MLSFormal.Chemistry
 import MLSFormal.CoarseGraining
 import MLSFormal.Conservation
@@ -227,3 +228,11 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.centralIdealEqualOppositeApproximateImpulse_accounting
 #print axioms MLSFormal.approximateDrift_orbitalAngular_delta
 #print axioms MLSFormal.parallelIdealApproximateDrift_orbitalAngular_delta
+
+#print axioms MLSFormal.relationTail_common_mode
+#print axioms MLSFormal.relationTail_translation_boost
+#print axioms MLSFormal.relationTail_kick_closure
+#print axioms MLSFormal.relationTail_drift_closure
+#print axioms MLSFormal.relationTail_observable_error
+#print axioms MLSFormal.relationTail_error_induction
+#print axioms MLSFormal.relationTail_unique_cell
