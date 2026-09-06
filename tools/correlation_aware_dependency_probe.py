@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'reference'))
 import correlation_aware_tail as v
 import correlation_aware_binary64_cells as independent
+import correlation_aware_affine_image_check as image_check
 
 
 def cell_bits(box):
@@ -28,7 +29,15 @@ def probe(inputs, scenario, level):
     arithmetic = v.Arithmetic()
     cell = v.Cell(arithmetic.round_state(state), {})
     dt = v.frozen.TIMESTEPS_RAW[level]
-    cell = v.drift(model, v.kick(model, cell, dt//2, arithmetic), dt, arithmetic)
+    before, first_new = cell, len(arithmetic.definitions)
+    evaluated = v.evaluate(model, before)
+    cell = v.kick(model, before, dt//2, arithmetic)
+    image_check.kick(before.state, cell.state, evaluated, dt//2,
+                     v.frozen.LQ, v.frozen.PQ, v.frozen.TQ, arithmetic.definitions, first_new)
+    before, first_new = cell, len(arithmetic.definitions)
+    cell = v.drift(model, before, dt, arithmetic)
+    image_check.drift(before.state, cell.state, dt, model.masses_raw,
+                      arithmetic.definitions, first_new)
     differences = []
     for relation in model.relations:
         for axis in range(3):
@@ -43,6 +52,11 @@ def probe(inputs, scenario, level):
                     independent_interval=[str(dropped.lo), str(dropped.hi)],
                     shared_bits=shared_bits, independent_bits=None))
     assert differences, 'matched dependency mutation did not reintroduce ambiguity'
+    first_new = len(arithmetic.definitions)
+    evaluated = v.evaluate(model, cell)
+    after = v.kick(model, cell, dt//2, arithmetic)
+    image_check.kick(cell.state, after.state, evaluated, dt//2,
+                     v.frozen.LQ, v.frozen.PQ, v.frozen.TQ, arithmetic.definitions, first_new)
     return dict(scenario=scenario, level=level, stage='step_1_second_kick_input',
                 identical_input_affine_forms=True, changed_only='shared_vs_independent_subtraction',
                 differences=differences, full_tail_claim=False, promotion='NO_PROMOTION')
