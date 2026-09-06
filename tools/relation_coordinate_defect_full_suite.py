@@ -19,7 +19,8 @@ def run(inputs,invariants,short,output):
     def one(case):
         s,l=case;name=f'{s}-L{l}';payload=output/(name+'.json')
         command=[sys.executable,str(repo/'reference/relation_coordinate_defect_full.py'),str(inputs),str(invariants),
-                 '--scenario',s,'--level',str(l),'--short-gate',str(short/'gate.json')]
+                 '--scenario',s,'--level',str(l),'--short-gate',str(short/'gate.json'),
+                 '--frame-output',str(output/(name+'.frames.jsonl'))]
         with payload.open('x') as out,(output/(name+'.stderr')).open('x') as err:
             try:code=subprocess.run(command,stdout=out,stderr=err,timeout=3600,
                 env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1')).returncode

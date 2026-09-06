@@ -5,6 +5,7 @@ import unittest
 from types import SimpleNamespace as NS
 from fractions import Fraction as Q
 import relation_coordinate_defect_tail as v
+import relation_coordinate_defect_full as full
 
 
 def image(a,x):
@@ -83,6 +84,39 @@ class RelationTests(unittest.TestCase):
     def test_domain_fail_closed(self):
         rr=[v.base.Interval(Q(),Q())]*3
         with self.assertRaises(v.base.Inconclusive):v.base.safe(self.model,self.model.relations[0],rr)
+
+    def test_frame_box_matches_independent_com(self):
+        self.model.relations.append(NS(index=2,first_id=1,second_id=3,rest_length=2.))
+        rc=v.observe(self.model,self.ids,self.masses,self.c)
+        target=[c+Q(k+1,201) for k,c in enumerate(self.c)]
+        rt=v.observe(self.model,self.ids,self.masses,target)
+        re=[v.base.enclose(t-c,t-c) for t,c in zip(rt,rc)]
+        boxes=full.frame_box(self.model,self.ids,self.masses,self.c,rc,re)
+        total=sum(self.masses)
+        for i,m in enumerate(self.masses):
+            for a in range(6):
+                unit=v.frozen.LQ if a<3 else v.frozen.PQ
+                if a<3:
+                    c=self.c[6*i+a]-sum(self.masses[j]*self.c[6*j+a] for j in range(3))/total
+                    t=target[6*i+a]-sum(self.masses[j]*target[6*j+a] for j in range(3))/total
+                else:
+                    c=self.c[6*i+a]-Q(m,total)*sum(self.c[6*j+a] for j in range(3))
+                    t=target[6*i+a]-Q(m,total)*sum(target[6*j+a] for j in range(3))
+                box=boxes[6*i+a]
+                self.assertEqual(Q(box['candidate']),c*unit)
+                self.assertLessEqual(Q(box['error'][0]),(t-c)*unit)
+                self.assertGreaterEqual(Q(box['error'][1]),(t-c)*unit)
+
+    def test_energy_box_against_exact_rational_kinetic_observer(self):
+        packets=[v.frozen.PacketState(pid,m,self.c[6*i:6*i+3],self.c[6*i+3:6*i+6])
+                 for i,(pid,m) in enumerate(zip(self.ids,self.masses))]
+        candidate=v.frozen.PhaseState(96,0,packets)
+        target=v.frozen.RationalState(0,[v.frozen.PacketState(p.identifier,p.mass_raw,p.x.copy(),
+            [q+Q(a+1,201) for a,q in enumerate(p.p)]) for p in packets])
+        error=[v.base.enclose(t-c,t-c) for t,c in zip(v.base.flat(target),self.c)]
+        interval=full.energy_error(self.model,candidate,self.c,error,self.rc,self.e)
+        exact=v.frozen.rational_energy(self.model,target)-v.frozen.mechanical_energy(self.model,candidate)[2]
+        self.assertTrue(interval.contains(exact))
 
 
 if __name__=='__main__': unittest.main()

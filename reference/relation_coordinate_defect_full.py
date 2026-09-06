@@ -39,12 +39,48 @@ def energy_error(model,state,center,errors,rc,re):
     return b.enclose(lo,hi)
 
 
-def run(inputs,invariants,scenario,level):
-    with invariants.open('rb') as stream:
+def frame_box(model,ids,masses,center,rc,re):
+    """COM-relative errors from DIRECT relation position/velocity errors.
+    Complete K4 edges are required; no endpoint error subtraction occurs.
+    """
+    lookup={p:i for i,p in enumerate(ids)}; total=sum(masses)
+    edges={frozenset((r.first_id,r.second_id)):(k,r) for k,r in enumerate(model.relations)}
+    out=[]
+    for i,pid in enumerate(ids):
+        for kind in ('position','momentum'):
+            for axis in range(3):
+                lo=hi=c=Q()
+                for j,other in enumerate(ids):
+                    if i==j:continue
+                    k,r=edges[frozenset((pid,other))]
+                    sign=1 if r.first_id==pid else -1
+                    factor=-Q(sign*masses[j],total)
+                    if kind=='momentum':factor*=masses[i]
+                    index=6*k+axis+(3 if kind=='momentum' else 0)
+                    c+=factor*rc[index]
+                    ee=re[index]
+                    lo+=factor*(ee.lo if factor>=0 else ee.hi)
+                    hi+=factor*(ee.hi if factor>=0 else ee.lo)
+                unit=f.LQ if kind=='position' else f.PQ
+                out.append(dict(candidate=str(c*unit),error=[str(lo*unit),str(hi*unit)]))
+    return out
+
+
+def invariants(center):
+    momenta=[sum((center[i+a+3] for i in range(0,len(center),6)),Q()) for a in range(3)]
+    angular=[Q(),Q(),Q()]
+    for i in range(0,len(center),6):
+        x,p=center[i:i+3],center[i+3:i+6]
+        for a in range(3):angular[a]+=x[(a+1)%3]*p[(a+2)%3]-x[(a+2)%3]*p[(a+1)%3]
+    return momenta,angular
+
+
+def run(inputs,invariants_path,scenario,level,frame_output=None):
+    with invariants_path.open('rb') as stream:
         assert hashlib.file_digest(stream,'sha256').hexdigest()=='0e0df2142b5abdaa8e90c642a5269599b666afcfd2792a98c23e5a88c30222b7'
     tid=f'long:{scenario}:B96:L{level}'
     # Authentication is streamed, has no numerical role, and is not truth.
-    rows=(r for r in f.iter_rows(invariants) if r['trajectory_id']==tid)
+    rows=(r for r in f.iter_rows(invariants_path) if r['trajectory_id']==tid)
     authenticated=0
     def auth(step,stage,state):
         nonlocal authenticated
@@ -62,6 +98,9 @@ def run(inputs,invariants,scenario,level):
     errors=[b.enclose(t-c,t-c) for t,c in zip(b.flat(initial),center)]
     re=[b.enclose(t-c,t-c) for t,c in zip(v.observe(model,ids,masses,b.flat(initial)),rc)]
     del initial
+    initial_p,initial_l=invariants(center)
+    max_p_residual=max_l_residual=max_centrality=Q()
+    frames=hashlib.sha256()
     auth(0,'initial',candidate)
     dt=f.TIMESTEPS_RAW[level];count=16*f.STEP_COUNTS[level]
     history=hashlib.sha256();checks=complete=0;step=0;stage='initial'
@@ -78,15 +117,33 @@ def run(inputs,invariants,scenario,level):
         for k,e in enumerate(errors):
             if k%6<3:maximum_x=max(maximum_x,max(abs(e.lo),abs(e.hi))*f.LQ)
             else:maximum_p=max(maximum_p,max(abs(e.lo),abs(e.hi))*f.PQ)
+        if frame_output is not None:
+            record=dict(sample=sample,phase_hash=f.phase_hash(candidate),
+                        frame=frame_box(model,ids,masses,center,rc,re))
+            line=json.dumps(record,sort_keys=True,separators=(',',':'))+'\n'
+            frames.update(line.encode());frame_output.write(line)
     try:
         observe_energy(0)
         for step in range(1,count+1):
             for stage,duration,operation in (
                 ('first_kick',dt//2,f.kick),('drift',dt,f.drift),('second_kick',dt//2,f.kick)):
-                following=operation(model,candidate,duration)[0]
+                following,_,audits=operation(model,candidate,duration)
                 wire=f.encode_phase_state(following)
                 ni,nm,_,nc=b.decode_wire(wire)
                 assert ni==ids and nm==masses
+                pp,ll=invariants(nc)
+                max_p_residual=max(max_p_residual,max(abs(a-bb)*f.PQ for a,bb in zip(pp,initial_p)))
+                max_l_residual=max(max_l_residual,max(abs(a-bb)*f.LQ*f.PQ for a,bb in zip(ll,initial_l)))
+                if stage!='drift':
+                    byid={pid:i for i,pid in enumerate(ids)}
+                    for audit in audits:
+                        r=audit['relation'];i=byid[r.first_id];j=byid[r.second_id]
+                        rr=[center[6*j+a]-center[6*i+a] for a in range(3)]
+                        for key in ('rounded_impulse','first_actual_impulse','second_actual_impulse'):
+                            impulse=audit[key]
+                            for a in range(3):
+                                cross=rr[(a+1)%3]*impulse[(a+2)%3]-rr[(a+2)%3]*impulse[(a+1)%3]
+                                max_centrality=max(max_centrality,abs(cross)*f.LQ*f.PQ)
                 auth(step,stage,following)
                 nrc=v.observe(model,ids,masses,nc)
                 pm,rm,cells=v.operators(model,ids,masses,rc,re,stage,duration)
@@ -120,6 +177,10 @@ def run(inputs,invariants,scenario,level):
         packet_intervals=24,relation_intervals=36,matrix_slots=1872,
         partial_position_upper_m=str(maximum_x),partial_momentum_upper_SI=str(maximum_p),
         partial_energy_upper_J=str(maximum_energy),
+        candidate_momentum_residual_max=str(max_p_residual),
+        candidate_angular_residual_max=str(max_l_residual),
+        candidate_centrality_residual_max=str(max_centrality),
+        frame_stream_sha256=frames.hexdigest() if frame_output is not None else None,
         partial_signed_slope=[str(slope.lo),str(slope.hi)],
         packet_error=[[str(e.lo),str(e.hi)] for e in errors],
         relation_error=[[str(e.lo),str(e.hi)] for e in re],
@@ -131,9 +192,13 @@ if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('inputs',type=Path);p.add_argument('invariants',type=Path)
     p.add_argument('--scenario',choices=['k4_internal','k4_boosted'],required=True)
     p.add_argument('--level',type=int,choices=range(5),required=True);p.add_argument('--short-gate',type=Path,required=True)
+    p.add_argument('--frame-output',type=Path)
     a=p.parse_args();assert json.loads(a.short_gate.read_text())==dict(
         eligible=True,blocks_passed=90,blocks_total=90,stage_checks=1890,promotion='NO_PROMOTION')
     if sys.platform=='linux':
         import resource
         resource.setrlimit(resource.RLIMIT_AS,(b.MEMORY_BYTES,b.MEMORY_BYTES))
-    print(json.dumps(run(a.inputs,a.invariants,a.scenario,a.level),sort_keys=True,indent=2))
+    if a.frame_output:
+        with a.frame_output.open('x') as out:result=run(a.inputs,a.invariants,a.scenario,a.level,out)
+    else:result=run(a.inputs,a.invariants,a.scenario,a.level)
+    print(json.dumps(result,sort_keys=True,indent=2))
