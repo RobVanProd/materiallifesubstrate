@@ -293,11 +293,23 @@ and compatibility test still concern complete endpoint vectors; all scratch
 defects are measured, not mistaken for exact centrality. Binary64 H/energy
 accumulation stays in Path B, never silently promoted to S.
 
-For convergence scale positions by 1 m and momenta by 1 kg m/s. Let D_j be
-the max absolute scaled iterate update and R_j the max absolute scaled
-fixed-point residual, evaluated with a fresh complete sweep at the NEW guess.
+The solver operates in raw coordinates, but every convergence norm is
+dimensionless using the EXACT physical quanta in Section 2. Componentwise:
+
+```text
+D_x = Lq*abs(delta x_raw)/(1 m)
+D_p = Pq*abs(delta p_raw)/(1 kg m/s)
+Phi(x_raw,p_raw) = (Lq*x_raw/(1 m), Pq*p_raw/(1 kg m/s))
+```
+
+Let D_j be the maximum of these position/momentum update components over all
+packets and axes. R_j is the infinity norm of Phi applied to the raw residual
+of a fresh finite-S sweep at the NEW guess, with exactly the same unit scaling.
+Neither norm is an unscaled raw-coordinate norm. Use exact Lq/Pq, not their
+rounded scratch approximations, to define the norm and its independent outward
+verification. The finite-S residual is not a claim of zero exact-equation defect.
 The residual sweep is counted and its proposal is not silently substituted.
-Let Z_j=max(1, norm_inf(scaled initial state), norm_inf(scaled new guess)).
+Let Z_j=max(1, norm_inf(Phi(initial raw state)), norm_inf(Phi(new raw guess))).
 Require BOTH `D_j <= 2^-180 + 2^-180*Z_j` and
 `R_j <= 2^-180 + 2^-180*Z_j`. Evaluate these at S and independently verify
 their outward bounds. Maximum 128 sweeps including residual-evaluation sweeps;
@@ -317,10 +329,17 @@ average, refine or replace the proposed B96 state, nor feed a later step.
 No post-outcome precision increase or tolerance change.
 
 Agreement of two solvers is NOT existence/uniqueness proof or a full-tail error
-bound. Independently at 384-bit outward verifier precision, construct a root
+bound. Define T_exact as the UNROUNDED real/rational fixed-cell integrator map
+using certified binary64 Path-B scalars, exact units and the exact values of
+the B96 input. S=256 and S=384 Picard sweeps are approximate algorithms seeking
+its root. Their primitive RN_S operations make the numerical iteration maps
+piecewise rounded, not the affine map certified here. No RN_256 or RN_384
+operation is part of T_exact; binary64 Path-B semantics remain part of it.
+
+Independently at 384-bit outward verifier precision, construct a root
 box around the verifier iterate with scaled component radius 2^-160. Certify
-all binary64 cells over the box, the actual fixed-cell map T, T(box) subset
-box, and scaled infinity-norm contraction bound <=1/2. For B, T is affine
+all binary64 cells over the box, T_exact(box) subset box, and the scaled
+infinity-norm contraction bound <=1/2 for T_exact. For B, T_exact is affine
 within fixed midpoint cells; for eligible C it is affine conditional on BOTH
 endpoint cell sets. Include every verifier-rounding slack. No derivative of a
 rounded force map across a cell boundary is admissible. Require the unique
@@ -328,8 +347,10 @@ root enclosure to round wholly to the proposed RN96 output, with exact
 ties-to-even cell endpoint handling. To avoid mistaking an interval around an
 exact structural zero for an uncertain nonzero result, independently assemble
 the conditioned affine coefficients as exact rationals from the certified
-binary64 scalars, exact units and exact B96 input. Solve (I-A)z=b by exact
-Gaussian elimination, columns in state order and first nonzero row pivot in
+binary64 scalars, exact units and exact B96 input. With T_exact(z)=Az+b,
+solve (I-A)z=b by exact Gaussian elimination: this solves the mathematical
+integrator equation, NOT a fixed point of the rounded finite-S iteration map.
+Use columns in state order and first nonzero row pivot in
 ascending row order. This is verifier-only, stage-local algebra, not higher
 precision solver state. Require the exact root to lie in the certified box,
 satisfy the exact equations/cells and match every proposed RN96 component.
@@ -443,19 +464,32 @@ Report short and long maximum excursion, signed mean offset, final error,
 signed least-squares slope, quarter-window means and the inherited secular
 classification. Separately report representation energy versus SAME method
 and same force semantics. Do not require A/B to conserve energy exactly, nor
-reward C for violating compatibility to do so. Where an energy envelope is
-resolved, require non-worsening under refinement and contraction from level
-0 to 4; floor-dominated values may plateau inside certified uncertainty.
+reward C for violating compatibility to do so. Energy metrics otherwise remain
+Pareto dimensions; a single adjacent increase in absolute final energy error
+or maximum excursion is NOT an integrator rejection. A final-time sign change
+is not a pathology by itself.
 Representation energy and its slope must meet Section 3 for every long run.
-For this contraction gate, compare outward enclosures of the absolute maximum
-excursion and absolute final energy error: a resolved increase means the finer
-lower bound exceeds the coarser upper bound. Reject any such adjacent increase;
-require a strict level-0 to level-4 decrease when both are resolved above 64
-times their observer/reference uncertainty. An unresolved comparison is not
-evidence of contraction; floor-dominated endpoints are exempt from the strict
-decrease only when both lie within that certified floor. Report mean and slope
-as additional Pareto metrics rather than imposing an adjacent signed-error
-ratio. Physical energy behavior is not the sole selection rule.
+For the physical-energy hard gate compare outward enclosures, separately for
+maximum excursion and absolute final energy error, across each fixed scenario
+and horizon. The certified floor at each level is 64 times its
+observer/reference uncertainty. Freeze these pathology criteria:
+
+- When L0 and L4 are both resolved above their floors, require overall L0-to-L4
+  contraction, not monotonicity between them. A finer upper bound below the
+  coarser lower bound certifies contraction. A finer lower bound at least the
+  coarser upper bound proves noncontraction and fails. Overlapping enclosures
+  are inconclusive, not a proved defect or a contraction pass.
+- Three CONSECUTIVE resolved worsening halvings fail: at each of those three
+  transitions the finer lower bound exceeds the coarser upper bound and the
+  metric at both compared levels is above its respective floor. One or two
+  increases do not fail this criterion. A floor-dominated plateau is allowed; a floor-dominated L4
+  is exempt from strict overall contraction. If only L0 is floor-dominated,
+  the overall comparison is inconclusive rather than a proved pathology.
+
+Retain the inherited secular classification and all signed mean/slope metrics
+for interpretation and Pareto comparison; neither a nonzero fitted slope nor
+an adjacent signed-error ratio alone is a new rejection rule. Physical energy
+behavior is not the sole selection rule.
 No discrepancy becomes thermal energy, stored energy, a correction or a ledger.
 
 ## 11. Cost, resources, validation and Pareto rule
@@ -478,7 +512,15 @@ or used as a feedback signal. No compiler-specific optimization of A.
 
 Only candidates passing ALL hard gates enter the Pareto set. Compare matched
 scenario/level/horizon rows, not differently accurate timesteps. Lower is better
-for certified state error, normalized P/L/centrality/recovery/frame maxima,
+for normalized endpoint trajectory error of the B96 executable against the
+smooth ODE oracle at each registered matching h/horizon, and, separately,
+same-integrator target versus smooth ODE error (time-discretization error).
+These use Section 10's normalized state norm and certified reference uncertainty;
+they are explicit Pareto dimensions, not merely the second-order eligibility
+gate. Only compare horizons with a qualified smooth oracle; do not invent an
+uncertified 16-second ODE reference. Also minimize separately certified B96
+versus same-integrator representation error, normalized P/L/centrality/recovery/
+frame maxima,
 force/primitive evaluation counts, solver iterations, runtime, peak scratch,
 long-run maximum/absolute-final energy error and absolute signed slope.
 For exact counts use literal ordering; for interval-certified metrics require
