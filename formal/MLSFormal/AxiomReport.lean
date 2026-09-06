@@ -236,3 +236,6 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.relationTail_observable_error
 #print axioms MLSFormal.relationTail_error_induction
 #print axioms MLSFormal.relationTail_unique_cell
+#print axioms MLSFormal.relationTail_rational_duration
+#print axioms MLSFormal.relationTail_com_relative
+#print axioms MLSFormal.relationTail_budget

@@ -68,4 +68,27 @@ theorem relationTail_unique_cell {R Bits : Type*} (round : R → Bits)
     (cell : ∀ v ∈ enclosure, round v = bits) : round target = bits :=
   cell target inside
 
+theorem relationTail_rational_duration {P E : Type*}
+    (first second : E → P) (h : ℚ) (x : P → ℚ) :
+    relationTail_difference first second (fun i => h * x i) =
+      fun a => h * relationTail_difference first second x a := by
+  ext a
+  change h * x (second a) - h * x (first a) = h * (x (second a) - x (first a))
+  ring
+
+/-- Direct edge observables recover a COM-relative component. The weights
+are exact normalized masses; momentum uses the corresponding velocities. -/
+theorem relationTail_com_relative {I : Type*} (indices : Finset I)
+    (weight x : I → ℚ) (xi : ℚ) (normalized : ∑ j ∈ indices, weight j = 1) :
+    -(∑ j ∈ indices, weight j * (x j - xi)) =
+      xi - ∑ j ∈ indices, weight j * x j := by
+  simp only [mul_sub, Finset.sum_sub_distrib, ← Finset.sum_mul]
+  rw [normalized]
+  ring
+
+theorem relationTail_budget (error lo hi budget : ℚ)
+    (inside : lo ≤ error ∧ error ≤ hi)
+    (slack : -budget ≤ lo ∧ hi ≤ budget) : |error| ≤ budget := by
+  exact abs_le.mpr ⟨le_trans slack.1 inside.1, le_trans inside.2 slack.2⟩
+
 end MLSFormal
