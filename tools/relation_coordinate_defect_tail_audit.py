@@ -62,6 +62,20 @@ def frames(directory,level,internal,boosted):
     return dict(samples=count,**{k:str(v) for k,v in maxima.items()})
 
 
+def final_fields(r):
+    assert len(r['packet_error'])==24 and len(r['relation_error'])==36
+    pe=[tuple(map(Q,e)) for e in r['packet_error']]
+    assert all(lo<=hi for lo,hi in pe)
+    for kind,indices,unit in [('position',[k for k in range(24) if k%6<3],f.LQ),
+                              ('momentum',[k for k in range(24) if k%6>=3],f.PQ)]:
+        value=max(max(abs(pe[k][0]),abs(pe[k][1]))*unit for k in indices)
+        final_key='final_position_upper_m' if kind=='position' else 'final_momentum_upper_SI'
+        max_key='partial_position_upper_m' if kind=='position' else 'partial_momentum_upper_SI'
+        assert Q(r[final_key])==value and value<=Q(r[max_key])
+    lo,hi=map(Q,r['final_energy_error']);assert lo<=hi
+    assert max(abs(lo),abs(hi))<=Q(r['partial_energy_upper_J'])
+
+
 def audit(work,parent):
     identity=json.loads((parent/'manifest.json').read_text())
     assert identity['source_sha']==PARENT
@@ -86,6 +100,7 @@ def audit(work,parent):
         candidate_angular_residual_max=f.ANGULAR_BUDGET,candidate_centrality_residual_max=f.ANGULAR_BUDGET)
     maximum={k:Q() for k in budgets};maximum_slope=Q()
     for r in full:
+        final_fields(r)
         n=16*f.STEP_COUNTS[r['level']]
         assert r['status']=='state_horizon_enclosed_observers_pending' and r['reason'] is None
         assert r['horizon_seconds']==16 and r['complete_steps']==r['requested_steps']==n

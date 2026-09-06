@@ -10,12 +10,16 @@ sys.dont_write_bytecode=True
 import relation_coordinate_defect_tail_bundle as bundle
 import defect_recurrence_tail_verify as parent_verify
 from relation_coordinate_defect_tail_audit import identical
+import relation_coordinate_defect_probe as probe
 
 
 def verify(root,records_only=False):
     identity=bundle.check(root)
     source=root/'source';work=root/'evidence';parent=root/'parent'
     inherited=parent_verify.verify(parent,records_only=True)
+    inputs=parent/'parent/parent/inputs'
+    probes=[probe.probe(inputs,s,l) for s in ('k4_internal','k4_boosted') for l in range(5)]
+    assert probes==json.loads((work/'relation-probes.json').read_text())
     env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1')
     for test in ('relation_coordinate_defect_tail_test.py','defect_recurrence_tail_test.py'):
         subprocess.run([sys.executable,str(source/'tests'/test)],cwd=source,env=env,check=True)
