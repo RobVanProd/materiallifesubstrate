@@ -1,4 +1,5 @@
 import MLSFormal.RelationCoordinateDefectTailCertification
+import MLSFormal.BoundedIntegratorBakeoff
 import MLSFormal.Chemistry
 import MLSFormal.CoarseGraining
 import MLSFormal.Conservation
@@ -239,3 +240,19 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.relationTail_rational_duration
 #print axioms MLSFormal.relationTail_com_relative
 #print axioms MLSFormal.relationTail_budget
+
+#print axioms MLSFormal.bakeoff_radial_chain
+#print axioms MLSFormal.bakeoff_equal_radius
+#print axioms MLSFormal.bakeoff_quadratic_chain
+#print axioms MLSFormal.bakeoff_kinetic_chain
+#print axioms MLSFormal.bakeoff_step_work
+#print axioms MLSFormal.bakeoff_energy_composition
+#print axioms MLSFormal.bakeoff_pair_momentum
+#print axioms MLSFormal.bakeoff_midpoint_centrality
+#print axioms MLSFormal.bakeoff_angular_product
+#print axioms MLSFormal.bakeoff_midpoint_drift_torque
+#print axioms MLSFormal.bakeoff_time_exchange
+#print axioms MLSFormal.bakeoff_exact_fixed_cell
+#print axioms MLSFormal.bakeoff_root_rounding
+#print axioms MLSFormal.bakeoff_chord_completion
+#print axioms MLSFormal.bakeoff_atomic_rejection
