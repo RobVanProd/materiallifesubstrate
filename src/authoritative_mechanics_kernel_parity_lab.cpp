@@ -730,11 +730,14 @@ int run(std::istream &in, std::ostream &out) {
     m.h.resize(nr, std::vector<double>(nr));
     for (auto &row : m.h)
       for (auto &x : row) {
-        std::uint64_t b;
+        std::uint64_t b = 0;
         in >> b;
         x = std::bit_cast<double>(b);
       }
     need(bool(in), "truncated model");
+    need(count >= 0 && start >= 0 &&
+             count <= std::numeric_limits<int>::max() - start,
+         "invalid step inventory");
     out << "S " << start << ' ' << hex(encode(s)) << " -\n";
     for (int n = 1; n <= count; ++n) {
       auto old = s;

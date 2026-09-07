@@ -47,6 +47,7 @@ jobs:
           ctest --test-dir build/parity --output-on-failure -R '^mls\.validation$'
           if [ "$RUNNER_OS" = Windows ]; then exe=build/parity/mls_kernel_parity_lab.exe; else exe=build/parity/mls_kernel_parity_lab; fi
           python tools/kernel_parity_ci.py run build/parity-inputs --executable "$exe" --output build/parity-evidence
+          python tests/kernel_parity_bundle_test.py build/parity-evidence/result.json
       - name: Preserve parity receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

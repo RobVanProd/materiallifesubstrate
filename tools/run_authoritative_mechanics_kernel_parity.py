@@ -78,6 +78,13 @@ def compare(result,model,wires,trajectory,level,dt,start,path,event_groups=None)
             if inv['stage']=='committed':continue
             wire=stages[k,inv['stage']]
             assert hashlib.sha256(bytes.fromhex(wire)).hexdigest()==inv['state_hash'],('stage',k,inv['stage'])
+        # Compare literal intermediate state bytes as well as their authenticated
+        # hashes. These extra reference evaluations never enter the executable.
+        first=f.kick(model,state,dt//2 if path==f.KDK else dt,f.profile_for(96))
+        after_drift=f.drift(model,first,dt,f.profile_for(96))
+        stage_targets={'first_kick' if path==f.KDK else 'full_kick':first,'drift':after_drift}
+        if path==f.KDK:stage_targets['second_kick']=f.kick(model,after_drift,dt//2,f.profile_for(96))
+        for label,target in stage_targets.items():assert stages[k,label]==f.encode_state(target).hex(),('literal_stage_bytes',k,label)
         # Independently reconstruct the binary64 conversion inputs for both kicks.
         for label,st in ([('first_kick',state),('second_kick',f.decode_state(bytes.fromhex(stages[k,'drift'])))] if path==f.KDK else [('full_kick',state)]):
             evaluated,_=f.force_and_energy(model,st,f.profile_for(96));expected=[]

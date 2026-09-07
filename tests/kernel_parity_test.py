@@ -40,6 +40,19 @@ def run(exe,parent,out):
         status=subprocess.run([str(exe),str(inp),str(dst)]).returncode
         assert status!=0 and dst.read_text().startswith('ERROR'),('invalid wire admitted',i)
     checks.append(dict(kind='noncanonical_wire_rejection',cases=len(bad)))
+    domain=states['domain_crossing'];domain_model=models[mids['domain_crossing']]
+    failures=[];status,prior=f.one_step(domain_model,domain,1000000000,f.KDK,f.profile_for(96),failure_details=failures)
+    result=p.invoke(exe,out,'atomic-domain',domain_model,f.encode_state(domain).hex(),'test',0,1000000000,1)
+    lines=result.read_text().splitlines()
+    assert status=='chord_domain_failure' and len(lines)==3 and lines[1].startswith('D ')
+    assert lines[-1]==f'REJECT 1 {status} {f.encode_state(prior).hex()}',('atomic_domain',lines)
+    assert not any(line.startswith(('E ','T ','G ')) for line in lines)
+    checks.append(dict(kind='atomic_domain_no_partial_events',passed=True))
+    collapsed=state.clone();r=model.relations[0];lookup=f.packet_lookup(collapsed);lookup[r.second_id].x=list(lookup[r.first_id].x)
+    status,prior=f.one_step(model,collapsed,62500000,f.KDK,f.profile_for(96))
+    result=p.invoke(exe,out,'coincidence',model,f.encode_state(collapsed).hex(),'test',0,62500000,1)
+    assert status=='force_domain_failure' and result.read_text().splitlines()[-1]==f'REJECT 1 {status} {f.encode_state(prior).hex()}'
+    checks.append(dict(kind='initial_coincidence_fail_closed',passed=True))
     # One authenticated first step: mutations must fail the actual comparison.
     reference=parent/'evidence/short'/f'k4_internal-L0-{f.KDK}.json'
     wires=json.loads(reference.read_text())['wires'][:2]
