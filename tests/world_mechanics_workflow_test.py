@@ -24,7 +24,8 @@ assert new['jobs']['exact-oracle']==old['jobs']['exact-oracle']
 assert new['jobs']['lean']==old['jobs']['lean']
 assert len(new['jobs']['cpp']['strategy']['matrix']['include'])==3
 for step in new['jobs']['cpp']['steps']:
-    if step.get('shell')=='bash' and 'run' in step:subprocess.run([sys.argv[1] if len(sys.argv)>1 else 'bash','-n'],input=step['run'],text=True,check=True)
+    # Binary stdin preserves LF on Windows; text-mode pipes may insert CRLF.
+    if step.get('shell')=='bash' and 'run' in step:subprocess.run([sys.argv[1] if len(sys.argv)>1 else 'bash','-n'],input=step['run'].encode('utf-8'),check=True)
 prepare=next(s for s in new['jobs']['cpp']['steps'] if s.get('name')=='Pinned inputs')
 assert prepare['shell']=='bash' and prepare['run'].startswith('set -euo pipefail')
 assert '"$BASH"' in prepare['run']
