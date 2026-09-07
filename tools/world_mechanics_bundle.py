@@ -66,21 +66,21 @@ def build(repo,parent,work,out):
     with tarfile.open(fileobj=io.BytesIO(archive)) as t:t.extractall(out/'source',filter='data')
     shutil.copytree(parent,out/'parent');shutil.copytree(work,out/'evidence')
     (out/'result.json').write_bytes(base.encode(result))
-    manifest=dict(schema='mls.world-mechanics-integration.manifest.v1',source_sha=sha,parent_sha=w.PARENT,decision=DECISION,promotion='NO_PROMOTION',files=base.files(out))
+    manifest=dict(schema='mls.world-mechanics-integration.manifest.v1',source_sha=sha,parent_sha=w.PARENT,decision=DECISION,promotion='NO_PROMOTION',files=w.files(out))
     (out/'manifest.json').write_bytes(base.encode(manifest))
     (out/'outer-seal.json').write_bytes(base.encode(dict(source_sha=sha,manifest_sha256=w.digest(out/'manifest.json'),payload_files=len(manifest['files']),promotion='NO_PROMOTION')))
     return check(out)
 
 def check(root):
     m=json.loads((root/'manifest.json').read_text());s=json.loads((root/'outer-seal.json').read_text())
-    assert base.files(root)==m['files'] and w.digest(root/'manifest.json')==s['manifest_sha256']
+    assert w.files(root)==m['files'] and w.digest(root/'manifest.json')==s['manifest_sha256']
     assert s['source_sha']==m['source_sha'] and s['payload_files']==len(m['files'])
     assert m['parent_sha']==w.PARENT and m['decision']==DECISION and m['promotion']==s['promotion']=='NO_PROMOTION'
     w.authenticate(root/'parent',root/'source')
     allowed={'CMakeLists.txt','tests/CMakeLists.txt','include/mls/world.hpp','src/world.cpp','src/checkpoint.cpp'}
     for old in (root/'parent/source').rglob('*'):
         if old.is_file():
-            rel=str(old.relative_to(root/'parent/source'))
+            rel=old.relative_to(root/'parent/source').as_posix()
             if rel not in allowed:assert w.digest(old)==w.digest(root/'source'/rel),('unrelated inherited source change',rel)
     result=audit(root/'evidence',root/'parent',m['source_sha']);assert result==json.loads((root/'result.json').read_text())
     return dict(status='PASS',source_sha=m['source_sha'],payload_files=len(m['files']),**result)
@@ -90,7 +90,7 @@ def pack(root,target):
     with target.open('xb') as raw,gzip.GzipFile(filename='',fileobj=raw,mode='wb',mtime=0,compresslevel=9) as gz,tarfile.open(fileobj=gz,mode='w|',format=tarfile.PAX_FORMAT) as t:
         for path in sorted(root.rglob('*')):
             if path.is_file():
-                info=t.gettarinfo(str(path),str(Path(root.name)/path.relative_to(root)));info.uid=info.gid=0;info.uname=info.gname='';info.mode=0o644;info.mtime=0
+                info=t.gettarinfo(str(path),(Path(root.name)/path.relative_to(root)).as_posix());info.uid=info.gid=0;info.uname=info.gname='';info.mode=0o644;info.mtime=0
                 with path.open('rb') as f:t.addfile(info,f)
     return dict(size=target.stat().st_size,sha256=w.digest(target))
 

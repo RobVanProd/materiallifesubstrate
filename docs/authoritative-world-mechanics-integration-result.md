@@ -100,7 +100,16 @@ the reader was corrected before any trajectory acceptance. The first source
 CI attempt at `68f5cb2` failed before jobs started because workflow generation
 duplicated a YAML tail. That commit/run is preserved. A subsequent workflow-only
 correction removes the duplicate and adds strict duplicate-key/full-workflow
-validation; inherited Python/Lean jobs are checked unchanged. No mechanics or
+validation; inherited Python/Lean jobs are checked unchanged. At `ff47627`,
+MSVC compiled and passed both legacy suites but parent authentication stopped
+before World trajectories: an inherited inventory helper used native Windows
+backslashes instead of the sealed POSIX names. The new verifier authenticates
+the entire unchanged parent payload with canonical POSIX paths and audits its
+accepted kernel records. It does not rewrite a sealed helper or archive. That
+attempt also exposed a shell check resolving to WSL and a prerequisite failure
+being masked by the following command; explicit Git Bash and fail-fast
+prerequisite execution correct those CI issues. These attempts are preserved.
+No mechanics or
 tolerance change was involved. No scientific byte divergence was observed in
 the accepted inventory. The result is conditional on the final seal/CI receipts,
 not established by this prose alone.

@@ -16,17 +16,29 @@ FROZEN=('src/authoritative_mechanics_kernel_parity_lab.cpp','include/mls/authori
 
 def digest(path):
     with path.open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
+def files(root):
+    assert not any(p.is_symlink() for p in root.rglob('*'))
+    return {p.relative_to(root).as_posix():dict(size=p.stat().st_size,sha256=digest(p))
+            for p in sorted(root.rglob('*')) if p.is_file() and p.relative_to(root).as_posix() not in ('manifest.json','outer-seal.json')}
 def save(path,value):
     with path.open('x') as f:json.dump(value,f,sort_keys=True);f.write('\n')
 def authenticate(parent,source):
     assert digest(parent/'manifest.json')==MANIFEST
-    identity=parent_bundle.check(parent);assert identity['source_sha']==PARENT
+    # Authenticate every byte in the accepted closed parent, with canonical
+    # POSIX inventory names on every host. Do not change sealed helper files
+    # whose native str(Path) inventory names are platform-specific.
+    manifest=json.loads((parent/'manifest.json').read_text());seal=json.loads((parent/'outer-seal.json').read_text())
+    assert files(parent)==manifest['files']
+    assert manifest['source_sha']==seal['source_sha']==PARENT and seal['manifest_sha256']==MANIFEST
+    assert seal['payload_files']==len(manifest['files']) and seal['promotion']==manifest['promotion']=='NO_PROMOTION'
+    identity=parent_bundle.audit(parent/'evidence',PARENT)
+    assert manifest['decision']==identity['decision'] and identity==json.loads((parent/'result.json').read_text())
     for rel in FROZEN:assert digest(source/rel)==digest(parent/'source'/rel),('changed kernel',rel)
     for rel in ('include/mls/world.hpp','src/world.cpp','src/checkpoint.cpp'):
         new=(source/rel).read_text();old=(parent/'source'/rel).read_text()
         stripped=re.sub(r'^#ifdef MLS_RESEARCH_WORLD_MECHANICS\n.*?^#endif\n','',new,flags=re.M|re.S)
         assert [line for line in stripped.splitlines() if line.strip()]==[line for line in old.splitlines() if line.strip()],('changed legacy World code outside quarantine',rel)
-    return identity
+    return dict(status='PASS',source_sha=PARENT,**identity)
 def call(exe,args,log,ok=True):
     result=subprocess.run([str(exe),*map(str,args)],capture_output=True)
     log.write_bytes(result.stdout+result.stderr)

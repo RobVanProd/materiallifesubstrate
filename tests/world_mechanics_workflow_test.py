@@ -1,6 +1,7 @@
 """Fail before jobs: reject duplicate YAML and preserve inherited CI gates."""
 from pathlib import Path
 import subprocess
+import sys
 import yaml
 
 class UniqueLoader(yaml.SafeLoader):
@@ -23,7 +24,10 @@ assert new['jobs']['exact-oracle']==old['jobs']['exact-oracle']
 assert new['jobs']['lean']==old['jobs']['lean']
 assert len(new['jobs']['cpp']['strategy']['matrix']['include'])==3
 for step in new['jobs']['cpp']['steps']:
-    if step.get('shell')=='bash' and 'run' in step:subprocess.run(['bash','-n'],input=step['run'],text=True,check=True)
+    if step.get('shell')=='bash' and 'run' in step:subprocess.run([sys.argv[1] if len(sys.argv)>1 else 'bash','-n'],input=step['run'],text=True,check=True)
+prepare=next(s for s in new['jobs']['cpp']['steps'] if s.get('name')=='Pinned inputs')
+assert prepare['shell']=='bash' and prepare['run'].startswith('set -euo pipefail')
+assert '"$BASH"' in prepare['run']
 try:yaml.load(text+'\njobs: {}\n',Loader=UniqueLoader)
 except ValueError:pass
 else:raise AssertionError('duplicate job map accepted')

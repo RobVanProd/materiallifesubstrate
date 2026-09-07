@@ -32,9 +32,11 @@ jobs:
         with:
           arch: x64
       - name: Pinned inputs
+        shell: bash
         run: |
+          set -euo pipefail
           python -m pip install gmpy2==2.3.1 PyYAML==6.0.2
-          python tests/world_mechanics_workflow_test.py
+          python tests/world_mechanics_workflow_test.py "$BASH"
           python tools/world_mechanics_ci.py prepare build/world-inputs
       - name: Build and test
         shell: bash

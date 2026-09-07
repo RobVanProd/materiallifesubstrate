@@ -1,12 +1,14 @@
 import copy
 import json
 from pathlib import Path
+from pathlib import PureWindowsPath, PurePosixPath
 import sys
 sys.dont_write_bytecode=True
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
 import world_mechanics_parity as w
 
 def run(r):
+    assert PureWindowsPath('source/tools/verifier.py').as_posix()==PurePosixPath('source/tools/verifier.py').as_posix()
     expected=w.report_check(r);mutations=[]
     def bad(name,change):
         x=copy.deepcopy(r);change(x)
