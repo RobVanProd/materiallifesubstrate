@@ -9,6 +9,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#ifdef MLS_RESEARCH_WORLD_MECHANICS
+#include "mls/world_mechanics_integration_lab.hpp"
+#include <optional>
+#include <span>
+#endif
 
 #ifndef MLS_AUDIT_DEFAULT
 #define MLS_AUDIT_DEFAULT 1
@@ -25,6 +30,9 @@ struct WorldConfig final {
     MomentumMassToVelocityScale momentum_mass_to_velocity_scale{};
     std::size_t packet_history_limit{0};
     bool audit_after_each_operation{MLS_AUDIT_DEFAULT != 0};
+#ifdef MLS_RESEARCH_WORLD_MECHANICS
+    bool research_mechanics_enabled{false};
+#endif
 };
 
 struct MaterialSeed final {
@@ -86,11 +94,25 @@ public:
     // packet history, and the disposable voxel index.
     [[nodiscard]] std::uint64_t physical_state_hash() const;
 
+#ifdef MLS_RESEARCH_WORLD_MECHANICS
+    void attach_research_mechanics(const ResearchMechanicsInput& input);
+    [[nodiscard]] ResearchMechanicsSnapshot research_mechanics() const;
+    [[nodiscard]] std::vector<std::uint8_t> research_checkpoint() const;
+    [[nodiscard]] static World restore_research_checkpoint(std::span<const std::uint8_t> bytes);
+    // Verifier-only legacy snapshot, with clocks normalized to zero. Never a
+    // substitute for the complete research checkpoint or mechanics accounting.
+    [[nodiscard]] std::vector<std::uint8_t> research_unrelated_checkpoint() const;
+#endif
+
 private:
     friend class CanonicalCheckpointCodec;
 
     void rebuild_and_verify();
     void require_physical_support(PacketHandle first, PacketHandle second) const;
+#ifdef MLS_RESEARCH_WORLD_MECHANICS
+    void step_research_mechanics(Tick count);
+    std::optional<ResearchMechanicsContext> research_mechanics_;
+#endif
 
     WorldConfig config_{};
     Tick tick_{0};

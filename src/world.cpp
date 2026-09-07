@@ -260,6 +260,12 @@ void World::apply_point_impulse_from_boundary(PacketHandle packet, Momentum3 imp
 }
 
 void World::step(Tick count) {
+#ifdef MLS_RESEARCH_WORLD_MECHANICS
+    if (config_.research_mechanics_enabled) {
+        step_research_mechanics(count);
+        return; // Never also execute the legacy ballistic map.
+    }
+#endif
     if (count > std::numeric_limits<Tick>::max() - tick_) {
         throw std::overflow_error("world tick overflow");
     }
@@ -297,6 +303,11 @@ void World::establish_current_state_as_baseline() {
 }
 
 ExtensiveTotals World::totals() const {
+#ifdef MLS_RESEARCH_WORLD_MECHANICS
+    if (research_mechanics_) {
+        throw std::logic_error("research mechanics requires separate scientific accounting");
+    }
+#endif
     return authoritative_totals(packets_);
 }
 
@@ -313,6 +324,16 @@ void World::rebuild_and_verify() {
 
 std::uint64_t World::physical_state_hash() const {
     std::uint64_t hash = 14695981039346656037ULL;
+#ifdef MLS_RESEARCH_WORLD_MECHANICS
+    if (config_.research_mechanics_enabled) {
+        hash = hash_integer(hash, std::uint64_t{0x424936574f524c44});
+        if (research_mechanics_) {
+            // Events are an observer snapshot, not causal mechanics state.
+            const auto causal = research_kernel_request(research_mechanics_->request, 0);
+            for (const unsigned char byte : causal) hash = fnv_byte(hash, byte);
+        }
+    }
+#endif
     hash = hash_integer(hash, tick_);
     hash = hash_integer(hash, physical_time_.raw());
     hash = hash_integer(hash, config_.voxel_edge.raw());

@@ -450,6 +450,11 @@ void require_packet_invariants(
 class CanonicalCheckpointCodec final {
 public:
     [[nodiscard]] static std::vector<std::uint8_t> serialize(const World& world) {
+#ifdef MLS_RESEARCH_WORLD_MECHANICS
+        if (world.config_.research_mechanics_enabled || world.research_mechanics_) {
+            throw std::logic_error("use the complete research World checkpoint");
+        }
+#endif
         validate_time_configuration(
             world.config_.physical_timestep,
             world.config_.physical_time_scale,

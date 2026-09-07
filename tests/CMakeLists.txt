@@ -39,6 +39,13 @@ else()
 endif()
 
 add_test(NAME mls.validation COMMAND mls_validation)
+if(MLS_BUILD_WORLD_MECHANICS_LAB)
+  get_target_property(_world_validation_sources mls_validation SOURCES)
+  add_executable(mls_world_research_validation ${_world_validation_sources})
+  target_include_directories(mls_world_research_validation PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(mls_world_research_validation PRIVATE mls_world_research_core)
+  add_test(NAME mls.world_research_legacy_validation COMMAND mls_world_research_validation)
+endif()
 set_tests_properties(mls.validation PROPERTIES LABELS "deterministic;core")
 
 add_test(
