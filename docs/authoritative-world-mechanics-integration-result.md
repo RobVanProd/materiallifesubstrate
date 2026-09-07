@@ -96,7 +96,11 @@ claims to prove this C++ transaction implementation.
 
 The first build failed because the diagnostic history reader treated a
 PacketId as a PacketHandle. That compile-only attempt and source are preserved;
-the reader was corrected before any trajectory acceptance. No mechanics or
+the reader was corrected before any trajectory acceptance. The first source
+CI attempt at `68f5cb2` failed before jobs started because workflow generation
+duplicated a YAML tail. That commit/run is preserved. A subsequent workflow-only
+correction removes the duplicate and adds strict duplicate-key/full-workflow
+validation; inherited Python/Lean jobs are checked unchanged. No mechanics or
 tolerance change was involved. No scientific byte divergence was observed in
 the accepted inventory. The result is conditional on the final seal/CI receipts,
 not established by this prose alone.
