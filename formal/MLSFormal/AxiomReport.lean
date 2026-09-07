@@ -255,4 +255,8 @@ scans project sources for proof placeholders and project-defined axioms.
 #print axioms MLSFormal.bakeoff_exact_fixed_cell
 #print axioms MLSFormal.bakeoff_root_rounding
 #print axioms MLSFormal.bakeoff_chord_completion
+#print axioms MLSFormal.bakeoff_chord_start_min
+#print axioms MLSFormal.bakeoff_chord_end_min
+#print axioms MLSFormal.bakeoff_chord_interior_min
+#print axioms MLSFormal.bakeoff_chord_interior_parameter
 #print axioms MLSFormal.bakeoff_atomic_rejection

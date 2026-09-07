@@ -184,4 +184,13 @@ def fixed_cell_root(model,wire,proposal_wire,audit):
     assert all(root[i]==b[i]+sum((A[i][j]*root[j] for j in range(size)),Q()) for i in range(size))
     if any(rn(z,96)!=p for z,p in zip(root,proposed)):
         return dict(status='solver_certificate_inconclusive',reason='exact_root_output_mismatch')
+    # The unique exact root is available, so its whole chord can be checked
+    # exactly rather than substituting the candidate's nominal chord. This is
+    # verifier-only and does not commit or repair a solver proposal.
+    for rel in model.relations:
+        i,j=lookup[rel.first_id],lookup[rel.second_id]
+        before=tuple(old[6*j+a]-old[6*i+a] for a in range(3))
+        after=tuple(root[6*j+a]-root[6*i+a] for a in range(3))
+        if not f.chord_is_safe(before,after,f.reference_offset(model,rel)):
+            return dict(status='solver_certificate_inconclusive',reason='exact_root_chord',relation=rel.index)
     return dict(status='root_certified',contraction=str(contraction),root=list(map(str,root)))

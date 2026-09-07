@@ -100,6 +100,38 @@ theorem bakeoff_chord_completion (aa ad dd t : ℝ) (nonzero : dd ≠ 0) :
   field_simp
   ring
 
+/-- Start-endpoint branch of the complete squared-chord minimum. -/
+theorem bakeoff_chord_start_min (aa ad dd t : ℝ)
+    (hd : 0 ≤ dd) (ha : 0 ≤ ad) (ht : 0 ≤ t) :
+    aa ≤ aa+2*t*ad+t^2*dd := by
+  have h1 := mul_nonneg ht ha
+  have h2 := mul_nonneg (sq_nonneg t) hd
+  nlinarith
+
+/-- End-endpoint branch; the full segment, not just its endpoints, is bounded. -/
+theorem bakeoff_chord_end_min (aa ad dd t : ℝ)
+    (hd : 0 ≤ dd) (ha : ad ≤ -dd) (_ht : 0 ≤ t) (ht1 : t ≤ 1) :
+    aa+2*ad+dd ≤ aa+2*t*ad+t^2*dd := by
+  have hdt : dd*t ≤ dd := by nlinarith [mul_nonneg hd (sub_nonneg.mpr ht1)]
+  have hs : 0 ≤ -2*ad-dd*(t+1) := by nlinarith
+  have hp := mul_nonneg (sub_nonneg.mpr ht1) hs
+  nlinarith
+
+/-- Interior branch of the squared-chord minimum for every real parameter. -/
+theorem bakeoff_chord_interior_min (aa ad dd t : ℝ) (hd : 0 < dd) :
+    aa-ad^2/dd ≤ aa+2*t*ad+t^2*dd := by
+  rw [bakeoff_chord_completion aa ad dd t (ne_of_gt hd)]
+  exact le_add_of_nonneg_right (mul_nonneg (le_of_lt hd) (sq_nonneg _))
+
+/-- The interior minimizer lies on the segment under the registered branch test. -/
+theorem bakeoff_chord_interior_parameter (ad dd : ℝ)
+    (hd : 0 < dd) (h0 : ad < 0) (h1 : -dd < ad) :
+    0 < -ad/dd ∧ -ad/dd < 1 := by
+  constructor
+  · exact div_pos (neg_pos.mpr h0) hd
+  · apply (div_lt_one hd).mpr
+    linarith
+
 theorem bakeoff_atomic_rejection {S : Type*} (prior : S) :
     (fun (_proposal : S) => prior) prior = prior := rfl
 
