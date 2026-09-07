@@ -58,6 +58,7 @@ def main(parent,baseline,out):
         record=json.loads((baseline/f'k4_internal-L{level}-{f.KDK}.json').read_text())
         for scenario in ('k4_translated','k4_boosted'):
             end,wires,_,_=b.run(models[mids[scenario]],states[scenario],n,f.STEP_COUNTS[level])
+            save(out/f'{scenario}-L{level}.json',dict(wires=[w.hex() for w in wires]))
             for com in (False,True):
                 ex=ep=Q()
                 for k,w in enumerate(wires):
@@ -75,6 +76,7 @@ def main(parent,baseline,out):
             else:
                 model.relations=[f.exact_lab.Relation(r.index,r.second_id,r.first_id,r.rest_length) for r in model.relations]
             _,wires,_,_=b.run(model,state,n,f.STEP_COUNTS[level])
+            save(out/f'{kind}-L{level}.json',dict(wires=[w.hex() for w in wires]))
             ex=ep=Q()
             for k,w in enumerate(wires):
                 x,p=b.error(w,bytes.fromhex(record['wires'][k]));ex=max(ex,x);ep=max(ep,p)
@@ -85,7 +87,8 @@ def main(parent,baseline,out):
         # it is not the convergence timestep (see parent runner/domain.csv).
         status,returned=f.one_step(models[mids['domain_crossing']],initial,1_000_000_000,f.KDK,f.profile_for(96))
         controls.append(dict(kind='domain_crossing',level=level,status=status,
-            dt_raw=1_000_000_000,passed=status!='accepted' and f.encode_state(returned)==prior))
+            dt_raw=1_000_000_000,prior_wire=prior.hex(),returned_wire=f.encode_state(returned).hex(),
+            passed=status!='accepted' and f.encode_state(returned)==prior))
     save(out/'controls.json',controls)
     save(out/'summary.json',dict(passed=all(r['passed'] for r in controls),rows=len(controls),
         failures=[r for r in controls if not r['passed']]))

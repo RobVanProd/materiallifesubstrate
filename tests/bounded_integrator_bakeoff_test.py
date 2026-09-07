@@ -9,6 +9,8 @@ import bounded_integrator_bakeoff_check as check
 import bakeoff_midpoint as mid
 import run_bounded_fractional_phase_state_lab as f
 from bakeoff_short_analysis import energy_gate
+import bakeoff_control_audit as graph
+from bakeoff_evidence_audit import slope,energy_metrics
 from types import SimpleNamespace
 
 
@@ -104,6 +106,54 @@ class Arithmetic(unittest.TestCase):
         self.assertEqual(check.fixed_cell_root(model,prior,f.encode_state(mutated),audit384)['reason'],'exact_root_output_mismatch')
         values2,_=mid.solve(model,state,62500000,256)
         self.assertEqual(f.encode_state(mid.proposal96(state,values2,62500000)),f.encode_state(out))
+
+    def test_signed_slope(self):
+        self.assertEqual(slope(list(map(Q,[0,1,0,-1,0])),Q(1)),Q(-1,5))
+        self.assertNotEqual(slope(list(map(Q,[0,1,0,-1,0])),Q(1)),
+            slope(list(map(Q,[0,1,0,1,0])),Q(1)))
+        self.assertEqual(energy_metrics(list(map(Q,[0,1,0,-1,0])),Q(1))['signed_slope'],'-1/5')
+
+    def test_exact_graph_and_targeted_mutations(self):
+        import gmpy2 as g
+        with f.profile_for(96).activate():
+            state=f.State(96,0,[f.Packet(1,524288,[g.mpfr(0)]*3,[g.mpfr(0)]*3),
+                f.Packet(2,524288,[g.mpfr(256000000000),g.mpfr(0),g.mpfr(0)],[g.mpfr(0)]*3)])
+        model=check.f.Model('pair',{1:[Q(),Q(),Q()],2:[Q(128000000000),Q(),Q()]},
+            {1:524288,2:524288},[check.f.Relation(0,1,2,1.0)],[[1.0]])
+        wire=f.encode_state(state);values,audit=mid.solve(model,state,62500000,256);audit['n']=62500000
+        self.assertEqual(graph.audit_solver(model,wire,audit),[Q(str(g.mpq(v))) for v in values])
+        mutations=[
+            ('scratch_widening',lambda a:a.update(bits=512),'scratch precision'),
+            ('warm_start',lambda a:a['iterations'][0]['guess'].__setitem__(0,'1'),'iteration dependency'),
+            ('wrong_order',lambda a:a['iterations'][0]['new'].__setitem__(0,'1'),'operation graph'),
+            ('false_residual',lambda a:a['iterations'][0]['residual_next'].__setitem__(0,'1'),'residual graph'),
+            ('false_force_cell',lambda a:a['force']['cells'][0].__setitem__(0,'0000000000000000'),'force/impulse trace'),
+            ('omitted_impulse',lambda a:a['force']['impulses'][0].__setitem__(0,'0'),'force/impulse trace'),
+            ('false_norm',lambda a:a['iterations'][0].update(D='0'),'norm record'),
+            ('inward_primitive',lambda a:a['operations'][0].__setitem__(2,'1'),'primitive'),
+            ('fused_or_omitted_operation',lambda a:a['operations'].pop(),'inventory'),
+        ]
+        for name,mutate,reason in mutations:
+            with self.subTest(mutation=name):
+                changed=copy.deepcopy(audit);mutate(changed)
+                with self.assertRaisesRegex(AssertionError,reason):graph.audit_solver(model,wire,changed)
+        altered=copy.deepcopy(model);altered.h=[[2.0]]
+        with self.assertRaisesRegex(AssertionError,'operation graph'):graph.audit_solver(altered,wire,audit)
+        altered=copy.deepcopy(model);altered.reference[2][0]+=1
+        with self.assertRaisesRegex(AssertionError,'operation graph'):graph.audit_solver(altered,wire,audit)
+        with self.assertRaises(AssertionError):check.decode_wire(wire+b'\x00')
+
+    def test_complete_chord_and_atomic_solver_rejection(self):
+        import gmpy2 as g
+        with f.profile_for(96).activate():
+            state=f.State(96,0,[f.Packet(1,524288,[g.mpfr(0)]*3,[g.mpfr(0)]*3),
+                f.Packet(2,524288,[g.mpfr(128000000000),g.mpfr(0),g.mpfr(0)],
+                    [g.mpfr(-134217728),g.mpfr(0),g.mpfr(0)])])
+        model=check.f.Model('pair',{1:[Q(),Q(),Q()],2:[Q(128000000000),Q(),Q()]},
+            {1:524288,2:524288},[check.f.Relation(0,1,2,1.0)],[[1.0]])
+        prior=f.encode_state(state)
+        with self.assertRaisesRegex(mid.Rejected,'unsafe_trial_chord'):mid.solve(model,state,1000000000,256)
+        self.assertEqual(f.encode_state(state),prior)
 
 
 if __name__=='__main__':unittest.main()

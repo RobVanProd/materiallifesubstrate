@@ -43,7 +43,10 @@ def analyse(baseline,exact,smooth):
                     assert prefix['passed']
                     bound=(3*(dec(Q(prefix['x']))**2+dec(Q(prefix['p']))**2)).sqrt()
                     uncertainties.append(bound+Decimal(2)**-70)
-                    radii.append(Q(prefix['energy']))
+                    # Excursions subtract the initial energy as well. Carry
+                    # both observer uncertainties, even if the actual initial
+                    # comparison happens to be exact in this inventory.
+                    radii.append(2*Q(prefix['energy']))
             orders=[(errors[k]/errors[k+1]).ln()/Decimal(2).ln() for k in range(4)]
             required=3 if path==c.f.KDK else 2
             lo,hi=(Decimal('1.6'),Decimal('2.4')) if path==c.f.KDK else (Decimal('.6'),Decimal('1.4'))
