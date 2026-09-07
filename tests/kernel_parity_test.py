@@ -53,6 +53,17 @@ def run(exe,parent,out):
     result=p.invoke(exe,out,'coincidence',model,f.encode_state(collapsed).hex(),'test',0,62500000,1)
     assert status=='force_domain_failure' and result.read_text().splitlines()[-1]==f'REJECT 1 {status} {f.encode_state(prior).hex()}'
     checks.append(dict(kind='initial_coincidence_fail_closed',passed=True))
+    # Synthetic range-rejection fixture, never an admitted dynamics scenario.
+    tiny=state.clone();tiny_model=copy.deepcopy(model);scale=f.Fraction(1,2**16400)
+    for packet in tiny.packets:
+        with f.profile_for(96).activate() as ctx:
+            packet.x=[f.rounded_fraction(ctx,96,f.exact_dyadic(x)*scale,'range_fixture') for x in packet.x]
+            packet.p=[f.rounded_fraction(ctx,96,0,'range_fixture') for _ in range(3)]
+    tiny_model.reference={pid:[x*scale for x in v] for pid,v in tiny_model.reference.items()}
+    status,prior=f.one_step(tiny_model,tiny,62500000,f.KDK,f.profile_for(96))
+    result=p.invoke(exe,out,'phase-underflow',tiny_model,f.encode_state(tiny).hex(),'test',0,62500000,1)
+    assert status=='phase_range_failure' and result.read_text().splitlines()[-1]==f'REJECT 1 {status} {f.encode_state(prior).hex()}',('phase_failure_category',result.read_text())
+    checks.append(dict(kind='phase_range_atomic_category',passed=True))
     # One authenticated first step: mutations must fail the actual comparison.
     reference=parent/'evidence/short'/f'k4_internal-L0-{f.KDK}.json'
     wires=json.loads(reference.read_text())['wires'][:2]

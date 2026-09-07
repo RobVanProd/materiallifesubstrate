@@ -95,6 +95,14 @@ scientific streams. Literal intermediate-state comparisons supplement the
 already matching stage hashes. These are implementation/coverage corrections,
 not changes to reference arithmetic or tolerances.
 
+A synthetic range-rejection test subsequently found a failure-category
+mismatch: both implementations preserved the prior state, but C++ exposed
+`phase_range_failure:underflow` where Python returns `phase_range_failure`.
+That exact failed source/executable/record is preserved. The final implementation
+matches the category and propagates unrelated exceptions as errors rather than
+misclassifying them as ordinary domain rejections. No accepted trajectory
+changed; the additional fixture is a rejection test, not a new dynamics case.
+
 The Linux address-space and Windows process-memory backstops are 2 GiB.
 These are platform-specific resource backstops, not equal RSS measurements or
 a performance claim. No reported passing trajectory hit its limit.

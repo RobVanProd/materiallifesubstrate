@@ -781,6 +781,14 @@ int run(std::istream &in, std::ostream &out) {
             << '\n';
       } catch (const std::exception &e) {
         s = old;
+        std::string status = e.what();
+        status = status.substr(0, status.find(':'));
+        if (status != "force_domain_failure" &&
+            status != "chord_domain_failure" &&
+            status != "domain_scratch_bound_exceeded" &&
+            status != "phase_range_failure")
+          throw; // Match Python: programming/input errors are not domain
+                 // rejection.
         if (auto *d = dynamic_cast<const DomainFailure *>(&e)) {
           auto &c = d->info;
           out << "D " << d->relation << ' ' << c.minimum << ' '
@@ -788,7 +796,7 @@ int run(std::istream &in, std::ostream &out) {
               << c.rhs.numerator() << ' ' << c.rhs.denominator() << ' '
               << c.bits << ' ' << Scratch::limit << '\n';
         }
-        out << "REJECT " << step << ' ' << e.what() << ' ' << hex(encode(s))
+        out << "REJECT " << step << ' ' << status << ' ' << hex(encode(s))
             << '\n';
         return 0;
       }
