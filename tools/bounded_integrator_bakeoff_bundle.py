@@ -21,7 +21,9 @@ REQUIRED_JOBS={'C++ / Linux GCC','C++ / Linux Clang','C++ / Windows MSVC',
                'Python exact oracle','Pinned Lean build and axiom output'}
 INPUTS={
  'controls-a':'bakeoff-controls-development-v2','controls-b':'bakeoff-controls-development-v3',
- 'short':'bakeoff-baseline-development-v1','additional':'bakeoff-baseline-controls-development-v3',
+ 'short':'bakeoff-baseline-development-v2','additional':'bakeoff-baseline-controls-development-v3',
+ 'event-replay':'bakeoff-event-replay-v1',
+ 'failures/short-default-level':'bakeoff-baseline-development-v1',
  'exact':'bakeoff-baseline-exact-development-v1','tails':'bakeoff-baseline-tails-development-v1',
  'smooth.json':'bakeoff-smooth-development-v1.json','short-analysis.json':'bakeoff-short-analysis-development-v2.json',
  'short-audit.json':'bakeoff-short-audit-development-v2.json','long-audit.json':'bakeoff-long-audit-development-v2.json',

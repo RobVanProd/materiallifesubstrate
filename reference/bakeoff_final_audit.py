@@ -131,7 +131,7 @@ def audit(work,parent,deep=False):
     if deep:
         independent=controls.audit(parent,work/'controls-a',work/'controls-b')
         assert independent==read(work/'midpoint-independent.json')
-        assert evidence.short(parent,work/'short')==read(work/'short-audit.json')
+        assert evidence.short(parent,work/'short',work/'event-replay')==read(work/'short-audit.json')
     else:
         independent=read(work/'midpoint-independent.json')
         assert independent['passed'] and independent['scientific_twin_identical']
@@ -150,6 +150,28 @@ def audit(work,parent,deep=False):
     long=evidence.long(parent,work/'tails')
     assert long==read(work/'long-audit.json') and long['passed'],'false long energy gate'
     metamorphic=audit_metamorphic(work)
+    event_rows=read(work/'event-replay/inventory.json')
+    expected_events={('short',s,l) for s in f.SCENARIOS for l in range(5)}|{('long',s,l) for s in ('k4_internal','k4_boosted') for l in range(5)}
+    assert len(event_rows)==25 and {(r['scope'],r['scenario'],r['level']) for r in event_rows}==expected_events
+    for r in event_rows:
+        actual=read(work/f"event-replay/{r['scope']}-{r['scenario']}-L{r['level']}.json")
+        n=f.STEP_COUNTS[r['level']]*(16 if r['scope']=='long' else 1)
+        assert r['passed'] is True and actual['passed'] is True and actual['steps']==n
+        assert len(actual['event_groups'])==n and actual['checkpoint_suffix_event_groups']==actual['event_groups'][n//2:]
+    # Prove that the preserved correction changed metadata, not phase values,
+    # impulses, energies, budgets or any numerical experiment outcome.
+    corrected=0
+    for s in f.SCENARIOS:
+        for level in range(5):
+            for path in (f.KDK,f.CONTROL):
+                name=f'{s}-L{level}-{path}.json'
+                old=read(work/'failures/short-default-level'/name);new=read(work/'short'/name)
+                for group in ('invariants','forces'):
+                    for row in old['audit'][group]:
+                        assert row['level']==0;row['level']=level
+                old['audit']['stream']=new['audit']['stream']
+                assert old==new,'metadata correction changed numerical evidence'
+                corrected+=1
     for file,scenarios in (('external-short-timing.json',f.SCENARIOS),('tails/external-timing.json',('k4_internal','k4_boosted'))):
         timings=read(work/file)
         assert {(r['scenario'],r['level']) for r in timings}=={(s,l) for s in scenarios for l in range(5)}
@@ -173,10 +195,28 @@ def audit(work,parent,deep=False):
     for s in ('k4_internal','k4_boosted'):
         for level in range(5):
             row=read(work/f'tails/{s}-L{level}.json');assert row['checkpoint_suffix'] is True
+            event_record=read(work/f'event-replay/long-{s}-L{level}.json')
+            previous=None;baseline=None
             for k,(wire,energy) in enumerate(zip(row['wires'],row['energy'])):
                 assert hashlib.sha256(bytes.fromhex(wire)).hexdigest()==auth[(f'long:{s}:B96:L{level}',k)]
                 state=phase(wire);assert state.time_raw==k*f.TIMESTEPS_RAW[level]
-                if deep:assert f.mechanical_energy(models['k4'],state)[2]==Q(energy),'changed energy semantics'
+                if deep:
+                    assert f.mechanical_energy(models['k4'],state)[2]==Q(energy),'changed energy semantics'
+                    if previous is None:baseline=f.exact_state_invariants(state)
+                    else:
+                        status,next_state,_,stages,force_records=f.one_step(models['k4'],previous,f.TIMESTEPS_RAW[level],f.KDK)
+                        assert status=='accepted' and f.encode_phase_state(next_state).hex()==wire,'long independent step mismatch'
+                        events=[];trajectory='bakeoff-A-long:'+s
+                        for stage,value,_,_ in stages:
+                            for force_stage,force in force_records:
+                                if force_stage==stage:
+                                    events.append(f.observer_event_digest('force_audit',f.observer_force_row(trajectory,96,level,k,stage,force)))
+                            events.append(f.observer_event_digest('invariant',f.observer_invariant_row(trajectory,96,level,k,stage,value,baseline)))
+                        events.append(f.observer_event_digest('energy',f.observer_energy_row(trajectory,96,level,k,models['k4'],state)))
+                        assert len(events)==2*len(models['k4'].relations)+5
+                        assert hashlib.sha256(b''.join(bytes.fromhex(e) for e in events)).hexdigest()==event_record['event_groups'][k-1],'long observer-event mismatch'
+                    previous=state
+            if deep:print(s+' L'+str(level)+' independent complete long events PASS',flush=True)
     replay=json.loads((work/'parent-full-replay.log').read_text().splitlines()[-1])
     assert replay['new_short_blocks_replayed']==90 and replay['new_full_tails_replayed']==10 and replay['records_only'] is False
     rows=independent['rows'];assert len(rows)==15
@@ -192,6 +232,7 @@ def audit(work,parent,deep=False):
         C=dict(disposition=independent['C']['status'],eligible=False,tested_endpoint_pairs=1,
             tails_run=0,solver_implemented=False,subcode=independent['C']['subcode']),
         exact_conservation_claimed=False,production_integrator_selected=False,
+        metadata_corrected_without_numerical_change=corrected,complete_event_checkpoint_cases=25,
         scope='registered small systems and finite one/16-second horizons only')
     check_result(result)
     return result

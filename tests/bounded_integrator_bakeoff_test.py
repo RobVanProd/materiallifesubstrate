@@ -155,5 +155,19 @@ class Arithmetic(unittest.TestCase):
         with self.assertRaisesRegex(mid.Rejected,'unsafe_trial_chord'):mid.solve(model,state,1000000000,256)
         self.assertEqual(f.encode_state(state),prior)
 
+    def test_level_metadata_and_full_event_checkpoint(self):
+        import gmpy2 as g
+        import bakeoff_baseline as baseline
+        import bakeoff_event_replay as events
+        with f.profile_for(96).activate():
+            state=f.State(96,0,[f.Packet(1,524288,[g.mpfr(0)]*3,[g.mpfr(1)]*3)])
+        model=SimpleNamespace(relations=[],h=[])
+        _,wires,_,audit=baseline.run(model,state,f.TIMESTEPS_RAW[4],4,level=4,events=True)
+        self.assertTrue(all(r['level']==4 for r in audit['invariants']))
+        encoded=[w.hex() for w in wires]
+        whole=events.replay(model,encoded,4,'bakeoff-A')
+        resumed=events.replay(model,encoded,4,'bakeoff-A',2)
+        self.assertEqual(resumed,whole[2:])
+
 
 if __name__=='__main__':unittest.main()

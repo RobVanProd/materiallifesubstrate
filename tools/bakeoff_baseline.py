@@ -4,7 +4,6 @@ import hashlib
 import itertools
 import json
 from pathlib import Path
-import resource
 import sys
 import time
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'reference'))
@@ -34,7 +33,7 @@ def run(model,state,n,count,expected=None,scenario=None,level=None,path=None,eve
         if k==count:break
         ev=[]
         status,new=f.one_step(model,state,n,path,f.profile_for(96),
-            trajectory='bakeoff-A',step=k+1,invariant_rows=inv if events else None,
+            trajectory='bakeoff-A',level=0 if level is None else level,step=k+1,invariant_rows=inv if events else None,
             force_rows=forces if events else None,initial_invariants=base,
             observer_events=ev if events else None)
         assert status=='accepted',status
@@ -73,6 +72,7 @@ def rotations():
 
 
 def main(parent,out):
+    import resource
     resource.setrlimit(resource.RLIMIT_AS,(2*1024**3,2*1024**3))
     out.mkdir(parents=True,exist_ok=False)
     models,mids,states=initial_models(parent);expected=expected_states(parent)

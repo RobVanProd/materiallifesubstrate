@@ -3,7 +3,6 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-import resource
 import subprocess
 import sys
 import time
@@ -56,6 +55,7 @@ def expected_states(parent):
 
 
 def control_run(parent,out):
+    import resource
     resource.setrlimit(resource.RLIMIT_AS,(2*1024**3,2*1024**3))
     out.mkdir(parents=True,exist_ok=False)
     start=time.monotonic()

@@ -47,7 +47,7 @@ def energy_metrics(values,h):
         inherited_secular=secular)
 
 
-def short(parent,baseline):
+def short(parent,baseline,event_records=None):
     inputs=parent/'parent/parent/parent/inputs'
     models=f.load_models(inputs/'raw-a');initial=list(f.rows(inputs/'raw-a/initial_states.csv'))
     reports=[]
@@ -69,16 +69,23 @@ def short(parent,baseline):
             maxima=defaultdict(Q);bounds=defaultdict(Q)
             for item,(step,stage,value,pbound,lbound) in zip(inv,physical_stages):
                 assert item['step']==step and item['stage']==stage
+                assert item['level']==level and item['trajectory_id']=='bakeoff-A','stage metadata mismatch'
                 p,l=f.verify_invariant_row(item,value,base,model,pbound,lbound)
                 maxima['P']=max(maxima['P'],p);maxima['L']=max(maxima['L'],l)
                 bounds['P']=max(bounds['P'],max(pbound));bounds['L']=max(bounds['L'],max(lbound))
                 assert p<=f.MOMENTUM_BUDGET and l<=f.ANGULAR_BUDGET
             for item,(step,stage,expected) in zip(raw_forces,forces):
                 assert item['step']==step and item['stage']==stage
+                assert item['level']==level and item['trajectory_id']=='bakeoff-A','force metadata mismatch'
                 residuals=f.verify_force_row(item,expected)
                 for name,value in residuals.items():
                     maxima[name]=max(maxima[name],value)
                     assert value<=(f.MOMENTUM_BUDGET if name=='pair_momentum_residual' else f.ANGULAR_BUDGET)
+            if event_records is not None:
+                recorded=read(event_records/f'short-{scenario}-L{level}.json')
+                groups=f.observer_groups_from_replay(model,'bakeoff-A',96,level,replay,stages,forces,base)
+                digests=[hashlib.sha256(b''.join(bytes.fromhex(e) for e in group)).hexdigest() for group in groups]
+                assert recorded['event_groups']==digests and recorded['checkpoint_suffix_event_groups']==digests[len(digests)//2:]
             reports.append(dict(scenario=scenario,level=level,passed=True,stages=len(inv),relations=len(forces),
                 maxima={k:str(v) for k,v in maxima.items()},local_accumulated_bounds={k:str(v) for k,v in bounds.items()},
                 rounding_operations=replay.operation_count,rounding_audit_sha256=replay.rounding_audit_sha256,

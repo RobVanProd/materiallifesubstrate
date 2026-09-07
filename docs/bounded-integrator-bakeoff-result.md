@@ -120,7 +120,7 @@ exact-unit norms, first passing iterate, force bits, impulses, root equations,
 output rounding and rejection state. B/C control execution twins are
 byte-identical apart from the explicitly external resource record.
 
-Seventeen arithmetic/control test methods and five evidence-integrity methods
+Eighteen arithmetic/control test methods and five evidence-integrity methods
 include targeted mutations for precision changes, warm starts, altered H or
 reference, omitted/fused primitives and impulses, false residual/norm/force
 cells, output disagreement, noncanonical state, signed-slope misuse, changed
@@ -139,6 +139,17 @@ Lean hypothesis warning was corrected without weakening the theorem. These
 are disclosed implementation/test corrections, not changed experiment gates.
 The provisional implementation commits remain in branch history.
 
+A later pre-seal review found that the short-record wrapper had left the
+noncausal stage `level` label at its default zero. Correctly labeled records
+were regenerated and compared to the preserved originals: all thirty numerical
+traces, energies and residuals are identical; only labels and their event hashes
+change. A regression now checks the level explicitly. The earlier checkpoint
+checks covered state and energy; a supplementary replay now checks complete
+canonical observer-event suffixes on all fifteen short and ten long cases,
+with independent event reconstruction for the short and long corpora. This closes a
+verification-coverage omission without altering the candidate trajectory or
+loosening a gate. The earlier source/CI attempt and raw records are retained.
+
 The archive contains source, authenticated parent, all primary control twins,
 short and long records, independent audit receipts, preserved failed attempts,
 and exact-source CI. Two independently generated archive streams must match
@@ -151,7 +162,7 @@ PYTHONDONTWRITEBYTECODE=1 python source/tools/verify_bounded_integrator_bakeoff.
 ```
 
 The default verifies the closed manifest and replays new midpoint graphs,
-short integer arithmetic and long candidate energy observers. It authenticates
+short integer arithmetic and all long candidate steps and observer events. It authenticates
 the full parent replay receipt but does not silently rerun that expensive
 certificate. Request `--replay-parent` for all 90 parent blocks and ten tails;
 `--replay-exact-short` separately reruns all fifteen Python-integer rational
