@@ -15,7 +15,7 @@ import kernel_parity_bundle as kernel
 import world_mechanics_parity as w
 
 DECISION='retain_cpp_kernel_world_integration_for_research'
-MUTANTS={'omitted_transition','double_transition','legacy_double_drift','premature_clock','failed_step_commit','checkpoint_omission','changed_packet_id','observer_feedback'}
+MUTANTS={'omitted_transition','double_transition','legacy_double_drift','premature_clock','failed_step_commit','checkpoint_omission','changed_packet_id','changed_phase_payload','observer_feedback'}
 
 def audit(work,parent,sha):
     r=json.loads((work/'gcc/result.json').read_text());assert r['source_sha']==sha
@@ -41,7 +41,7 @@ def audit(work,parent,sha):
         assert w.digest(out)==row['stream_sha256']
         assert json.loads((work/'gcc'/(name+'.contracts')).read_text())==dict(status='PASS',atomic_rejection=True)
     mutants=json.loads((work/'source-mutations/result.json').read_text())
-    assert mutants['status']=='PASS' and len(mutants['mutations'])==8 and {x['name'] for x in mutants['mutations']}==MUTANTS
+    assert mutants['status']=='PASS' and len(mutants['mutations'])==9 and {x['name'] for x in mutants['mutations']}==MUTANTS
     for x in mutants['mutations']:
         assert x['rejected'] is True and x['exit_code']!=0
         assert w.digest(work/'source-mutations'/x['name']/'mutant.cpp')==x['source_sha256']
@@ -54,7 +54,7 @@ def audit(work,parent,sha):
     for path in reports:
         compiled=json.loads(path.read_text());assert compiled['source_sha']==sha
         assert w.report_check(compiled)==expected,('compiler World bytes differ',path)
-    return dict(decision=DECISION,promotion='NO_PROMOTION',inherited_precision=96,inherited_integrator='KDK',short_trajectories=30,long_trajectories=10,long_steps=15872,long_kdk_stages=47616,twins=40,complete_checkpoint_suffixes=40,compiled_source_mutations=8,atomic_rejection_controls=3,default_world_activation=False)
+    return dict(decision=DECISION,promotion='NO_PROMOTION',inherited_precision=96,inherited_integrator='KDK',short_trajectories=30,long_trajectories=10,long_steps=15872,long_kdk_stages=47616,twins=40,complete_checkpoint_suffixes=40,compiled_source_mutations=9,atomic_rejection_controls=3,default_world_activation=False)
 
 def build(repo,parent,work,out):
     assert not out.exists(),'never replace a seal or failed seal attempt'

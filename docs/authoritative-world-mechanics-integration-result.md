@@ -76,6 +76,8 @@ exact physical time reversal or exact B96 conservation.
   47,616 physical KDK stages.
 - Exact complete streams, not endpoints: state/stage bytes, binary64 Path-B
   input/output bits and every scientific mechanics event line/hash.
+  Every committed kernel state is explicitly compared to World's owned phase
+  bytes, not merely forwarded to the output stream.
 - Forty deterministic twins, forty canonical checkpoint twins and forty
   separate-process complete checkpoint-suffix comparisons.
 - World clock, packet-ID/mass stability and unrelated-state checks at each
@@ -83,9 +85,9 @@ exact physical time reversal or exact B96 conservation.
   behavior and complete checkpoint controls.
 - Three inherited atomic domain/coincidence/range failure cases, eight invalid
   wire cases and missing runtime-flag rejection.
-- Eight compiled World source mutants rejected: omitted/double transition,
+- Nine compiled World source mutants rejected: omitted/double transition,
   legacy double drift, premature clock update, failed-step commit, checkpoint
-  omission, packet-ID change and observer feedback.
+  omission, packet-ID change, stored-phase corruption and observer feedback.
 - Independent inventory/record mutations and ordinary core validation in both
   default and research-capable/runtime-disabled builds.
 

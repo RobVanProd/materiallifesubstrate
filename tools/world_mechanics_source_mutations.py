@@ -18,6 +18,7 @@ def run(repo,build,parent,out):
       'failed_step_commit':('      throw ResearchMechanicsRejection(body);','      { *this=staged; ++tick_; throw ResearchMechanicsRejection(body); }'),
       'checkpoint_omission':('field(out, research_kernel_request(r, 0));','field(out, std::string());'),
       'changed_packet_id':('    r.wire = wire;','    r.wire = wire; r.wire[104] = \'2\';'),
+      'changed_phase_payload':('    r.wire = wire;','    r.wire = wire; r.wire[169] = r.wire[169] == \'1\' ? \'0\' : \'1\';'),
       'observer_feedback':('  return s; // A copy;','  const_cast<World*>(this)->research_mechanics_->request.wire[104] = \'2\';\n  return s; // A copy;'),
     }
     rows=[]

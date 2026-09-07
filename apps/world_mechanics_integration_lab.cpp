@@ -97,6 +97,25 @@ std::string start_line(const mls::World &w) {
   const auto s = w.research_mechanics();
   return "S " + std::to_string(s.step) + " " + s.wire + " -\n";
 }
+void owned_state_matches_commit(const mls::ResearchMechanicsSnapshot &state) {
+  std::istringstream events(state.events);
+  std::string line;
+  int matches = 0;
+  while (std::getline(events, line)) {
+    if (!line.starts_with("S "))
+      continue;
+    std::istringstream row(line);
+    std::string kind, wire, digest;
+    int step{};
+    row >> kind >> step >> wire >> digest;
+    if (step == state.step) {
+      check(bool(row) && wire == state.wire,
+            "World-owned phase differs from the committed kernel record");
+      ++matches;
+    }
+  }
+  check(matches == 1, "missing/duplicate World-owned state witness");
+}
 void advance(mls::World &w, int count, std::ostream &out,
              const std::string &checkpoint = {}) {
   const auto initial = w;
@@ -117,6 +136,7 @@ void advance(mls::World &w, int count, std::ostream &out,
       return;
     }
     const auto s = w.research_mechanics();
+    owned_state_matches_commit(s);
     check(w.tick() == tick + 1 &&
               w.physical_time().raw() ==
                   time.raw() + w.config().physical_timestep.raw(),
@@ -234,6 +254,7 @@ void contracts(const mls::ResearchMechanicsInput &r, std::ostream &out) {
   try {
     const auto header = start_line(batched);
     batched.step(2);
+    owned_state_matches_commit(batched.research_mechanics());
     check(header + batched.research_mechanics().events == two_expected.str(),
           "batch double/omitted step");
     same_unrelated(restored, batched);
