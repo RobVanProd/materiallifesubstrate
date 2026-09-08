@@ -95,6 +95,29 @@ theorem weight_partition (w : ℝ) (shares : Fin 8 → ℝ)
     (partition : ∑ i, shares i = 1) : (∑ i, w*shares i) = w := by
   rw [← Finset.mul_sum, partition, mul_one]
 
+/-- Positive directional increments cannot cancel on a finite segment
+partition. The executable input audit supplies cell-matrix positivity; the
+construction argument supplies the segment partition, not a floating claim. -/
+theorem positive_segment_partition (n : ℕ) (w q : Fin n → ℝ)
+    (hw : ∀ i, 0 ≤ w i) (hq : ∀ i, 0 < q i)
+    (active : ∃ i, 0 < w i) : 0 < ∑ i, w i * q i := by
+  apply Finset.sum_pos'
+  · intro i _
+    exact mul_nonneg (hw i) (le_of_lt (hq i))
+  · obtain ⟨i,hi⟩ := active
+    exact ⟨i,Finset.mem_univ i,mul_pos hi (hq i)⟩
+
+/-- Strict monotonicity is a sufficient injectivity certificate. Failure of
+this sufficient premise does not imply non-injectivity of a mesh map. -/
+theorem monotone_domain_injective (F : Vec → Vec) (domain : Set Vec)
+    (strict : ∀ x ∈ domain, ∀ y ∈ domain, x ≠ y →
+      0 < dot (y-x) (F y-F x)) : Set.InjOn F domain := by
+  intro x hx y hy equal
+  by_contra different
+  have h := strict x hx y hy different
+  rw [equal] at h
+  simp [dot] at h
+
 end MLSFormal.OccupiedGeometry
 
 #print axioms MLSFormal.OccupiedGeometry.missing_information
@@ -108,3 +131,5 @@ end MLSFormal.OccupiedGeometry
 #print axioms MLSFormal.OccupiedGeometry.left_endpoint_minimum
 #print axioms MLSFormal.OccupiedGeometry.swept_minimum_criterion
 #print axioms MLSFormal.OccupiedGeometry.weight_partition
+#print axioms MLSFormal.OccupiedGeometry.positive_segment_partition
+#print axioms MLSFormal.OccupiedGeometry.monotone_domain_injective
