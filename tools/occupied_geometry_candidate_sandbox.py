@@ -9,13 +9,14 @@ import subprocess
 import sys
 
 
-def run(view,output):
+def run(view,output,volume=False):
     assert not output.exists();output.mkdir(parents=True)
     base=Path(sys.base_prefix).resolve()
     site=Path(importlib.util.find_spec('gmpy2').origin).parent.parent
     version=importlib.metadata.version('gmpy2');assert version=='2.3.1'
     code=Path(__file__).resolve().parent
     sources=('occupied_geometry_candidate_c_pilot.py','occupied_geometry_runtime_wire.py')
+    if volume:sources=('occupied_geometry_candidate_c_volume_pilot.py','occupied_geometry_runtime_wire.py','occupied_geometry_c_volume.py')
     command=['bwrap','--unshare-all','--die-with-parent','--clearenv',
         '--ro-bind','/usr','/usr','--symlink','usr/bin','/bin',
         '--symlink','usr/lib','/lib','--symlink','usr/lib64','/lib64',
@@ -55,4 +56,5 @@ def run(view,output):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('view',type=Path);p.add_argument('output',type=Path)
-    a=p.parse_args();run(a.view,a.output)
+    p.add_argument('--volume',action='store_true')
+    a=p.parse_args();run(a.view,a.output,a.volume)
