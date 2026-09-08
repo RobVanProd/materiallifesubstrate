@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import importlib.util
+import importlib.metadata
 import json
 from pathlib import Path
 import subprocess
@@ -12,6 +13,7 @@ def run(view,output):
     assert not output.exists();output.mkdir(parents=True)
     base=Path(sys.base_prefix).resolve()
     site=Path(importlib.util.find_spec('gmpy2').origin).parent.parent
+    version=importlib.metadata.version('gmpy2');assert version=='2.3.1'
     code=Path(__file__).resolve().parent
     sources=('occupied_geometry_candidate_c_pilot.py','occupied_geometry_runtime_wire.py')
     command=['bwrap','--unshare-all','--die-with-parent','--clearenv',
@@ -21,6 +23,7 @@ def run(view,output):
         '--ro-bind',str(base),'/py',
         '--ro-bind',str(site/'gmpy2'),'/deps/gmpy2',
         '--ro-bind',str(site/'gmpy2.libs'),'/deps/gmpy2.libs',
+        '--ro-bind',str(site/f'gmpy2-{version}.dist-info'),f'/deps/gmpy2-{version}.dist-info',
         '--ro-bind',str(view.resolve()),'/input',
         '--setenv','PYTHONPATH','/code:/deps',
         '--setenv','PYTHONDONTWRITEBYTECODE','1','--chdir','/input']
