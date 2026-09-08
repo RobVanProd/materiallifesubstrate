@@ -13,7 +13,7 @@ def seal(package):
     destination=package/'input-root-seal.json';assert not destination.exists()
     closed=check_package(package)
     recipe=json.loads((package/'control/package-recipe.json').read_text())
-    aliases={source:package/blob for blob,source in recipe['source_aliases'].items()}
+    aliases={source:package/blob for source,blob in recipe['input_source_to_blob'].items()}
     gates=[]
     def require(name, expected=None):
         path=aliases[name];objects=[]

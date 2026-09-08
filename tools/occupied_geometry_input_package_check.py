@@ -70,6 +70,9 @@ def check(root):
     for key,source in recipe['source_aliases'].items():
         assert key in expected
         valid_path(source)
+    for source,key in recipe.get('input_source_to_blob',{}).items():
+        valid_path(source)
+        assert key in expected
     inventory=read(root/recipe['run_inventory'])
     assert len(inventory['runs'])==1155
     for row in inventory['runs']:

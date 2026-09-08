@@ -56,6 +56,7 @@ def run(root, preflight, repo, out):
         candidate_evaluations=0,complete_input_seal=False,
         run_inventory='control/controller-run-inventory-v1.json',
         source_aliases={p:entry['source'] for p,entry in plan['files'].items()},
+        input_source_to_blob={entry['source']:entry['blob'] for entry in plan['logical_references']},
         governing_documents={p:digest(repo/p) for p in snapshots if p.startswith('docs/')},
         frozen_evidence_ceiling_bytes=8<<30,
         pending=['independent fresh-copy manifest audit','complete input-gate assessment',

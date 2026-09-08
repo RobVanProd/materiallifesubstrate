@@ -14,7 +14,7 @@ def build(root,out):
         size=path.stat().st_size;key=role+'/'+sha
         if key in files:assert files[key]['size']==size
         else:files[key]=dict(size=size,sha256=sha,source=path.relative_to(root).as_posix())
-        logical.append(dict(role=role,blob=key,purpose=purpose))
+        logical.append(dict(role=role,blob=key,purpose=purpose,source=path.relative_to(root).as_posix()))
     for shape,levels in (('cube-k',range(5)),('slab-k',range(5)),('u-k',range(5)),
                          ('sphere-d',range(1,6)),('pair-d',range(1,6))):
         for level in levels:
