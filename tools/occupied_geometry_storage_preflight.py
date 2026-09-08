@@ -39,8 +39,11 @@ def build(root,out):
         add('oracle',p,'exact domain/constants/search obligations')
     for p in sorted(root.glob('plane-d*/base-pose.bin')):
         add('candidate',p,'explicit frozen base pose')
+    for p in sorted((root/'cartesian-validity-v1').rglob('*')):
+        if p.is_file():add('control',p,'authorized Cartesian structural validity certificate and independent receipts')
     for pattern in ('*independent*.log','*independent*.json','sphere-injectivity-d*.json',
                     'input-unit-*.log','lean-full-input-foundation.log',
+                    'lean-cartesian-certificate-v1.log',
                     'decoded-*.json','orders-f*.json','native-*.json',
                     'i1-motion-orders-v1.json','final-query-joins-v1.json',
                     'sphere-d*/independent-check.json',

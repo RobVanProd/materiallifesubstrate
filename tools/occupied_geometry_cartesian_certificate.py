@@ -4,6 +4,7 @@ import hashlib
 import itertools
 import json
 from pathlib import Path
+import shutil
 
 
 def canonical(value):
@@ -12,6 +13,7 @@ def canonical(value):
 
 def build(package, replay, output):
     assert not output.exists()
+    output.parent.mkdir(parents=True,exist_ok=True)
     manifest=package/'candidate-manifest.json'
     root=hashlib.sha256(manifest.read_bytes()).hexdigest()
     checked=json.loads((replay/'receipt.json').read_text())
@@ -55,6 +57,13 @@ def build(package, replay, output):
         geometry_answers=[],runtime_geometry_work_exempt=False,
         candidate_evaluations=0,complete_input_seal=False)
     output.write_bytes(canonical(result))
+    replay_copy=output.parent/'replay';replay_copy.mkdir()
+    shutil.copyfile(replay/'receipt.json',replay_copy/'receipt.json')
+    # Preserve the per-row outputs and timing separately from scientific hashes.
+    for path in sorted(replay.glob('*-k*')):
+        destination=replay_copy/path.name;destination.mkdir()
+        for name in ('receipt.json','stdout.log','stderr.log','external-timing.json'):
+            shutil.copyfile(path/name,destination/name)
     print(json.dumps(dict(status='CONSTRUCTED_PENDING_INDEPENDENT_CHECK',bindings=330,
                          template_sha256=template_id,candidate_input_root=root)))
 
