@@ -3,9 +3,16 @@ import unittest
 import gmpy2 as g
 from occupied_geometry_runtime_wire import Work,WorkLimit
 from occupied_geometry_c_volume import parameters,field_classification,box_volume
+from occupied_geometry_a_volume import radii,classification
 
 
 class RuntimeArithmetic(unittest.TestCase):
+    def test_ball_union_classification(self):
+        points=[(g.mpq(0),)*3];weights=[g.mpq(1)];cache=radii(weights,Work())
+        self.assertEqual(classification(((g.mpq(0),g.mpq(0)),)*3,points,weights,cache,Work()),1)
+        self.assertEqual(classification(((g.mpq(2),g.mpq(3)),)*3,points,weights,cache,Work()),0)
+        self.assertEqual(classification(((g.mpq(-2),g.mpq(2)),)*3,points,weights,cache,Work()),2)
+
     def test_work_is_charged_before_execution(self):
         work=Work();work.charge('bulk',4194303)
         with self.assertRaises(WorkLimit):work.charge('children',2)

@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 
-def run(view,output,volume=False):
+def run(view,output,volume=False,candidate='C',package=None,fixture=None,level=None,variant=None):
     assert not output.exists();output.mkdir(parents=True)
     base=Path(sys.base_prefix).resolve()
     site=Path(importlib.util.find_spec('gmpy2').origin).parent.parent
@@ -17,6 +17,14 @@ def run(view,output,volume=False):
     code=Path(__file__).resolve().parent
     sources=('occupied_geometry_candidate_c_pilot.py','occupied_geometry_runtime_wire.py')
     if volume:sources=('occupied_geometry_candidate_c_volume_pilot.py','occupied_geometry_runtime_wire.py','occupied_geometry_c_volume.py')
+    if candidate=='A':
+        assert volume
+        sources=('occupied_geometry_candidate_a_volume_pilot.py','occupied_geometry_runtime_wire.py','occupied_geometry_a_volume.py')
+    if candidate=='B':
+        assert volume and package is not None
+        from occupied_geometry_cartesian_capability import issue
+        issue(package,view,fixture,level,variant,output/'capability.json')
+        sources=('occupied_geometry_candidate_b_cartesian_pilot.py','occupied_geometry_runtime_wire.py','occupied_geometry_b_cartesian.py')
     command=['bwrap','--unshare-all','--die-with-parent','--clearenv',
         '--ro-bind','/usr','/usr','--symlink','usr/bin','/bin',
         '--symlink','usr/lib','/lib','--symlink','usr/lib64','/lib64',
@@ -29,6 +37,7 @@ def run(view,output,volume=False):
         '--setenv','PYTHONPATH','/code:/deps',
         '--setenv','PYTHONDONTWRITEBYTECODE','1','--chdir','/input']
     for name in sources:command+=['--ro-bind',str(code/name),'/code/'+name]
+    if candidate=='B':command+=['--ro-bind',str((output/'capability.json').resolve()),'/precondition/capability.json']
     probe="import os; assert not os.path.exists('/oracle'); assert not os.path.exists('/control'); assert not os.path.exists('/home/lsd/Documents/ChatGPT/MLS'); print('oracle/control/repository unavailable')"
     checked=subprocess.run(command+['/py/bin/python3.13','-c',probe],capture_output=True,timeout=30)
     (output/'isolation-probe.stdout').write_bytes(checked.stdout)
@@ -36,7 +45,9 @@ def run(view,output,volume=False):
     assert checked.returncode==0,checked.stderr.decode()
     streams=[]
     for index in range(2):
-        result=subprocess.run(command+['/py/bin/python3.13','/code/'+sources[0],'/input'],
+        args=['/py/bin/python3.13','/code/'+sources[0],'/input']
+        if candidate=='B':args+=['/precondition/capability.json']
+        result=subprocess.run(command+args,
                               capture_output=True,timeout=1800)
         (output/f'twin-{index}.json').write_bytes(result.stdout)
         (output/f'twin-{index}.stderr').write_bytes(result.stderr)
@@ -57,4 +68,7 @@ def run(view,output,volume=False):
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('view',type=Path);p.add_argument('output',type=Path)
     p.add_argument('--volume',action='store_true')
-    a=p.parse_args();run(a.view,a.output,a.volume)
+    p.add_argument('--candidate',choices=('A','B','C'),default='C')
+    p.add_argument('--package',type=Path);p.add_argument('--fixture',type=int)
+    p.add_argument('--level',type=int);p.add_argument('--variant',type=int)
+    a=p.parse_args();run(a.view,a.output,a.volume,a.candidate,a.package,a.fixture,a.level,a.variant)
