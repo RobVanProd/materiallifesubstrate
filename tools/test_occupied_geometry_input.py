@@ -18,6 +18,7 @@ from occupied_geometry_query_check import registered_regions, registered_transfo
 from occupied_geometry_transform_decode import expanded, rotation_digests
 import hashlib
 from occupied_geometry_order_decode import records, permutation, SplitMix
+from occupied_geometry_input_package_check import unique, valid_path
 
 
 def decode(data):
@@ -27,6 +28,14 @@ def decode(data):
 
 
 class InputContract(unittest.TestCase):
+    def test_closed_manifest_names_and_duplicate_keys(self):
+        self.assertEqual(str(valid_path('candidate/'+'a'*64)), 'candidate/'+'a'*64)
+        self.assertEqual(unique([('one',1),('two',2)]), {'one':1,'two':2})
+        for value in ('/absolute','../outside','candidate/../oracle','candidate//blob',
+                      'candidate/./blob','candidate\\blob',''):
+            with self.assertRaises(AssertionError):valid_path(value)
+        with self.assertRaises(AssertionError):unique([('same',1),('same',2)])
+
     def test_frozen_shuffle_and_inverse_relabel(self):
         # Independent scalar expansion of the specified SplitMix arithmetic.
         state=260908;modulus=2**64;rng=SplitMix(state)
