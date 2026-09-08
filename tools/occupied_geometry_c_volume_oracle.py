@@ -41,6 +41,8 @@ def check(view,record):
         tail=g.mpfr(mp(volume))/nlo*g.exp(-g.mpfr(radius**2)/(2*hhi))
     assert tail<g.mpfr('0.5'),'uncertified exterior'
     root=tuple((min(p[j] for p,w in values)-radius,max(p[j] for p,w in values)+radius) for j in range(3))
+    half=max(b-a for a,b in root)/2
+    root=tuple(((a+b)/2-half,(a+b)/2+half) for a,b in root)
     assert record['root_box']==[[str(a),str(b)] for a,b in root]
     def size(box):return (box[0][1]-box[0][0])*(box[1][1]-box[1][0])*(box[2][1]-box[2][0])
     def range_(box):

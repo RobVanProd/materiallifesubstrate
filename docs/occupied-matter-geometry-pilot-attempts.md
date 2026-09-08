@@ -5,6 +5,14 @@ final disposition. The input root remains
 `8ec8ba42956f7664c66de26ce2f760be650cba76ef7fe0820d92396206e84516`.
 NO_PROMOTION remains.
 
+- Cover-construction audit after `334b457`: the A/C implementation expanded
+  per-axis extrema but had not enlarged shorter sides to make the preregistered
+  root a cube. The existing volume pilots used symmetric cube inputs and are
+  unchanged. Before extending volume covers to asymmetric inputs, the root now
+  uses the greatest side length about each axis midpoint. Both independent
+  cover replayers reconstruct that enclosing cube. This implements the frozen
+  covering rule; it does not alter occupied geometry or any budget.
+
 - `2b34d80`: the first Cartesian full-query driver incorrectly required query
   storage order to equal ID order. It passed the first thirty cube variants but
   rejected the frozen reversed-order stream before answering it. The attempt

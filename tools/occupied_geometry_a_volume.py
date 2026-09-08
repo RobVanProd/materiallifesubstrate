@@ -48,6 +48,8 @@ def enclose(points,weights,volume,work):
     work.charge('coordinate_extrema_primitive_contributions',len(points))
     radius=max(v[2] for v in cache.values())
     root=tuple((min(p[j] for p in points)-radius,max(p[j] for p in points)+radius) for j in range(3))
+    width=max(b-a for a,b in root)
+    root=tuple(((a+b-width)/2,(a+b+width)/2) for a,b in root)
     work.charge('root_cover_region');queue=deque([root]);inside=g.mpq(0);unresolved=size(root)
     proof=bytearray()
     try:

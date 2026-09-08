@@ -43,6 +43,8 @@ def check(view,record):
     assert record['unique_radius_count']==len(cache)
     root=tuple((min(p[j] for p,w in values)-reported_radius,
                 max(p[j] for p,w in values)+reported_radius) for j in range(3))
+    half=max(b-a for a,b in root)/2
+    root=tuple(((a+b)/2-half,(a+b)/2+half) for a,b in root)
     assert record['root_box']==[[str(a),str(b)] for a,b in root]
     def size(box):return (box[0][1]-box[0][0])*(box[1][1]-box[1][0])*(box[2][1]-box[2][0])
     def validate(box,decision):

@@ -69,6 +69,8 @@ def enclose(points,weights,volume,delta_squared,work):
         radius+=1
     work.charge('coordinate_extrema_primitive_contributions',len(points))
     box=tuple((min(p[i] for p in points)-radius,max(p[i] for p in points)+radius) for i in range(3))
+    width=max(b-a for a,b in box)
+    box=tuple(((a+b-width)/2,(a+b+width)/2) for a,b in box)
     work.charge('root_cover_region')
     queue=deque([box]);unresolved=box_volume(box);inside=g.mpq(0);decisions=bytearray()
     # The allowed width is 1/100 of the frozen 0.02 normalized volume budget.
