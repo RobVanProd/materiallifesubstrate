@@ -84,6 +84,10 @@ def boundary(mesh,work):
             normal=tuple((1 if side else -1)*x for x in axes[j])
             for a,b,c in ((0,1,2),(0,2,3)):
                 work.charge('boundary_patch_witness')
+                u=sub(points[b],points[a]);v=sub(points[c],points[a])
+                cross=(u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0])
+                sign=dot(cross,normal);assert sign!=0
+                if sign<0:b,c=c,b
                 triangles.append(dict(vertices=[points[a],points[b],points[c]],normal=normal))
     return triangles
 
