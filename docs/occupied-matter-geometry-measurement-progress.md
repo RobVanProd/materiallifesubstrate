@@ -14,11 +14,11 @@ constructs the exterior boundary, and charges runtime geometry work. An
 independent oracle checks oriented boundary coverage, volume, every closest
 set, membership result and normal cone against the registered physical box.
 
-All 198 cube/slab rows across levels 0–2 and all 33 variants passed isolated
+All 264 cube/slab rows across levels 0–3 and all 33 variants passed isolated
 twins and independent checks of all 2,339 queries each. Their losslessly
 compressed records are in the corresponding
-`build/occupied-geometry-b-query-batch-k*-evidence-*` directories. Levels 3–4
-remain in progress; the finest identity cube already passed the same complete
+`build/occupied-geometry-b-query-batch-k*-evidence-*` directories. Level 4
+remains in progress; the finest identity cube already passed the same complete
 query stream with 2,163,087 runtime work units, below the unchanged 2^22 cap.
 
 Five query/boundary record mutations are rejected by the independent check.
@@ -42,6 +42,31 @@ triangles. This is still a pilot, not the full geometry/refinement/CCD gate.
 
 Twenty input/runtime/primitive unit tests currently pass, including 128 exact
 pair-predicate comparisons against an independently implemented oracle.
+
+The finest-sphere general validity pilot reached exactly 2^22 work units before
+completion, with pending operation `cell_bounding_region`. Its twins are
+preserved in `build/occupied-geometry-b-sphere-validity-k4-pilot-v1`. This is a
+resource limit of the current general implementation, not invalid geometry,
+not a Cartesian-certificate failure, and not a proof that no implementation
+can validate that input within the frozen cap.
+
+## Information nonuniqueness
+
+`build/occupied-geometry-information-witness-v1.json` binds two hypothetical
+domain extensions to unchanged accepted material checkpoint hash
+`3e677d3ea765a968cb3c5d175f1f84efd4e26198500880b27ba2476125d2a508`.
+For the minimum exact L-infinity separation delta of its four packet centres,
+set e=delta/8. Boxes centered on those positions with half extents (e,e,e) and
+(2e,e/2,e) have the same per-packet rectangular volumes and centroids; both
+families are pairwise disjoint. The first centre plus (3e/2,0,0) distinguishes
+their occupied unions. Every existing phase/material/model field is unchanged.
+
+This establishes `current_state_does_not_determine_occupied_geometry` over the
+explicitly declared class, not a density law, new candidate fixture, World
+mutation or necessity theorem against all reconstruction conventions. The Lean
+module checks the equal-volume/distinguishing-point arithmetic alongside the
+existing non-injective-encoding theorem; its 1,587-job module build passed with
+`--wfail` and standard theorem dependencies only.
 
 ## Outstanding work
 

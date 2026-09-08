@@ -18,6 +18,19 @@ theorem missing_information {Domain State : Type*} (encode : Domain → State)
     _ = reconstruct (encode b) := congrArg reconstruct same
     _ = b := correct b
 
+/-- Exact rectangular-parcel witness arithmetic. Half extents (e,e,e) and
+(2e,e/2,e) have equal rectangular volume, while the axial point 3e/2 is in
+the second box and outside the first. The executable witness separately checks
+all unchanged packet centres, positive separation and the serialized state. -/
+theorem equal_volume_distinct_box_witness (e : ℝ) (positive : 0 < e) :
+    (2*e)*(2*e)*(2*e) = (4*e)*e*(2*e) ∧
+    e < 3*e/2 ∧ 3*e/2 ≤ 2*e ∧ 4*e < 8*e := by
+  constructor
+  · ring
+  constructor
+  · linarith
+  constructor <;> linarith
+
 abbrev Vec := Fin 3 → ℝ
 
 def dot (x y : Vec) : ℝ := x 0 * y 0 + x 1 * y 1 + x 2 * y 2
@@ -167,6 +180,7 @@ theorem cartesian_separated_cells (i j : ℤ) (hij : i < j) (x : ℝ)
 end MLSFormal.OccupiedGeometry
 
 #print axioms MLSFormal.OccupiedGeometry.missing_information
+#print axioms MLSFormal.OccupiedGeometry.equal_volume_distinct_box_witness
 #print axioms MLSFormal.OccupiedGeometry.gap_squared_symmetry
 #print axioms MLSFormal.OccupiedGeometry.translation
 #print axioms MLSFormal.OccupiedGeometry.similarity
