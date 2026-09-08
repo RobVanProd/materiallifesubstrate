@@ -245,4 +245,3 @@ def replay(directory):
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('directory',type=Path)
     a=p.parse_args();replay(a.directory)
-
