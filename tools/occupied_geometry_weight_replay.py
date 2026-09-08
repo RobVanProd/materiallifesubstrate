@@ -110,9 +110,12 @@ def polynomial_at(c,u):
     ns=(s0**3,3*s0*s0*s1,3*s0*s1*s1,s1**3)
     bp=[Q(1)];vp=[Q(1)]
     for _ in range(12):bp.append(bp[-1]*b);vp.append(vp[-1]*v)
-    return sum(BETA[m]*comb(m,j)*bp[m-j]*vp[j]*ns[l]
-               for m in range(13) for j in range(m+1)
-               for l in range(min(3,12-m-j)+1))
+    # Exact rational regrouping of the direct binomial polynomial. This is
+    # still independent of the materializer's coefficient recurrence; summing
+    # the four numerator terms once avoids redundant large-rational products.
+    numerator_prefix=[sum(ns[:k+1]) for k in range(4)]
+    return sum(BETA[m]*comb(m,j)*bp[m-j]*vp[j]*numerator_prefix[min(3,12-m-j)]
+               for m in range(13) for j in range(min(m,12-m)+1))
 
 
 @lru_cache(maxsize=32768)

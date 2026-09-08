@@ -9,6 +9,7 @@ import occupied_geometry_input as gen
 import occupied_geometry_input_check as independent
 import occupied_geometry_weights as weights
 import occupied_geometry_weight_inventory as inventory
+import occupied_geometry_weight_replay as weight_replay
 from occupied_geometry_incidence_check import facet_components
 
 
@@ -93,6 +94,7 @@ class InputContract(unittest.TestCase):
                     for m in range(13) for j in range(m+1)
                     for l in range(min(3,12-m-j)+1))
                 self.assertEqual(weights.polynomial_at(c,u),old)
+                self.assertEqual(weight_replay.polynomial_at(c,u),old)
 
     def test_exact_monomial_rule(self):
         self.assertEqual(weights.rule_check(),560)
