@@ -90,12 +90,73 @@ Measure internal holes as boundary, not just the outer silhouette. This candidat
 tests this registered sampling/refinement construction, not every DEM ontology.
 
 **B — explicit conforming material parcels (I2).** Occupancy is the union of
-oriented, non-overlapping tetrahedral cells with shared vertex/facet incidence.
-Boundary facets have exactly one incident cell; internal facets cancel. Reject
-inverted/zero-volume cells, duplicate cells, invalid incidence and interior
-overlap. Refine shared facets conformingly; never let two copies of a shared
-vertex evolve independently. Candidate input contains only vertices, cells,
-weights and stable IDs, not analytic shape names or object grouping.
+oriented tetrahedral cells with shared vertex/facet incidence. A material complex
+is a maximal connected component of B's own tetrahedral incidence graph, with
+adjacency only through a shared full triangular facet. Shared vertices or edges
+alone do not join complexes. No semantic object/body label supplies this graph.
+Within each complex, reject inverted/zero-volume cells, duplicate cells, invalid
+incidence, gaps in required conforming incidence, and positive-volume interior
+overlap between distinct cells at every registered time. Refine shared facets
+conformingly; never let two copies of a shared vertex evolve independently.
+Candidate input contains only vertices, cells, weights and stable IDs, not
+analytic shape names or object grouping.
+
+Component boundary facets have exactly one incident cell; internal facets cancel.
+Such a component boundary facet is not necessarily an exterior boundary of the
+occupied union: the cross-complex collision rule below remains mandatory.
+
+### Pre-data validity-scope amendment: prescribed cross-complex collision
+
+This amendment preserves the exact input-gate audit introduced at
+`03e0d3971643541d2b9459ad767df07aec7a2df4`
+and the subsequent formatting-only head
+`1942e62a5d9b18a0b40aa1a110a77a22db9eedf6`. It is authorized and frozen before
+any A/B/C candidate evaluation or complete input root seal. It does not erase
+or reinterpret that audit as a candidate result.
+
+The former unqualified global non-overlap rule conflicted with mandatory
+fixture 5: the prescribed two-sphere motion continues through time 2, after
+analytical first contact at time 1. The preserved level-0 exact witness places
+one rational point strictly inside cells 60 and 83 from different complexes at
+time 2. Each individual complex remains valid under its rigid translation.
+
+Overlap between different material complexes is not automatically a mesh-input
+validity failure. Specifically for the registered moving two-sphere collision
+benchmark (including its registered transforms and refinements):
+
+- For `t < 1`, the distinct complexes must remain disjoint.
+- At `t = 1`, touching is the analytical contact condition.
+- For `t > 1`, cross-complex penetration is intentional prescribed geometry and
+  remains in the benchmark through `t = 2`.
+
+These analytical conditions do not replace certification for B's actual straight
+tetrahedra, C's level set, or A's sphere union. Each candidate still answers its
+registered geometry/CCD questions against the independent oracle. This exception
+does not permit arbitrary overlapping components in unrelated static fixtures,
+nor does it relax any within-complex validity requirement.
+
+**B occupancy remains the union of all tetrahedral cells.** Overlapping volume
+between complexes must not be double-counted. Surfaces lying inside the occupied
+union are not exterior boundary merely because they are boundary facets of one
+component. Component decomposition is available for validity and intersection
+reasoning, not as permission to replace union volume by a sum or union boundary
+by an unfiltered concatenation. Components may not be independently evaluated
+in a way that drops cross-complex interactions from any required observable.
+
+Retain every registered post-contact volume, boundary, normal, separation,
+closest-set, overlap-classification, transform/refinement/covariance and swept
+query. Zero separation alone does not distinguish touching from penetration.
+Do not clip the trajectory, stop at first contact, delete post-contact rows or
+relabel them expected-invalid controls. The graph is derived from frozen
+incidence; geometric proximity or penetration does not create new incidence.
+
+This is an offline prescribed collision benchmark, not a physical contact
+simulation or permission for authoritative MLS matter to interpenetrate. No
+contact forces, state changes, candidate arithmetic changes, new labels, changed
+fixtures, levels, query inventory, thresholds, resource ceilings, information
+tiers or dispositions are introduced. Candidate C's predeclared finest
+cube/slab resource-inconclusive rows are unchanged. All other preregistration
+and addendum requirements remain in force. **NO_PROMOTION remains.**
 
 Box/slab/U-domain fixtures use conforming tetrahedral subdivisions. Spherical
 fixtures use the conforming volumetric angular-and-radial refinement specified
