@@ -42,7 +42,12 @@ two's-complement little-endian. Counts and IDs are U64, zero reserved for absent
 Large signed integers use U8 sign (0 nonnegative, 1 negative), U32 byte count,
 then shortest little-endian magnitude; zero is sign=0/count=0. No leading zero
 limb, negative zero, redundant padding or host-native structs. Rational Q is
-signed numerator followed by positive denominator magnitude; gcd=1, zero=0/1.
+`SignedBigInt numerator || U32 denominator_byte_count || denominator_bytes`.
+The denominator byte count is >=1, little-endian; denominator_bytes is the
+shortest little-endian magnitude of a strictly positive denominator, with no
+zero most-significant byte. No denominator sign byte is present.
+Require gcd(abs(numerator),denominator)=1 and canonical zero 0/1. Thus zero Q
+is exactly the ten hexadecimal bytes `00 00 00 00 00 01 00 00 00 01`.
 Coordinates and weights are exact Q, not decimal strings parsed to floats.
 
 Every payload begins the 8 bytes `MLSOMG01`, U32 schema=1, U32 kind, U64 record
@@ -302,10 +307,13 @@ Finite maxima never replace global coverings.
   all box corners/edge midpoints, sphere centre (entire spherical closest set),
   and U reentrant edges/vertices. Report normal cone/nonunique sets where needed.
 - For two spheres, query global inter-component separation/closest sets and the
-  line-of-centres witness at the midpoint. Query regions are the two open half
+  line-of-centres witness at the midpoint. Query regions are the two closed half
   spaces through that midpoint with normals +-e_x, transformed with the fixture.
   They restrict the observable only: all candidates reconstruct their full input
   occupancy first. A connected bridge across the separator is not discarded.
+  The separator belongs to both regions. In particular, the analytical t=1
+  touching point remains in both restricted closest sets, not an unattained
+  infimum. This uses the same <= inequality as the region byte contract.
 - For U, query facing boundaries within y in [0,3/4], z in [-1/8,1/8], x in
   [-1,0] and [0,1]. Transform these closed query windows with A(t)/the variant.
   Include their entire closest sets, not only one sampled point pair. This does
@@ -415,6 +423,30 @@ validity merely by having generated the input. No runtime work moves into the
 input generator except the explicit nonadaptive fixture construction and weight/
 descriptor certification prescribed here. Input preparation stays under the
 unchanged memory/time/evidence ceilings. Exhaustion leaves a gate incomplete.
+
+### Pre-materialization closure and accepted C resource consequence
+
+Preserve addendum commit `9588e1ed2a2ffe36c02f149af2d0f72c7b1a649f` in history.
+The explicit denominator length and consistently closed sphere-pair selectors
+above are pre-materialization semantic errata. No candidate, physical fixture,
+budget, oracle or disposition is changed. No input materialization or candidate
+measurement has occurred at this correction.
+
+Keep the existing resource-accounting architecture unchanged. At cube/slab k=4,
+C has 12,582,912 samples. Even one all-sample interval-field evaluation requires
+at least 12,582,912 primitive contributions, exceeding the unchanged 4,194,304
+runtime certification-work cap. Accept this predetermined resource consequence
+explicitly rather than exempting a sum, raising the cap, or adding an unregistered
+accelerated/certified aggregation scheme.
+
+These C rows are resource-inconclusive, not resolved geometry failures. C cannot
+qualify for full-inventory positive selection under this protocol, and its
+inconclusiveness cannot serve as the required resolved stateless failure for
+`explicit_material_domain_state_required_before_contact`. Other resolved
+candidate findings remain reportable under the governing disposition rules;
+do not turn this administrative/resource limitation into a physical necessity
+claim or silently omit the mandatory rows. This consequence is known by exact
+input-count arithmetic before data, not inferred from a candidate execution.
 
 ## 9. Oracle accuracy and identities
 
