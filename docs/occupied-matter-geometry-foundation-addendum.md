@@ -424,6 +424,16 @@ input generator except the explicit nonadaptive fixture construction and weight/
 descriptor certification prescribed here. Input preparation stays under the
 unchanged memory/time/evidence ceilings. Exhaustion leaves a gate incomplete.
 
+The governing pre-data proof-carrying Cartesian validity amendment introduces
+one explicit exception to the preceding paragraph: independently verified,
+root-bound structural validity of B's registered regular cube/slab template may
+be established before data and relied upon at runtime. Its creation/verification
+costs are reported as pre-data certification under the unchanged memory/time/
+evidence ceilings. No sphere/U/moving-complex validity, geometry query answer,
+adaptive structure or runtime search is exempt. Runtime geometry work retains
+the same 2^22 counter. The candidate-input root is the candidate-manifest
+digest; the final controller root authenticates both it and its certificate.
+
 ### Pre-materialization closure and accepted C resource consequence
 
 Preserve addendum commit `9588e1ed2a2ffe36c02f149af2d0f72c7b1a649f` in history.

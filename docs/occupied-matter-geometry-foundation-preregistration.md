@@ -400,6 +400,54 @@ move certification searches into the frozen input. Candidate-visible and
 oracle-only artifacts remain physically separate. Both inventories must be
 closed before any candidate output is computed.
 
+### Pre-data proof-carrying Cartesian validity amendment
+
+Preserve the runtime-validity escalation at
+`7bb3eeaee9ec1d32e9438ed99ddce88e1cf1f373` and every earlier protocol/attempt.
+This amendment is authorized before any candidate evaluation or complete input
+root seal. It changes a validity trust boundary only: no physical geometry,
+candidate definition, fixture, precision, query, threshold, disposition or
+resource ceiling changes.
+
+Only B's registered regular Cartesian cube/slab six-tetrahedron construction
+may carry an independently verified structural validity precondition. Establish
+positive orientation, disjoint interiors, complete unit-cell coverage and
+conforming shared faces for the fixed template, and establish that replication
+on the registered Cartesian lattice preserves these properties globally.
+Prove/check preservation by the registered proper rotations, translations and
+positive uniform scales. Check canonical order/ID changes without changing the
+underlying incidence. This exception does not cover sphere, U, moving-complex
+or arbitrary/non-template mesh validity.
+
+The certificate must bind the exact frozen candidate-input root, numerical grid
+dimensions, template version and transform, including the fully decoded stream
+identities. To avoid circular hashing, the candidate-manifest digest defines
+the candidate-input root; the final controller input root binds both that
+manifest and the certificate. No certificate may contain or authorize use of
+oracle shape labels, analytical geometry answers, query results or adaptive
+geometry. Numerical lattice facts already represented by B's exact vertices
+and incidence are permitted proof premises, not a new occupancy law.
+
+An independent verifier, not the fixture generator alone, must reproduce/check
+the certificate before sealing. Creation and verification are pre-data input
+certification with explicit work/count receipts and the unchanged 2 GiB memory,
+30-minute time and 8 GiB evidence ceilings. At runtime B may rely on this
+authenticated structural validity precondition instead of redundantly checking
+each tetrahedron. This narrowly supersedes the prohibition on input validation
+establishing candidate validity; all other input-validation rules remain.
+
+All actual geometry work, including union evaluation, buried-face filtering,
+overlap, boundary, Hausdorff, normals, closest sets and CCD, remains charged to
+the unchanged 2^22 runtime counter. This certificate supplies no precomputed
+geometry answer or runtime search structure. Malformed-input mutations must
+invalidate the root/certificate binding or fail registered validity controls;
+there is no fallback to trusting a familiar grid name or nominal transform.
+
+If the certificate cannot be established under these restrictions, classify
+the affected B rows resource-inconclusive and stop the lab as inconclusive;
+do not consume the full candidate run budget on a predetermined unselectable
+inventory. **NO_PROMOTION remains.**
+
 This amendment changes no spatial level, tetrahedralization, candidate definition,
 geometry budget, oracle width, disposition or fixture. The certification-work
 cap remains exactly 2^22. No other resource ceiling is raised. The data gate
