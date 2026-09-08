@@ -5,6 +5,14 @@ final disposition. The input root remains
 `8ec8ba42956f7664c66de26ce2f760be650cba76ef7fe0820d92396206e84516`.
 NO_PROMOTION remains.
 
+- `2b34d80`: the first Cartesian full-query driver incorrectly required query
+  storage order to equal ID order. It passed the first thirty cube variants but
+  rejected the frozen reversed-order stream before answering it. The attempt
+  is preserved in `build/occupied-geometry-b-query-batch-k0-scratch-v1` and its
+  partial evidence directory. The correction checks unique bounded IDs and
+  canonicalizes outputs by ID; the independent reader joins by explicit ID.
+  No geometry, query input, numerical answer or protocol changes.
+
 - `701862f`: the first isolated C startup lacked gmpy2's package-metadata mount.
   It failed during import, before geometry execution. The failed directory is
   `build/occupied-geometry-candidate-c-pilot-v1`. Adding only the pinned metadata

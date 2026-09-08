@@ -28,10 +28,11 @@ def run(view,capability):
     work.charge('occupied_volume_evaluation')
     volume=g.mpq(1)
     for lo,hi in zip(mesh['low'],mesh['high']): volume*=hi-lo
-    reader=Reader(view/'8.bin',8);previous=None;records=[]
+    reader=Reader(view/'8.bin',8);seen=set();records=[]
     for index in range(reader.count):
         ident=reader.uint(8);op=reader.uint(1);size=reader.uint(8)
-        start=reader.f.tell();assert ident==index+1 and op in (1,2,3,4,7)
+        start=reader.f.tell();assert 1<=ident<=reader.count and ident not in seen and op in (1,2,3,4,7)
+        seen.add(ident)
         point=tuple(reader.q() for _ in range(3)) if op in (3,4,7) else None
         time=reader.q();assert time==0
         assert reader.f.tell()-start==size
@@ -43,6 +44,7 @@ def run(view,capability):
         else: result=point_query(mesh,point,work)
         records.append({'id':ident,'operation':op,'result':result})
     reader.end()
+    records.sort(key=lambda row:row['id'])
     raw=json.dumps(encode(records),sort_keys=True,separators=(',',':')).encode()
     return encode(dict(candidate='B',status='CARTESIAN_QUERY_STREAM',
         complete_row=False,complete_lab=False,query_inventory_complete=True,

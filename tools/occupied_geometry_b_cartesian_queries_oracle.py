@@ -42,9 +42,13 @@ def check(record,view,fixture,variant):
         return dict(member=all(-e<=x<=e for e,x in zip(extent,u)),
                     distance_squared=str(best),closest=witnesses)
     r=Reader(view/'8.bin',8);assert len(record['queries'])==r.count
-    for index,row in enumerate(record['queries']):
+    assert [row['id'] for row in record['queries']]==list(range(1,r.count+1))
+    seen=set()
+    for index in range(r.count):
         ident=r.u(8);op=r.u(1);args=parse(op,r.read(r.u(8)))
-        assert ident==index+1==row['id'] and op==row['operation'];counts[op]+=1
+        assert 1<=ident<=r.count and ident not in seen;seen.add(ident)
+        row=record['queries'][ident-1]
+        assert ident==row['id'] and op==row['operation'];counts[op]+=1
         assert args[-1]==0
         if op==1:want={'volume':[str(domain['volume'])]*2}
         elif op==2:want={'boundary_reference':'exact-oriented-triangles'}
