@@ -4,6 +4,9 @@ import io
 import itertools
 from math import comb
 import unittest
+from pathlib import Path
+import struct
+import tempfile
 
 import occupied_geometry_input as gen
 import occupied_geometry_input_check as independent
@@ -12,6 +15,7 @@ import occupied_geometry_weight_inventory as inventory
 import occupied_geometry_weight_replay as weight_replay
 from occupied_geometry_incidence_check import facet_components
 from occupied_geometry_query_check import registered_regions, registered_transform
+from occupied_geometry_transform_decode import expanded
 
 
 def decode(data):
@@ -21,6 +25,27 @@ def decode(data):
 
 
 class InputContract(unittest.TestCase):
+    def test_exact_global_transform_decode(self):
+        with tempfile.TemporaryDirectory(prefix='mls-geometry-wire-') as tmp:
+            path=Path(tmp)/'samples.bin'
+            state=(Q(1,201),Q(-2,7),Q(3,11))
+            path.write_bytes(gen.header(5,1)+struct.pack('<Q',17)+
+                b''.join(gen.rational(q) for q in (*state,Q(13,19),Q(1))))
+            for ordinal in range(30):
+                m,b,v,scale,order=registered_transform(ordinal)
+                out=b''.join(expanded(path,(ordinal+1,m,b,v,scale)))
+                reader=independent.Reader.__new__(independent.Reader)
+                reader.f=io.BytesIO(out)
+                self.assertEqual(reader.read(24),gen.header(5,1))
+                self.assertEqual(reader.u(8),17)
+                position=tuple(reader.q() for _ in range(3))
+                self.assertEqual(position,tuple(b[i]+scale*sum(m[i][j]*state[j]
+                                 for j in range(3)) for i in range(3)))
+                self.assertEqual(reader.q(),Q(13,19)*scale**3)
+                self.assertEqual(reader.q(),1)
+                reader.end()
+                if ordinal==0:self.assertEqual(out,path.read_bytes())
+
     def test_frozen_transform_and_moving_region_contract(self):
         self.assertEqual(len({registered_transform(i) for i in range(33)}),33)
         for t in (Q(0),Q(1),Q(2)):

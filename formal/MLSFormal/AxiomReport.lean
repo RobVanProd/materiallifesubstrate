@@ -26,6 +26,21 @@ import MLSFormal.BoundedFractionalPhaseState
 import MLSFormal.BoundedPhaseTailCertification
 import MLSFormal.CorrelationAwareTailCertification
 import MLSFormal.DefectRecurrenceTailCertification
+import MLSFormal.OccupiedMatterGeometryFoundation
+
+#print axioms MLSFormal.OccupiedGeometry.missing_information
+#print axioms MLSFormal.OccupiedGeometry.gap_squared_symmetry
+#print axioms MLSFormal.OccupiedGeometry.translation
+#print axioms MLSFormal.OccupiedGeometry.similarity
+#print axioms MLSFormal.OccupiedGeometry.rotation
+#print axioms MLSFormal.OccupiedGeometry.direction_antisymmetry
+#print axioms MLSFormal.OccupiedGeometry.swept_quadratic
+#print axioms MLSFormal.OccupiedGeometry.convex_vertex_minimum
+#print axioms MLSFormal.OccupiedGeometry.left_endpoint_minimum
+#print axioms MLSFormal.OccupiedGeometry.swept_minimum_criterion
+#print axioms MLSFormal.OccupiedGeometry.weight_partition
+#print axioms MLSFormal.OccupiedGeometry.positive_segment_partition
+#print axioms MLSFormal.OccupiedGeometry.monotone_domain_injective
 
 #print axioms MLSFormal.defectTail_identity
 #print axioms MLSFormal.defectTail_enclosure_step
