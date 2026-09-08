@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 
-def run(view,output,volume=False,candidate='C',package=None,fixture=None,level=None,variant=None,queries=False,mesh_validity=False):
+def run(view,output,volume=False,candidate='C',package=None,fixture=None,level=None,variant=None,queries=False,mesh_validity=False,static_mesh=False):
     assert not output.exists();output.mkdir(parents=True)
     base=Path(sys.base_prefix).resolve()
     site=Path(importlib.util.find_spec('gmpy2').origin).parent.parent
@@ -21,10 +21,11 @@ def run(view,output,volume=False,candidate='C',package=None,fixture=None,level=N
         assert volume
         sources=('occupied_geometry_candidate_a_volume_pilot.py','occupied_geometry_runtime_wire.py','occupied_geometry_a_volume.py')
     if candidate=='B':
-        if mesh_validity:
+        if mesh_validity or static_mesh:
             assert not queries
             sources=('occupied_geometry_candidate_b_validity_pilot.py','occupied_geometry_runtime_wire.py',
                      'occupied_geometry_b_mesh_validity.py','occupied_geometry_exact_primitives.py')
+            if static_mesh:sources=('occupied_geometry_candidate_b_static_pilot.py',)+sources[1:]+('occupied_geometry_b_static_queries.py',)
         else:
             assert volume and package is not None
             from occupied_geometry_cartesian_capability import issue
@@ -44,7 +45,7 @@ def run(view,output,volume=False,candidate='C',package=None,fixture=None,level=N
         '--setenv','PYTHONPATH','/code:/deps',
         '--setenv','PYTHONDONTWRITEBYTECODE','1','--chdir','/input']
     for name in sources:command+=['--ro-bind',str(code/name),'/code/'+name]
-    if candidate=='B' and not mesh_validity:command+=['--ro-bind',str((output/'capability.json').resolve()),'/precondition/capability.json']
+    if candidate=='B' and not (mesh_validity or static_mesh):command+=['--ro-bind',str((output/'capability.json').resolve()),'/precondition/capability.json']
     probe="import os; assert not os.path.exists('/oracle'); assert not os.path.exists('/control'); assert not os.path.exists('/home/lsd/Documents/ChatGPT/MLS'); print('oracle/control/repository unavailable')"
     checked=subprocess.run(command+['/py/bin/python3.13','-c',probe],capture_output=True,timeout=30)
     (output/'isolation-probe.stdout').write_bytes(checked.stdout)
@@ -53,7 +54,7 @@ def run(view,output,volume=False,candidate='C',package=None,fixture=None,level=N
     streams=[]
     for index in range(2):
         args=['/py/bin/python3.13','/code/'+sources[0],'/input']
-        if candidate=='B' and not mesh_validity:args+=['/precondition/capability.json']
+        if candidate=='B' and not (mesh_validity or static_mesh):args+=['/precondition/capability.json']
         result=subprocess.run(command+args,
                               capture_output=True,timeout=1800)
         (output/f'twin-{index}.json').write_bytes(result.stdout)
@@ -77,7 +78,8 @@ if __name__=='__main__':
     p.add_argument('--volume',action='store_true')
     p.add_argument('--queries',action='store_true')
     p.add_argument('--mesh-validity',action='store_true')
+    p.add_argument('--static-mesh',action='store_true')
     p.add_argument('--candidate',choices=('A','B','C'),default='C')
     p.add_argument('--package',type=Path);p.add_argument('--fixture',type=int)
     p.add_argument('--level',type=int);p.add_argument('--variant',type=int)
-    a=p.parse_args();run(a.view,a.output,a.volume,a.candidate,a.package,a.fixture,a.level,a.variant,a.queries,a.mesh_validity)
+    a=p.parse_args();run(a.view,a.output,a.volume,a.candidate,a.package,a.fixture,a.level,a.variant,a.queries,a.mesh_validity,a.static_mesh)
