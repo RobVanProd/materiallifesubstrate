@@ -54,16 +54,15 @@ def registered_regions(fixture, time):
         return (((Q(-1),Q(0),Q(0),Q(0),Q(0)),),
                 ((Q(1),Q(0),Q(0),Q(0),Q(0)),))
     assert fixture == 7
-    a = 1 - time / 4
     def box(bounds):
         result = []
         for axis, (low, high) in enumerate(bounds):
             for sign, d in ((-1, -low), (1, high)):
                 n = [Q(0)] * 3
                 n[axis] = Q(sign)
-                result.append((*n, d, Q(0)))
+                result.append((*n, d, -d/4 if axis == 0 else Q(0)))
         return tuple(sorted(result))
-    return tuple(box(((left*a,right*a),(Q(0),Q(3,4)),(Q(-1,8),Q(1,8))))
+    return tuple(box(((left,right),(Q(0),Q(3,4)),(Q(-1,8),Q(1,8))))
                  for left,right in ((Q(-1),Q(0)),(Q(0),Q(1))))
 
 

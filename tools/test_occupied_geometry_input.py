@@ -11,6 +11,7 @@ import occupied_geometry_weights as weights
 import occupied_geometry_weight_inventory as inventory
 import occupied_geometry_weight_replay as weight_replay
 from occupied_geometry_incidence_check import facet_components
+from occupied_geometry_query_check import registered_regions, registered_transform
 
 
 def decode(data):
@@ -20,6 +21,16 @@ def decode(data):
 
 
 class InputContract(unittest.TestCase):
+    def test_frozen_transform_and_moving_region_contract(self):
+        self.assertEqual(len({registered_transform(i) for i in range(33)}),33)
+        for t in (Q(0),Q(1),Q(2)):
+            for region, bounds in zip(registered_regions(7,t),((-1,0),(0,1))):
+                xplanes=[p for p in region if p[0]]
+                self.assertEqual([p[3]+t*p[4] for p in xplanes],
+                                 [-Q(bounds[0])*(1-t/4),Q(bounds[1])*(1-t/4)])
+        for region in registered_regions(5,Q(1)):
+            self.assertTrue(all(p[3]+p[4]==0 for p in region))
+
     def test_full_facet_connectivity_not_vertex_or_edge_connectivity(self):
         self.assertEqual(facet_components({1:(1,2,3,4),2:(1,2,3,5)}),((1,2),))
         self.assertEqual(facet_components({1:(1,2,3,4),2:(1,2,5,6)}),((1,),(2,)))
