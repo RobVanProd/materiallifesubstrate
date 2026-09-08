@@ -450,6 +450,10 @@ void require_packet_invariants(
 class CanonicalCheckpointCodec final {
 public:
     [[nodiscard]] static std::vector<std::uint8_t> serialize(const World& world) {
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+        if (world.config_.material_phase_enabled || world.material_phase_)
+            throw std::logic_error("use the complete material-phase checkpoint");
+#endif
 #ifdef MLS_RESEARCH_WORLD_MECHANICS
         if (world.config_.research_mechanics_enabled || world.research_mechanics_) {
             throw std::logic_error("use the complete research World checkpoint");

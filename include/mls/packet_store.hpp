@@ -10,6 +10,9 @@
 #include <map>
 #include <optional>
 #include <vector>
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+#include <array>
+#endif
 
 namespace mls {
 
@@ -25,6 +28,21 @@ struct PacketHandle final {
 
     [[nodiscard]] constexpr auto operator<=>(const PacketHandle&) const noexcept = default;
 };
+
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+// A material packet with one B96 phase authority; no legacy x/p/remainder.
+struct MaterialPhasePacket final {
+    PacketHandle handle{};
+    std::uint64_t mechanics_id{};
+    CompoundMixture composition{};
+    ElementInventory elements{};
+    Mass mass{};
+    HeatCapacity heat_capacity{};
+    Energy structural_energy{}, stored_energy{}, thermal_energy{};
+    std::array<std::uint8_t, 102> phase{};
+    [[nodiscard]] bool operator==(const MaterialPhasePacket&) const = default;
+};
+#endif
 
 enum class PacketEventKind : std::uint8_t {
     created,
@@ -115,7 +133,13 @@ public:
 
     [[nodiscard]] bool contains(PacketHandle packet) const noexcept;
     [[nodiscard]] std::size_t alive_count() const noexcept { return alive_count_; }
-    [[nodiscard]] std::size_t slot_count() const noexcept { return ids_.size(); }
+    [[nodiscard]] std::size_t slot_count() const noexcept {
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+        return ids_.size() + material_phase_.size();
+#else
+        return ids_.size();
+#endif
+    }
     [[nodiscard]] Scalar kinetic_energy_scale_denominator() const noexcept {
         return kinetic_energy_scale_denominator_;
     }
@@ -125,6 +149,10 @@ public:
     [[nodiscard]] const std::vector<PacketEvent>& history(PacketHandle packet) const;
     // Tombstone-safe audit access. PacketId is not accepted by physics methods.
     [[nodiscard]] const std::vector<PacketEvent>& debug_history(PacketId packet) const;
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+    [[nodiscard]] std::vector<MaterialPhasePacket> material_phase_packets() const;
+    [[nodiscard]] MaterialPhasePacket material_phase_packet(PacketHandle packet) const;
+#endif
 
 private:
     friend class World;
@@ -202,6 +230,10 @@ private:
     std::vector<Energy> stored_energies_;
     std::vector<Energy> thermal_energies_;
     std::vector<std::vector<PacketEvent>> histories_;
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+    // Shares the persistent ID allocator, but never allocates legacy phase lanes.
+    std::map<PacketId, MaterialPhasePacket> material_phase_;
+#endif
 };
 
 } // namespace mls

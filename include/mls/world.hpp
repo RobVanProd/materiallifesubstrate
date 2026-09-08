@@ -14,6 +14,9 @@
 #include <optional>
 #include <span>
 #endif
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+#include "mls/world_material_phase_lab.hpp"
+#endif
 
 #ifndef MLS_AUDIT_DEFAULT
 #define MLS_AUDIT_DEFAULT 1
@@ -32,6 +35,9 @@ struct WorldConfig final {
     bool audit_after_each_operation{MLS_AUDIT_DEFAULT != 0};
 #ifdef MLS_RESEARCH_WORLD_MECHANICS
     bool research_mechanics_enabled{false};
+#endif
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+    bool material_phase_enabled{false};
 #endif
 };
 
@@ -56,8 +62,19 @@ public:
     [[nodiscard]] const ElementCatalog& element_catalog() const noexcept { return elements_; }
     [[nodiscard]] const CompoundRegistry& compound_registry() const noexcept { return compounds_; }
     [[nodiscard]] const PacketStore& packets() const noexcept { return packets_; }
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+    [[nodiscard]] const SparseVoxelGrid& grid() const {
+        if (material_phase_) throw std::logic_error("legacy grid cannot represent B96 material");
+        return grid_;
+    }
+    [[nodiscard]] const ConservationLedger& ledger() const {
+        if (material_phase_) throw std::logic_error("use separate exact material accounting");
+        return ledger_;
+    }
+#else
     [[nodiscard]] const SparseVoxelGrid& grid() const noexcept { return grid_; }
     [[nodiscard]] const ConservationLedger& ledger() const noexcept { return ledger_; }
+#endif
 
     // Scenario/open-boundary ports only: each call is entered in the unified
     // ledger. These controls are not part of the material-agent interaction ABI.
@@ -94,6 +111,16 @@ public:
     // packet history, and the disposable voxel index.
     [[nodiscard]] std::uint64_t physical_state_hash() const;
 
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+    void attach_material_phase(const ResearchMechanicsInput&, std::vector<MaterialPhaseSeed>);
+    [[nodiscard]] ResearchMechanicsSnapshot material_phase_mechanics() const;
+    [[nodiscard]] std::vector<MaterialPhaseBinding> material_phase_binding() const;
+    [[nodiscard]] MaterialOnlyTotals material_phase_totals() const;
+    [[nodiscard]] bool material_phase_audit() const;
+    [[nodiscard]] std::vector<std::uint8_t> material_phase_checkpoint() const;
+    [[nodiscard]] static World restore_material_phase_checkpoint(std::span<const std::uint8_t>);
+#endif
+
 #ifdef MLS_RESEARCH_WORLD_MECHANICS
     void attach_research_mechanics(const ResearchMechanicsInput& input);
     [[nodiscard]] ResearchMechanicsSnapshot research_mechanics() const;
@@ -109,6 +136,15 @@ private:
 
     void rebuild_and_verify();
     void require_physical_support(PacketHandle first, PacketHandle second) const;
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+    void step_material_phase(Tick count);
+    void transfer_material_phase_heat(PacketHandle, PacketHandle, Energy);
+    void convert_material_phase_energy(PacketHandle, EnergyChannel, EnergyChannel, Energy);
+    void validate_material_phase() const;
+    [[nodiscard]] ResearchMechanicsInput material_phase_request() const;
+    [[nodiscard]] std::uint64_t material_phase_hash() const;
+    std::optional<MaterialPhaseContext> material_phase_;
+#endif
 #ifdef MLS_RESEARCH_WORLD_MECHANICS
     void step_research_mechanics(Tick count);
     std::optional<ResearchMechanicsContext> research_mechanics_;

@@ -166,6 +166,9 @@ std::string research_kernel_request(const ResearchMechanicsInput &r,
   return out.str();
 }
 void World::attach_research_mechanics(const ResearchMechanicsInput &input) {
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+  need(!config_.material_phase_enabled, "material phase owns the only mechanics state");
+#endif
   need(config_.research_mechanics_enabled, "research runtime enable required");
   need(!research_mechanics_, "research mechanics already attached");
   need(config_.physical_timestep.raw() == input.dt &&

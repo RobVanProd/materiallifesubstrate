@@ -143,6 +143,10 @@ void PacketStore::erase(PacketHandle packet, Tick tick) {
 }
 
 bool PacketStore::contains(PacketHandle packet) const noexcept {
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+    if (const auto p = material_phase_.find(packet.id); p != material_phase_.end())
+        return p->second.handle == packet;
+#endif
     const auto found = index_by_id_.find(packet.id);
     return found != index_by_id_.end() && alive_[found->second] &&
            generations_[found->second] == packet.generation;
@@ -179,6 +183,10 @@ PacketSnapshot PacketStore::snapshot(PacketHandle packet) const {
 }
 
 std::vector<PacketSnapshot> PacketStore::snapshots() const {
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+    if (!material_phase_.empty())
+        throw std::logic_error("legacy phase snapshots cannot represent B96 material");
+#endif
     std::vector<PacketSnapshot> result;
     result.reserve(alive_count_);
     for (std::size_t index = 0; index < ids_.size(); ++index) {

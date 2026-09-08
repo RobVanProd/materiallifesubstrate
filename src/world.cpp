@@ -101,6 +101,9 @@ World::World(ElementCatalog elements, CompoundRegistry compounds, WorldConfig co
 }
 
 PacketHandle World::introduce_material_from_boundary(const MaterialSeed& seed) {
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+    if (config_.material_phase_enabled) throw std::logic_error("fixed material-phase inventory");
+#endif
     if (seed.composition.empty()) {
         throw std::invalid_argument("introduced material must contain compounds");
     }
@@ -145,6 +148,9 @@ PacketHandle World::introduce_material_from_boundary(const MaterialSeed& seed) {
 }
 
 void World::remove_material_to_boundary(PacketHandle packet) {
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+    if (material_phase_) throw std::logic_error("material-phase deletion forbidden");
+#endif
     auto candidate = *this;
     const auto departing = totals_for(candidate.packets_.snapshot(packet));
     candidate.ledger_.record_boundary_egress(departing);
@@ -162,6 +168,9 @@ void World::require_physical_support(PacketHandle first, PacketHandle second) co
 }
 
 void World::transfer_heat(PacketHandle from, PacketHandle to, Energy amount) {
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+    if (material_phase_) { transfer_material_phase_heat(from, to, amount); return; }
+#endif
     auto candidate = *this;
     candidate.require_physical_support(from, to);
     candidate.packets_.transfer_heat(from, to, amount, candidate.tick_);
@@ -171,6 +180,9 @@ void World::transfer_heat(PacketHandle from, PacketHandle to, Energy amount) {
 
 void World::convert_energy(
     PacketHandle packet, EnergyChannel from, EnergyChannel to, Energy amount) {
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+    if (material_phase_) { convert_material_phase_energy(packet, from, to, amount); return; }
+#endif
     auto candidate = *this;
     candidate.packets_.convert_energy(packet, from, to, amount, candidate.tick_);
     candidate.rebuild_and_verify();
@@ -260,6 +272,9 @@ void World::apply_point_impulse_from_boundary(PacketHandle packet, Momentum3 imp
 }
 
 void World::step(Tick count) {
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+    if (config_.material_phase_enabled) { step_material_phase(count); return; }
+#endif
 #ifdef MLS_RESEARCH_WORLD_MECHANICS
     if (config_.research_mechanics_enabled) {
         step_research_mechanics(count);
@@ -298,11 +313,17 @@ void World::step(Tick count) {
 }
 
 void World::establish_current_state_as_baseline() {
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+    if (material_phase_) throw std::logic_error("cannot reset unified material ledger");
+#endif
     grid_.rebuild(packets_);
     ledger_.establish_baseline(authoritative_totals(packets_));
 }
 
 ExtensiveTotals World::totals() const {
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+    if (material_phase_) throw std::logic_error("B96 mechanics is not integer material accounting");
+#endif
 #ifdef MLS_RESEARCH_WORLD_MECHANICS
     if (research_mechanics_) {
         throw std::logic_error("research mechanics requires separate scientific accounting");
@@ -323,6 +344,9 @@ void World::rebuild_and_verify() {
 }
 
 std::uint64_t World::physical_state_hash() const {
+#ifdef MLS_RESEARCH_MATERIAL_PHASE
+    if (material_phase_) return material_phase_hash();
+#endif
     std::uint64_t hash = 14695981039346656037ULL;
 #ifdef MLS_RESEARCH_WORLD_MECHANICS
     if (config_.research_mechanics_enabled) {
