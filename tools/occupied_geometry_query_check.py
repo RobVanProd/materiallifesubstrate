@@ -14,6 +14,59 @@ from occupied_geometry_input_check import Reader,determinant
 
 def point(r):return tuple(r.q() for _ in range(3))
 def dot(a,b):return sum(x*y for x,y in zip(a,b))
+
+
+def registered_transform(ordinal):
+    """Reconstruct the fixed inventory without importing its writer."""
+    identity = tuple(tuple(Q(i == j) for j in range(3)) for i in range(3))
+    rotations = []
+    for perm in itertools.permutations(range(3)):
+        for signs in itertools.product((-1, 1), repeat=3):
+            m = tuple(tuple(Q(signs[i] if j == perm[i] else 0)
+                            for j in range(3)) for i in range(3))
+            if determinant(*m) == 1 and m != identity:
+                rotations.append(m)
+    rotations.insert(0, identity)
+    zero = (Q(0),) * 3
+    matrix, translation, boost, scale, order = identity, zero, zero, Q(1), 0
+    if ordinal < 24:
+        matrix = rotations[ordinal]
+    elif ordinal == 24:
+        translation = tuple(map(Q, (3, -2, 5)))
+    elif ordinal in (25, 26):
+        rz = ((Q(3,5),Q(-4,5),Q(0)),(Q(4,5),Q(3,5),Q(0)),(Q(0),Q(0),Q(1)))
+        rx = ((Q(1),Q(0),Q(0)),(Q(0),Q(3,5),Q(-4,5)),(Q(0),Q(4,5),Q(3,5)))
+        matrix = rz if ordinal == 25 else tuple(tuple(
+            sum(rx[i][k] * rz[k][j] for k in range(3)) for j in range(3)) for i in range(3))
+    elif ordinal in (27, 28):
+        scale = Q(1,2) if ordinal == 27 else Q(2)
+    elif ordinal == 29:
+        boost = (Q(1,4), Q(-1,2), Q(1,8))
+    elif ordinal in (30, 31, 32):
+        order = ordinal - 29
+    else:
+        raise ValueError('unregistered transform')
+    return matrix, translation, boost, scale, order
+
+
+def registered_regions(fixture, time):
+    if fixture in (4, 5):
+        return (((Q(-1),Q(0),Q(0),Q(0),Q(0)),),
+                ((Q(1),Q(0),Q(0),Q(0),Q(0)),))
+    assert fixture == 7
+    a = 1 - time / 4
+    def box(bounds):
+        result = []
+        for axis, (low, high) in enumerate(bounds):
+            for sign, d in ((-1, -low), (1, high)):
+                n = [Q(0)] * 3
+                n[axis] = Q(sign)
+                result.append((*n, d, Q(0)))
+        return tuple(sorted(result))
+    return tuple(box(((left*a,right*a),(Q(0),Q(3,4)),(Q(-1,8),Q(1,8))))
+                 for left,right in ((Q(-1),Q(0)),(Q(0),Q(1))))
+
+
 def region(r):
     planes=[tuple(r.q() for _ in range(5)) for _ in range(r.u(8))]
     assert planes==sorted(planes) and all(any(p[:3]) for p in planes)
@@ -123,6 +176,7 @@ def check(directory,fixture):
         tr=Reader(directory/'candidate'/f'transform-{ordinal:02}.bin',9)
         assert tr.count==1 and tr.u(8)==ordinal+1
         matrix=tuple(point(tr) for _ in range(3));translation=point(tr);boost=point(tr);scale=tr.q();order=tr.u(1);tr.end()
+        assert (matrix,translation,boost,scale,order)==registered_transform(ordinal),('registered transform',ordinal)
         assert determinant(*matrix)==1 and scale in (Q(1,2),Q(1),Q(2)) and order in range(4)
         assert all(dot(matrix[i],matrix[j])==(i==j) for i in range(3) for j in range(3))
         def inverse(p,t):
@@ -149,6 +203,8 @@ def check(directory,fixture):
         count=r.count;r.end();assert found==expected,('finite point inventory',fixture,ordinal)
         assert {v[0] for op,v in all_semantic if op==1}==set(times)
         assert {v[0] for op,v in all_semantic if op==2}==set(times)
+        expected_separations = {(5, (*registered_regions(fixture,t),t)) for t in times} if fixture in (4,5,7) else set()
+        assert {(op,v) for op,v in all_semantic if op==5}==expected_separations,('registered closed selectors',fixture,ordinal)
         if fixture in (5,6,7):
             assert {(v[1],v[2]) for op,v in all_semantic if op==6}=={(Q(0),Q(2))}|{(Q(j,8),Q(j+1,8)) for j in range(16)}
         if baseline is None:baseline=all_semantic
