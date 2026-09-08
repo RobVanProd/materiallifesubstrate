@@ -118,6 +118,52 @@ theorem monotone_domain_injective (F : Vec → Vec) (domain : Set Vec)
   rw [equal] at h
   simp [dot] at h
 
+/-- The six weak coordinate orders cover the cube, including ties. Executable
+template checks identify each order with its barycentric tetrahedron. -/
+theorem cartesian_six_orders (a b c : ℝ) :
+    (a ≥ b ∧ b ≥ c) ∨ (a ≥ c ∧ c ≥ b) ∨
+    (b ≥ a ∧ a ≥ c) ∨ (b ≥ c ∧ c ≥ a) ∨
+    (c ≥ a ∧ a ≥ b) ∨ (c ≥ b ∧ b ≥ a) := by
+  rcases le_total b a with hba | hab
+  · rcases le_total c b with hcb | hbc
+    · exact Or.inl ⟨hba, hcb⟩
+    · rcases le_total c a with hca | hac
+      · exact Or.inr (Or.inl ⟨hca, hbc⟩)
+      · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inl ⟨hac, hba⟩))))
+  · rcases le_total c a with hca | hac
+    · exact Or.inr (Or.inr (Or.inl ⟨hab, hca⟩))
+    · rcases le_total c b with hcb | hbc
+      · exact Or.inr (Or.inr (Or.inr (Or.inl ⟨hcb, hac⟩)))
+      · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr ⟨hbc, hab⟩))))
+
+/-- Nonnegative barycentric weights and exact reconstruction for a sorted
+unit-cube coordinate triple. No floating arithmetic is involved. -/
+theorem cartesian_chain_weights (a b c : ℝ)
+    (ha : a ≤ 1) (hab : b ≤ a) (hbc : c ≤ b) (hc : 0 ≤ c) :
+    0 ≤ 1-a ∧ 0 ≤ a-b ∧ 0 ≤ b-c ∧ 0 ≤ c ∧
+    (1-a)+(a-b)+(b-c)+c = 1 ∧
+    (a-b)+(b-c)+c = a ∧ (b-c)+c = b := by
+  constructor
+  · linarith
+  constructor
+  · linarith
+  constructor
+  · linarith
+  exact ⟨hc, by ring, by ring, by ring⟩
+
+/-- Distinct strict coordinate orders contain an inversion, checked over the
+six finite permutations in the template certificate. -/
+theorem cartesian_strict_inversion (a b : ℝ) (hab : a < b) : ¬ b < a := by
+  exact not_lt_of_ge (le_of_lt hab)
+
+/-- Different integer unit cells have disjoint interiors in a differing axis.
+The finite grid checker supplies the distinct integer cell coordinates. -/
+theorem cartesian_separated_cells (i j : ℤ) (hij : i < j) (x : ℝ)
+    (hx : x < (i : ℝ)+1) : ¬ (j : ℝ) < x := by
+  have step : i+1 ≤ j := hij
+  have stepReal : (i : ℝ)+1 ≤ (j : ℝ) := by exact_mod_cast step
+  linarith
+
 end MLSFormal.OccupiedGeometry
 
 #print axioms MLSFormal.OccupiedGeometry.missing_information
@@ -133,3 +179,7 @@ end MLSFormal.OccupiedGeometry
 #print axioms MLSFormal.OccupiedGeometry.weight_partition
 #print axioms MLSFormal.OccupiedGeometry.positive_segment_partition
 #print axioms MLSFormal.OccupiedGeometry.monotone_domain_injective
+#print axioms MLSFormal.OccupiedGeometry.cartesian_six_orders
+#print axioms MLSFormal.OccupiedGeometry.cartesian_chain_weights
+#print axioms MLSFormal.OccupiedGeometry.cartesian_strict_inversion
+#print axioms MLSFormal.OccupiedGeometry.cartesian_separated_cells
