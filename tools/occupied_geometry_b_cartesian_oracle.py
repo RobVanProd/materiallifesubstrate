@@ -14,7 +14,7 @@ def sub(a,b):return tuple(x-y for x,y in zip(a,b))
 def cross(a,b):return (a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0])
 
 
-def check(record,fixture,variant):
+def check(record,fixture,variant,diagnostic=True):
     assert fixture in (1,2) and variant in range(33)
     rotation,translation,boost,scale,_=registered_transform(variant)
     extents=(Q(1),Q(1),Q(1)) if fixture==1 else (Q(2),Q(2),Q(1,4))
@@ -38,6 +38,9 @@ def check(record,fixture,variant):
     assert all(count==1 and edges[b,a]==1 for (a,b),count in edges.items())
     volume=8*extents[0]*extents[1]*extents[2]*scale**3
     assert signed_volume==volume and record['occupied_volume']==[str(volume),str(volume)]
+    if not diagnostic:
+        return dict(planes=planes,extents=extents,rotation=rotation,
+                    translation=translation,scale=scale,volume=volume)
     centre=translation;distance=min(plane-dot(n,centre) for n,plane in planes.items())
     closest={tuple(centre[i]+distance*n[i] for i in range(3)) for n,plane in planes.items() if plane-dot(n,centre)==distance}
     diagnostic=record['centre_diagnostic'];assert diagnostic['member'] is True

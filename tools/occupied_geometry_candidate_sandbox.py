@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 
-def run(view,output,volume=False,candidate='C',package=None,fixture=None,level=None,variant=None):
+def run(view,output,volume=False,candidate='C',package=None,fixture=None,level=None,variant=None,queries=False):
     assert not output.exists();output.mkdir(parents=True)
     base=Path(sys.base_prefix).resolve()
     site=Path(importlib.util.find_spec('gmpy2').origin).parent.parent
@@ -25,6 +25,8 @@ def run(view,output,volume=False,candidate='C',package=None,fixture=None,level=N
         from occupied_geometry_cartesian_capability import issue
         issue(package,view,fixture,level,variant,output/'capability.json')
         sources=('occupied_geometry_candidate_b_cartesian_pilot.py','occupied_geometry_runtime_wire.py','occupied_geometry_b_cartesian.py')
+        if queries:sources=('occupied_geometry_candidate_b_cartesian_queries.py',)+sources[1:]
+    if queries:assert candidate=='B'
     command=['bwrap','--unshare-all','--die-with-parent','--clearenv',
         '--ro-bind','/usr','/usr','--symlink','usr/bin','/bin',
         '--symlink','usr/lib','/lib','--symlink','usr/lib64','/lib64',
@@ -68,7 +70,8 @@ def run(view,output,volume=False,candidate='C',package=None,fixture=None,level=N
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('view',type=Path);p.add_argument('output',type=Path)
     p.add_argument('--volume',action='store_true')
+    p.add_argument('--queries',action='store_true')
     p.add_argument('--candidate',choices=('A','B','C'),default='C')
     p.add_argument('--package',type=Path);p.add_argument('--fixture',type=int)
     p.add_argument('--level',type=int);p.add_argument('--variant',type=int)
-    a=p.parse_args();run(a.view,a.output,a.volume,a.candidate,a.package,a.fixture,a.level,a.variant)
+    a=p.parse_args();run(a.view,a.output,a.volume,a.candidate,a.package,a.fixture,a.level,a.variant,a.queries)
