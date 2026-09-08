@@ -35,8 +35,18 @@ def build(root,out):
         add('oracle',p,'losslessly factored exact weight witnesses')
     add('oracle',root/'full-weights-d5/receipt.json','original decoded weight inventory identities')
     add('oracle',root/'exact-controls-v1/oracle/exact-controls.json','independent analytical controls')
+    for p in sorted((root/'oracle-domain-inventory-v1').glob('*.json')):
+        add('oracle',p,'exact domain/constants/search obligations')
+    for p in sorted(root.glob('plane-d*/base-pose.bin')):
+        add('candidate',p,'explicit frozen base pose')
     for pattern in ('*independent*.log','*independent*.json','sphere-injectivity-d*.json',
-                    'input-unit-*.log','lean-full-input-foundation.log'):
+                    'input-unit-*.log','lean-full-input-foundation.log',
+                    'decoded-*.json','orders-f*.json','native-*.json',
+                    'i1-motion-orders-v1.json','final-query-joins-v1.json',
+                    'sphere-d*/independent-check.json',
+                    'plane-d*/independent-pose-check.json',
+                    'i1-motion-*/projection-check.json',
+                    'moving-pair-validity-d1/independent-full-facet-check.json'):
         for p in sorted(root.glob(pattern)):add('control',p,'preserved validation receipt')
     totals={role:sum(v['size'] for k,v in files.items() if k.startswith(role+'/'))
             for role in ('candidate','oracle','control')}
@@ -44,9 +54,8 @@ def build(root,out):
     result=dict(schema='mls.occupied-geometry.unsealed-storage-preflight.v1',
         files=files,logical_references=logical,role_bytes=totals,stored_bytes=n,
         ceiling_bytes=cap,remaining_bytes=cap-n,
-        pending=['complete decoded global/order/relabel identities',
-                 'explicit plane base-pose descriptor','closed oracle/search inventory',
-                 'complete closed manifests','new candidate/control scientific evidence'],
+        pending=['complete closed manifests and run recipes',
+                 'source/proof snapshots','new candidate/control scientific evidence'],
         full_package_fits_not_yet_established=True,candidate_evaluations=0,complete_input_seal=False)
     out.write_text(json.dumps(result,sort_keys=True,separators=(',',':'))+'\n')
     print(json.dumps({k:v for k,v in result.items() if k not in ('files','logical_references')},sort_keys=True))
