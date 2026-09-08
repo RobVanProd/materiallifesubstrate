@@ -212,10 +212,61 @@ cells, not only their vertices. Smooth reconstruction must certify topology/
 boundary search coverage sufficiently for each claimed global metric.
 
 Resource ceilings per candidate/fixture/level: 2 GiB process memory, 30 minutes,
-2^22 subdivision boxes/cells or intersection predicates; 8 GiB emitted scientific
-evidence across the new geometry corpus. Exceedance is inconclusive, never a
-geometry rejection. Log operation counts deterministically; keep wall time/RSS
+2^22 certification/search work units; 8 GiB emitted scientific evidence across
+the new geometry corpus. The pre-data amendment below defines the separate
+input-inventory and certification-work counters. Exceedance is inconclusive,
+never a geometry rejection. Log counts deterministically; keep wall time/RSS
 outside twin scientific hashes. No adaptive resource increase after data.
+
+### Pre-data resource-counter amendment
+
+This amendment preserves the original protocol at
+`5ac51c754a12e6cccb6e23b48e291ed2f1c2b1b7`. Under its conservative reading,
+Candidate B's input tetrahedra consume the cell/work ceiling. At finest spacing
+1/64 m, both the cube and slab contain 2,097,152 Cartesian cells; six tetrahedra
+per cell require 12,582,912 input parcels, exceeding the original 4,194,304 cap
+before certification. Unamended, those rows would be resource-inconclusive,
+not evidence against the geometry hypothesis.
+
+The conflict was identified by exact inventory arithmetic before implementation,
+formal proofs, candidate measurements, or freezing the required addendum. No
+candidate output has been computed. This is an explicit pre-data correction of
+a protocol design defect, not a reinterpretation based on observed performance.
+
+Apply these two counters equally to A, B and C:
+
+1. **Frozen input inventory.** Candidate input means the exact canonical bytes
+   frozen and hashed by the pre-data addendum. Required samples, vertices,
+   tetrahedral parcels, facets and incidence records contained in those bytes
+   are input primitives, not certification-work units. Report their complete
+   counts separately, by primitive type, for every candidate/fixture/level.
+   Input primitives remain subject without exception to the 2 GiB process-memory,
+   30-minute wall-time and 8 GiB evidence-size ceilings. Loading, decoding and
+   canonical-format validation do not consume the certification-work counter;
+   their memory and elapsed time still count. Encoding must not serve as an
+   instruction to generate uncounted adaptive geometry.
+2. **Runtime certification/search work.** The unchanged 2^22 ceiling counts
+   work generated after loading the frozen input: adaptive subdivision regions,
+   covering cells, intersection/pair predicates, root-isolation boxes and
+   equivalent certification work units. Anything generated after those bytes
+   are loaded counts as runtime/certification work unless explicitly classified
+   otherwise in this amendment. Merely deriving data deterministically from
+   input does not exempt it. Candidate-generated adaptive geometry, geometric
+   validity tests and runtime refinements cannot be relabeled input. The
+   addendum must freeze a deterministic accounting schedule for equivalent
+   work, without creating new exemptions or weakening the cap.
+
+The input generator is restricted to the registered fixture constructions; it
+may not execute candidate-dependent adaptation, precompute candidate answers or
+move certification searches into the frozen input. Candidate-visible and
+oracle-only artifacts remain physically separate. Both inventories must be
+closed before any candidate output is computed.
+
+This amendment changes no spatial level, tetrahedralization, candidate definition,
+geometry budget, oracle width, disposition or fixture. The certification-work
+cap remains exactly 2^22. No other resource ceiling is raised. The data gate
+remains closed until the separate pre-data addendum and its exact input inventory
+have been frozen and reviewed.
 
 ## 7. Swept geometry and disposability
 
