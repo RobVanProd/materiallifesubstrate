@@ -15,7 +15,9 @@ import occupied_geometry_weight_inventory as inventory
 import occupied_geometry_weight_replay as weight_replay
 from occupied_geometry_incidence_check import facet_components
 from occupied_geometry_query_check import registered_regions, registered_transform
-from occupied_geometry_transform_decode import expanded
+from occupied_geometry_transform_decode import expanded, rotation_digests
+import hashlib
+from occupied_geometry_order_decode import records, permutation, SplitMix
 
 
 def decode(data):
@@ -25,12 +27,51 @@ def decode(data):
 
 
 class InputContract(unittest.TestCase):
+    def test_frozen_shuffle_and_inverse_relabel(self):
+        # Independent scalar expansion of the specified SplitMix arithmetic.
+        state=260908;modulus=2**64;rng=SplitMix(state)
+        for _ in range(50):
+            state=(state+0x9e3779b97f4a7c15)%modulus
+            z=((state^(state//2**30))*0xbf58476d1ce4e5b9)%modulus
+            z=((z^(z//2**27))*0x94d049bb133111eb)%modulus
+            self.assertEqual(rng.draw(),z^(z//2**31))
+        for count in (0,1,2,17,1000):
+            self.assertEqual(sorted(permutation(count,260908)),list(range(count)))
+        tables={
+            2:[struct.pack('<5Q',1,1,2,3,4),struct.pack('<5Q',2,2,3,4,5)],
+            3:[struct.pack('<4Q',i+1,*v) for i,v in enumerate(((1,2,3),(2,3,4),(3,4,5)))],
+            4:[struct.pack('<QBQB',i+1,j,j%3+1,j%2) for i in range(2) for j in range(4)],
+            7:[struct.pack('<QBQ',1,1,2)+3*gen.rational(Q(0)),
+               struct.pack('<QBQ',2,5,1)+3*gen.rational(Q(1))],
+            8:[struct.pack('<QBQ',i+1,1,len(gen.rational(Q(i))))+gen.rational(Q(i)) for i in range(3)]}
+        counts={1:5,2:2,3:3,5:2}
+        with tempfile.TemporaryDirectory(prefix='mls-geometry-order-') as tmp:
+            for kind,rows in tables.items():
+                raw=gen.header(kind,len(rows))+b''.join(rows)
+                path=Path(tmp)/str(kind);path.write_bytes(raw)
+                for mode in ('reverse','relabel'):
+                    changed=b''.join(records(path,mode,260908,counts))
+                    changed_path=Path(tmp)/(str(kind)+mode);changed_path.write_bytes(changed)
+                    self.assertEqual(b''.join(records(changed_path,mode,260908,counts)),raw)
+                shuffled=list(records(path,'shuffle',260908,counts))
+                self.assertEqual(shuffled[0],gen.header(kind,len(rows)))
+                self.assertEqual(sorted(shuffled[1:]),sorted(rows))
+
     def test_exact_global_transform_decode(self):
         with tempfile.TemporaryDirectory(prefix='mls-geometry-wire-') as tmp:
             path=Path(tmp)/'samples.bin'
             state=(Q(1,201),Q(-2,7),Q(3,11))
             path.write_bytes(gen.header(5,1)+struct.pack('<Q',17)+
                 b''.join(gen.rational(q) for q in (*state,Q(13,19),Q(1))))
+            transforms=[]
+            for ordinal in range(24):
+                m,b,v,scale,_=registered_transform(ordinal)
+                transforms.append((ordinal+1,m,b,v,scale))
+            batches=rotation_digests(path,transforms)
+            for tr,batch in zip(transforms,batches):
+                raw=b''.join(expanded(path,tr))
+                self.assertEqual(batch['size'],len(raw))
+                self.assertEqual(batch['sha256'],hashlib.sha256(raw).hexdigest())
             for ordinal in range(30):
                 m,b,v,scale,order=registered_transform(ordinal)
                 out=b''.join(expanded(path,(ordinal+1,m,b,v,scale)))

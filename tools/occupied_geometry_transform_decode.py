@@ -118,6 +118,48 @@ def digest(source, transform):
                 complete_input_seal=False)
 
 
+def rotation_digests(source, transforms, base_translation=(Q(0),Q(0),Q(0))):
+    """One input pass; each exact signed-axis logical stream has its own hash.
+
+    This shares canonical decoding only. It neither shares candidate work nor
+    generates any geometric certificate. The general decoder remains a separate
+    byte-level comparison control for this optimized input operation.
+    """
+    start=time.monotonic();maps=[]
+    for _,matrix,translation,boost,scale in transforms:
+        assert translation==boost==(Q(0),)*3 and scale==1
+        axes=[]
+        for row in matrix:
+            entries=[(j,c) for j,c in enumerate(row) if c]
+            assert len(entries)==1 and abs(entries[0][1])==1
+            axes.append((entries[0][0],entries[0][1]<0))
+        assert len({a for a,_ in axes})==3
+        maps.append(axes)
+    with source.open('rb') as f:prefix=f.read(24)
+    schema,kind,count=struct.unpack('<IIQ',prefix[8:])
+    assert prefix[:8]==b'MLSOMG01' and schema==1 and kind in (1,5,7)
+    hashes=[hashlib.sha256(prefix) for _ in maps]
+    sizes=[24]*len(maps);buffers=[bytearray() for _ in maps]
+    r=Reader(source,kind)
+    for index in range(count):
+        first=r.read(17 if kind==7 else 8)
+        coords=tuple(raw_q(r) for _ in range(3))
+        if kind!=7 and any(base_translation):
+            coords=tuple(rational(decode_q(raw)+b) for raw,b in zip(coords,base_translation))
+        negatives=tuple((bytes([raw[0]^1])+raw[1:]) if raw[1:5]!=b'\0'*4 else raw for raw in coords)
+        last=raw_q(r)+raw_q(r) if kind==5 else b''
+        for i,axes in enumerate(maps):
+            buffers[i].extend(first+b''.join((negatives if neg else coords)[axis] for axis,neg in axes)+last)
+        if len(buffers[0])>=1<<16:
+            for i,buffer in enumerate(buffers):
+                hashes[i].update(buffer);sizes[i]+=len(buffer);buffer.clear()
+            assert time.monotonic()-start<=1800,'rotation input decoding wall-time ceiling'
+    r.end()
+    for i,buffer in enumerate(buffers):hashes[i].update(buffer);sizes[i]+=len(buffer)
+    return [dict(size=n,sha256=h.hexdigest(),records=count,kind=kind,
+                 candidate_evaluations=0,complete_input_seal=False) for n,h in zip(sizes,hashes)]
+
+
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
     p.add_argument('source',type=Path)
