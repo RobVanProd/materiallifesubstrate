@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from occupied_geometry_input_check import Reader
+from occupied_geometry_incidence_check import facet_components
 
 
 def verify(source,witness_directory):
@@ -31,13 +32,11 @@ def verify(source,witness_directory):
     assert t==2 and record['fixture']==5 and record['level']==0
     hits=record['positive_barycentric_witnesses'];assert len(hits)==2
     assert hits[0]['cell']!=hits[1]['cell']
-    component=set(cells[hits[0]['cell']])
-    while True:
-        extended=set(component)
-        for cell in cells.values():
-            if component.intersection(cell):extended.update(cell)
-        if extended==component:break
-        component=extended
+    complexes=facet_components(cells)
+    assert len(complexes)==2 and all(len(c)==64 for c in complexes)
+    first=next(c for c in complexes if hits[0]['cell'] in c)
+    assert hits[1]['cell'] not in first
+    component={vertex for cell in first for vertex in cells[cell]}
     assert not component.intersection(cells[hits[1]['cell']])
     other=set(vertices)-component
     assert len(component)==len(other)==25
@@ -60,6 +59,8 @@ def verify(source,witness_directory):
             for i in range(col+1,3):
                 c=matrix[i][col];matrix[i]=[x-c*y for x,y in zip(matrix[i],matrix[col])]
     print(json.dumps(dict(status='PASS',cells=[h['cell'] for h in hits],
+        complex_adjacency='shared_full_triangular_facets',
+        complex_sizes=[len(c) for c in complexes],
         all_barycentric_coordinates_strictly_greater_than='1/256',
         point=list(record['witness']),time='2',candidate_evaluations=0,
         complete_input_seal=False),sort_keys=True))

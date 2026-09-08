@@ -9,6 +9,7 @@ import occupied_geometry_input as gen
 import occupied_geometry_input_check as independent
 import occupied_geometry_weights as weights
 import occupied_geometry_weight_inventory as inventory
+from occupied_geometry_incidence_check import facet_components
 
 
 def decode(data):
@@ -18,6 +19,17 @@ def decode(data):
 
 
 class InputContract(unittest.TestCase):
+    def test_full_facet_connectivity_not_vertex_or_edge_connectivity(self):
+        self.assertEqual(facet_components({1:(1,2,3,4),2:(1,2,3,5)}),((1,2),))
+        self.assertEqual(facet_components({1:(1,2,3,4),2:(1,2,5,6)}),((1,),(2,)))
+        self.assertEqual(facet_components({1:(1,2,3,4),2:(1,5,6,7)}),((1,),(2,)))
+        self.assertEqual(facet_components({1:(1,2,3,4),2:(1,2,3,5),3:(1,2,5,6)}),((1,2,3),))
+
+    def test_invalid_facet_incidence(self):
+        for cells in ({1:(1,2,3,4),2:(4,3,2,1)},
+                      {1:(1,2,3,4),2:(1,2,3,5),3:(1,2,3,6)}):
+            with self.assertRaises(ValueError):facet_components(cells)
+
     def test_wire_roundtrip(self):
         self.assertEqual(gen.rational(Q(0)).hex(),'00000000000100000001')
         for q in (Q(0),Q(1),Q(-1),Q(1,201),Q(-13,17),Q(1,1<<896),Q(1<<700,3)):
