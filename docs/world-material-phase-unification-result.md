@@ -92,7 +92,14 @@ after an odd step; this made the identity and nontrivial heat-state restart
 claims directly testable. Preliminary sources/records are preserved. Initial
 diagnostic ignored-result warnings were corrected. Neither refinement changed
 kernel arithmetic, trajectories, tolerances or physical budgets. No scientific
-divergence has been observed; final CI/seal receipts, not this prose, establish
+divergence has been observed. The first committed CI attempt at `9465b7a`
+stopped during MSVC compilation, before trajectories: its map-containing
+optional material-ledger context did not satisfy World's existing no-throw
+move-assignment assertion. That failed source/run/log is preserved. The
+correction stores the immutable baseline inventory in a canonical vector,
+retaining the assertion and exactly the same serialized ledger values. It does
+not change phase arithmetic, physics, material quantities or checkpoint bytes.
+Final CI/seal receipts, not this prose, establish
 the accepted execution inventory.
 
 ## Verification and limitations

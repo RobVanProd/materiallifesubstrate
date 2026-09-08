@@ -137,6 +137,25 @@ void canonical_input(const ResearchMechanicsInput &r) {
   need(parsed.wire == r.wire && parsed.model == r.model,
        "noncanonical model/phase import");
 }
+MaterialPhaseBaseline ledger_baseline(const MaterialOnlyTotals &t) {
+  MaterialPhaseBaseline b;
+  b.elements.assign(t.elements.amounts().begin(), t.elements.amounts().end());
+  b.mass = t.mass;
+  b.structural = t.structural;
+  b.stored = t.stored;
+  b.thermal = t.thermal;
+  return b;
+}
+MaterialOnlyTotals baseline_totals(const MaterialPhaseBaseline &b) {
+  MaterialOnlyTotals t;
+  for (const auto &[id, amount] : b.elements)
+    t.elements.add(id, amount);
+  t.mass = b.mass;
+  t.structural = b.structural;
+  t.stored = b.stored;
+  t.thermal = b.thermal;
+  return t;
+}
 void encode_totals(std::ostream &s, const MaterialOnlyTotals &t) {
   s << t.mass.raw() << ' ' << t.structural.raw() << ' ' << t.stored.raw() << ' '
     << t.thermal.raw() << ' ' << t.elements.amounts().size() << ' ';
@@ -196,7 +215,7 @@ MaterialOnlyTotals World::material_phase_totals() const {
 }
 bool World::material_phase_audit() const {
   const auto t = material_phase_totals();
-  const auto &b = material_phase_->baseline;
+  const auto b = baseline_totals(material_phase_->baseline);
   return t.elements == b.elements && t.mass == b.mass &&
          t.structural == b.structural &&
          t.material_energy() == b.material_energy();
@@ -310,7 +329,8 @@ void World::attach_material_phase(const ResearchMechanicsInput &input,
   staged.physical_time_ =
       Time::from_raw(detail::checked_multiply(input.start, input.dt));
   staged.material_phase_ = std::move(c);
-  staged.material_phase_->baseline = staged.material_phase_totals();
+  staged.material_phase_->baseline =
+      ledger_baseline(staged.material_phase_totals());
   staged.validate_material_phase();
   need(staged.material_phase_request().wire == input.wire,
        "material import changed phase");
@@ -463,7 +483,7 @@ std::vector<std::uint8_t> World::material_phase_checkpoint() const {
   for (const auto &b : c.binding)
     records << b.mechanics_id << ' ' << b.material.id.value << ' '
             << b.material.generation << '\n';
-  encode_totals(records, c.baseline);
+  encode_totals(records, baseline_totals(c.baseline));
   Bytes out(magic.begin(), magic.end());
   field(out, base);
   field(out, records.str());
@@ -539,7 +559,7 @@ World World::restore_material_phase_checkpoint(
          "binding syntax");
     c.binding.push_back(b);
   }
-  c.baseline = decode_totals(in);
+  c.baseline = ledger_baseline(decode_totals(in));
   std::string extra;
   need(!(in >> extra), "record trailing tokens");
   result.packets_.alive_count_ = n;

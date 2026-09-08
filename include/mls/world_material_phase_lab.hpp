@@ -24,10 +24,17 @@ struct MaterialOnlyTotals {
   }
   [[nodiscard]] bool operator==(const MaterialOnlyTotals &) const = default;
 };
+// Preserve World's no-throw commit contract on MSVC too: an optional context
+// must not contain a map whose move constructor may allocate a sentinel node.
+struct MaterialPhaseBaseline {
+  std::vector<std::pair<ElementId, ElementCount>> elements;
+  Mass mass{};
+  Energy structural{}, stored{}, thermal{};
+};
 struct MaterialPhaseContext {
   ResearchMechanicsInput schedule; // wire must remain empty: no duplicate phase
   std::vector<MaterialPhaseBinding> binding;
-  MaterialOnlyTotals baseline;
+  MaterialPhaseBaseline baseline;
   std::string last_events; // noncausal, never used for mechanics reconstruction
 };
 } // namespace mls
