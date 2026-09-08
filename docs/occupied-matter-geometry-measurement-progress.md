@@ -40,8 +40,25 @@ not the candidate's separating-axis/BVH algorithm. The static-query pilot then
 passed independent exact replay of all 2,707 queries and all 32 boundary
 triangles. This is still a pilot, not the full geometry/refinement/CCD gate.
 
-Twenty input/runtime/primitive unit tests currently pass, including 128 exact
+Twenty-two input/runtime/primitive unit tests currently pass, including 128 exact
 pair-predicate comparisons against an independently implemented oracle.
+
+The 264 completed Cartesian rows also passed a separate exact semantic
+covariance comparison after inverse transforms and explicit query joins. This
+compares physical answers, not arbitrary diagonals inside proof triangulations;
+each complete boundary is separately checked by the row oracle.
+
+The first volume query has now been run with isolated twins and independent
+proof replay for A and C on all seven coarse, identity-transform fixtures.
+All seven A covers are resource-inconclusive. All seven C coarse occupied
+volumes are certified zero. These are not finest-level refinement results or
+completed candidate rows. The batch records are under
+`build/occupied-geometry-volume-k0-evidence-v1`.
+
+Exact convex-union primitive controls check overlap-volume subtraction and
+removal of buried opposite-facing interfaces. Exact affine-motion controls
+check whole-interval determinant enclosures and the singular-time case. Neither
+primitive-control set is a completed moving-fixture/CCD certificate.
 
 The finest-sphere general validity pilot reached exactly 2^22 work units before
 completion, with pending operation `cell_bounding_region`. Its twins are
