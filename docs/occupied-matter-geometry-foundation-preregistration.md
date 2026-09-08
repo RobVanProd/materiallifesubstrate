@@ -98,15 +98,91 @@ vertex evolve independently. Candidate input contains only vertices, cells,
 weights and stable IDs, not analytic shape names or object grouping.
 
 Box/slab/U-domain fixtures use conforming tetrahedral subdivisions. Spherical
-fixtures begin from an octahedral surface and recursively split each triangle
-into four; newly generated surface vertices are radially projected by the fixture
-generator before serialization. Join the surface to a central vertex to obtain
-tetrahedral parcels. Analytical sphere knowledge belongs only to fixture
-generation/oracle, not to B's queries. Curved boundary approximation error remains
-measured; do not replace faceted geometry by the exact sphere during evaluation.
-Reference weights partition the intended material amount; polyhedral occupied
-volume is measured independently and need not equal those weights at finite
-resolution.
+fixtures use the conforming volumetric angular-and-radial refinement specified
+by the pre-data amendment below, not a surface-only fan to one central vertex.
+Analytical sphere knowledge belongs only to fixture generation/oracle, not to
+B's queries. Curved boundary approximation error remains measured; do not replace
+faceted geometry by the exact sphere during evaluation. Reference weights
+partition the intended material amount; polyhedral occupied volume is measured
+independently and need not equal those weights at finite resolution.
+
+### Pre-data spherical-refinement amendment
+
+Preserve original preregistration `5ac51c754a12e6cccb6e23b48e291ed2f1c2b1b7`
+and resource amendment `f94f449d03ddd45a2501a4fca70587c4ec81fdb6` in history.
+The original spherical construction subdivided only the octahedral surface and
+joined every resulting triangle to the centre. For each tetrahedron [0,a,b,c]
+with unit surface vertices, a centre-to-surface edge remains exactly 1 m, hence
+Delta_k >= 1 m at every refinement. Its centroid (a+b+c)/4 approaches (3/4)u as
+the angular triangle shrinks toward u. Thus the centroid samples concentrate on
+a shell rather than refining the interior. Since L is fixed, h=sqrt(Delta L)
+cannot tend to zero. This is an input-refinement defect, not an observed failure
+of A, B or C. It was identified before the addendum, implementation, formal proofs
+or candidate measurements; no candidate output has been computed.
+
+Supersede only that spherical construction. Retain five levels k=0..4, the same
+physical unit sphere (and its registered copies/motions), fixed total reference
+volume/material amount, A/B/C definitions, information tiers, h=sqrt(Delta L),
+all scientific/oracle/resource budgets and all dispositions.
+
+Constrain the replacement before data as follows:
+
+1. Start from the reference octahedron |q_x|+|q_y|+|q_z| <= 1, divided into its
+   eight centre-to-face reference tetrahedra. At depth d=k+1, use a conforming,
+   nested dyadic volumetric refinement: all six edge midpoints, four corner
+   tetrahedra and a consistent four-tetrahedron split of the central octahedron
+   give eight children per parent. Shared reference vertices/faces are unique.
+   The addendum must freeze a globally compatible, shape-regular central split
+   rule and orientation/ID convention; no choice may depend on candidate results.
+   Boundary triangles retain the registered four-way angular subdivision.
+2. Map every reference vertex, including interior vertices, by the same radial
+   fixture map F(0)=0 and F(q)=||q||_1 q/||q||_2 for q != 0. The reference
+   octahedron maps onto the unit ball; boundary vertices lie on the unit sphere.
+   Interior radial coordinates refine along with the angular coordinates.
+   B receives straight tetrahedra joining these mapped vertices, not an oracle
+   evaluator for F. A/C receive the centroids of those same straight tetrahedra
+   and their declared reference-volume weights. Neither receives oracle labels,
+   analytic normals or hidden corrections during candidate evaluation.
+3. Require an a-priori bound max_T diam(T_ref,d) <= C_ref 2^-d with an explicit
+   level-independent C_ref justified for the frozen split rule. The map has the
+   Lipschitz bound ||F(q)-F(p)||_2 <= 3 sqrt(3) ||q-p||_2. Consequently mapped
+   tetrahedral diameter is bounded by 3 sqrt(3) C_ref 2^-d in exact geometry.
+   This construction-level bound, not five measured values, must establish
+   shrinking radial/angular extent and interior-filling samples. A valid mesh
+   and vanishing diameter do not by themselves prove the reconstruction gates.
+4. Curved reference regions F(T_ref) partition the intended ball hierarchically;
+   straight tetrahedra are its discrete geometry approximation, not identically
+   those curved regions. Reference-volume weights must represent the same fixed
+   physical volume measure, not equal weights justified solely by equal reference
+   tetrahedron counts. The addendum must freeze their independent integration/
+   enclosure and canonical allocation rule. Positive child weights partition
+   each parent weight exactly in the stored encoding; the total encoded volume
+   is fixed across levels. Account for integration/encoding deficits explicitly.
+   No per-level rescaling chosen from candidate volume error is permitted.
+5. Preserve conforming incidence under the mapped straight-cell construction.
+   Invalid orientation, degeneracy, overlaps or gaps cannot be fixed by moving
+   samples after evaluation. The addendum must specify independent inventory
+   validity checks, not assume that a valid curved partition proves every
+   straight-cell property. Failure is an inventory gate, not a candidate result.
+6. The exact tessellation, split/orientation rule, encoding and primitive counts
+   must be frozen in the addendum before measurements. For the eight-child rule,
+   tetrahedron counts per unit sphere are 8*8^(k+1): 64, 512, 4096, 32768,
+   262144. Report samples, shared vertices, facets and incidence counts separately,
+   including multiple-sphere fixtures. Recheck serialized size, memory layout,
+   loading time and the deterministic work schedule against the unchanged
+   2 GiB / 30-minute / 8 GiB ceilings and 2^22 certification-work cap. Input
+   counts alone do not establish that runtime certification fits those caps.
+7. At every spherical level, independently compute/enclose maximum tetrahedral
+   diameter and radial centroid-support range from the frozen candidate input
+   bytes. Check them against the amended construction and declared encoding
+   bounds; reject a mismatched fixture inventory, including accidental restoration
+   of the centre-fan sequence. Record finite coordinate/volume encoding floors
+   separately from the exact geometric refinement limit. No hidden precision
+   increase or measured-Delta substitution may rescue a failed inventory.
+
+This is a pre-data protocol correction only. It adds no physical domain state
+to World, density law, mechanics transition, contact force, proof implementation
+or geometry result. The addendum is still pending and the data gate remains shut.
 
 **C — stateless smooth reconstruction (I1).** From exactly the same centroid/
 volume samples as A, use
@@ -131,9 +207,10 @@ those labels cannot enter occupancy reconstruction or force eligibility.
 ## 5. Fixed corpus and refinement
 
 Use metres and seconds. Five nested spatial levels k=0..4. For box-type fixtures,
-use initial cell edge 1/4 m and halve it each level. For spherical surfaces, use
-octahedral subdivision depths 1..5. Record actual maximum cell diameter Delta
-and sample count; do not pretend the two constructions have identical counts.
+use initial cell edge 1/4 m and halve it each level. For spherical volumes, use
+the amended volumetric octahedral refinement depths 1..5, whose surface retains
+four-way angular subdivision. Record actual maximum cell diameter Delta and
+sample count; do not pretend the constructions have identical counts.
 
 Physical fixtures:
 
